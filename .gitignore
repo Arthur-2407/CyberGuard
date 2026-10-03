@@ -1,0 +1,224 @@
+# ==============================================================================
+# CyberGuard .gitignore
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Environment, Secrets & Credentials (CRUCIAL - NEVER COMMIT)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+*.env
+local.properties
+**/local.properties
+android/local.properties
+
+# Certificates, Keys & Credentials
+*.pem
+*.key
+*.cer
+*.crt
+*.pfx
+*.p12
+*.jks
+*.keystore
+google-services.json
+*secret*.json
+*credential*.json
+
+# ------------------------------------------------------------------------------
+# 2. Dynamic Databases, Logs & Backups (CRUCIAL)
+# ------------------------------------------------------------------------------
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.db-journal
+*.backup
+*.db.backup
+data/*.backup
+data/audit.log
+*.log
+logs/
+
+# ------------------------------------------------------------------------------
+# 3. Data, Datasets, Audio Vault & Archives (CRUCIAL - Large Media/Datasets)
+# ------------------------------------------------------------------------------
+# Ignore all dynamic contents of data directory except .gitkeep
+data/*
+!data/.gitkeep
+
+# ASVspoof 2019 dataset and extracts
+data/asvspoof2019/
+data/audio_vault/
+
+# Audio files (raw audio streams, recordings, forensic audio)
+*.flac
+*.wav
+*.mp3
+*.m4a
+*.ogg
+demo/
+*_out.mp3
+test.mp3
+test_out.mp3
+
+# Large archives and dataset zip files
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+# Allow Gradle wrapper jar
+!gradle-wrapper.jar
+
+# ------------------------------------------------------------------------------
+# 4. Model Weights & Checkpoints (CRUCIAL - Large Binary Files)
+# ------------------------------------------------------------------------------
+backend/models/weights/*
+!backend/models/weights/.gitkeep
+
+# Machine Learning weights & checkpoints
+*.pt
+*.pth
+*.ckpt
+*.bin
+*.onnx
+*.safetensors
+*.tflite
+*.h5
+
+# ------------------------------------------------------------------------------
+# 5. Python Builds, Caches & Virtual Environments
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Python package builds
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ------------------------------------------------------------------------------
+# 6. Testing, Linting & Coverage
+# ------------------------------------------------------------------------------
+.cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.hypothesis/
+.tox/
+.nox/
+
+# ------------------------------------------------------------------------------
+# 7. Android & Gradle Build Artifacts
+# ------------------------------------------------------------------------------
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+android/gradle/wrapper/*.zip
+gradle-*-bin.zip
+
+# Native builds & Intermediate artifacts
+.cxx/
+.externalNativeBuild/
+captures/
+generated/
+intermediates/
+outputs/
+test-results/
+lint-results/
+
+# Binaries & packages
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+*.flat
+*.iml
+android/*.iml
+android/app/*.iml
+
+# ------------------------------------------------------------------------------
+# 8. Temporary Files, Backups & Dumps
+# ------------------------------------------------------------------------------
+tmp/
+temp/
+dump.txt
+temp_out.txt
+frontend/temp_out.txt
+frontend/.backup/
+frontend/.backup_v2/
+**/.backup*/
+**/backup*/
+*.bak
+*.backup_v2
+*.tmp
+*.temp
+*~
+*.swp
+*.swo
+
+# ------------------------------------------------------------------------------
+# 9. Scratch & Debug Scripts
+# ------------------------------------------------------------------------------
+analyze_diff.py
+debug_ws.py
+debug_ws2.py
+scratch_test_zeroconf.py
+test_heuristic.py
+test_integration.py
+test_torchaudio.py
+antigravity_5tool_launcher.py
+
+# ------------------------------------------------------------------------------
+# 10. IDE, OS & AI Assistant Files
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+android/.idea/
+.DS_Store
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# AI Agents & Workspaces
+.agents/
+.gemini/
+.claude/
+.cursor/
+.windsurf/
+
+# ------------------------------------------------------------------------------
+# 11. Documents & Problem Statements
+# ------------------------------------------------------------------------------
+Problem_Statement_9.pdf

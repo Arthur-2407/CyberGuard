@@ -1,0 +1,1748 @@
+ <!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CyberGuard — SOC Threat Intelligence &amp; Multi-Modal AI Defense Console</title>
+  <meta name="description"
+    content="CyberGuard is an enterprise SOC console for real-time cyber threat detection, AI voice clone defense, phishing, QR forensics, and multi-provider intelligence." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+
+<body>
+  <!-- Top SOC Command Center Navigation Bar -->
+  <nav class="navbar" id="navbar">
+    <div class="nav-brand">
+      <div class="nav-logo" role="banner">
+        <svg width="26" height="26" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <circle cx="14" cy="14" r="12" stroke="url(#logoGrad)" stroke-width="2" />
+          <path d="M9 14 Q14 8 19 14 Q14 20 9 14Z" fill="url(#logoGrad)" opacity="0.85" />
+          <circle cx="14" cy="14" r="3.2" fill="url(#logoGrad)" />
+          <defs>
+            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style="stop-color:#06b6d4" />
+              <stop offset="100%" style="stop-color:#0284c7" />
+            </linearGradient>
+          </defs>
+        </svg>
+        <span class="brand-name">CyberGuard</span>
+        <span class="brand-badge">SOC AI</span>
+      </div>
+    </div>
+
+    <div class="nav-links" role="tablist">
+      <button class="nav-link active" onclick="showTab('overview')" id="tab-overview" role="tab" aria-selected="true">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+        Overview
+      </button>
+      <button class="nav-link" onclick="showTab('monitor')" id="tab-monitor" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Threat Monitoring
+      </button>
+      <button class="nav-link" onclick="showTab('analyze')" id="tab-analyze" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+        Voice Analysis
+      </button>
+      <button class="nav-link" onclick="showTab('threats')" id="tab-threats" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+        Phishing &amp; URL
+      </button>
+      <button class="nav-link" onclick="showTab('enroll')" id="tab-enroll" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+        Voice Identity
+      </button>
+      <button class="nav-link" onclick="showTab('security-center')" id="tab-security-center" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Security Center
+      </button>
+      <button class="nav-link hidden" onclick="showTab('review')" id="tab-review" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        Training Review
+      </button>
+      <button class="nav-link hidden" onclick="showTab('admin')" id="tab-admin" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Admin Console
+      </button>
+    </div>
+
+    <div class="nav-status">
+      <!-- User Auth Widget -->
+      <div class="user-auth-widget" id="user-auth-widget">
+        <button class="nav-auth-btn" id="nav-login-btn" onclick="openAuthModal()" title="Account Login / Profile">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span id="user-badge-text">LOGIN</span>
+        </button>
+      </div>
+
+      <!-- System Health Diagnostics Button -->
+      <button class="nav-health-btn" id="nav-system-health-btn" onclick="openSystemHealthModal()" title="View Security Engine Diagnostics">
+        <span class="health-dot pulse"></span>
+        <span id="nav-engine-text">10 ENGINES OPERATIONAL</span>
+      </button>
+
+      <!-- Security Event Audio Cues Toggle -->
+      <button class="sound-toggle-btn" id="sound-toggle-btn" onclick="toggleSound()" title="Toggle subtle security event audio cues">
+        🔇 SOUND OFF
+      </button>
+
+      <!-- Real-time Backend Connectivity Status -->
+      <div class="status-indicator" id="system-status" title="FastAPI backend connectivity">
+        <div class="status-dot offline"></div>
+        <span>Connecting...</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Main Viewport Content -->
+  <main class="main-content">
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 1: OVERVIEW — UNIFIED COMMAND CENTER
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel active" id="panel-overview">
+      <div class="overview-container">
+
+        <!-- Top Command Strip: Executive Posture & Status -->
+        <div class="card overview-hero-card">
+          <div class="overview-hero-inner">
+            <div class="overview-title-group">
+              <div class="overview-eyebrow">
+                <span class="soc-pulse-badge"><span class="soc-pulse-dot"></span> COMMAND CENTER</span>
+                <span class="overview-timestamp" id="overview-last-sync">Synchronized</span>
+              </div>
+              <h1 class="overview-main-title">CYBERGUARD SOC OVERVIEW</h1>
+              <p class="overview-subtitle">Real-time threat telemetry, incident correlation and defense posture</p>
+            </div>
+
+            <!-- Compact Posture State Strip -->
+            <div class="posture-banner" id="posture-banner">
+              <div class="posture-badge-wrap">
+                <span id="overview-posture" class="badge badge-critical posture-badge">EVALUATING</span>
+              </div>
+              <div class="posture-info">
+                <div class="posture-headline" id="overview-posture-desc">Fetching security telemetry across pipelines...</div>
+                <div class="posture-sub" id="overview-posture-sub">Correlating detection events from voice, URL, phishing, QR, and threat intelligence feeds.</div>
+              </div>
+            </div>
+
+            <div class="overview-actions">
+              <button class="btn btn-secondary btn-xs" onclick="updateOverview(true)" title="Force sync latest telemetry">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                Sync Posture
+              </button>
+              <button class="btn btn-secondary btn-xs" onclick="openSystemHealthModal()" title="View Engine Diagnostics">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                System Health
+              </button>
+              <button class="btn btn-primary btn-xs" onclick="showTab('security-center')" title="Open Security Center Console">
+                Security Center →
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROW 1: 5 Core Operational KPI Tiles -->
+        <div class="overview-kpi-5">
+          <!-- KPI 1: Active Threats -->
+          <div class="card metric-tile tile-threats">
+            <div class="metric-tile-header">
+              <span class="metric-tile-label">ACTIVE THREATS</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            </div>
+            <div class="metric-tile-body">
+              <div class="metric-tile-value text-threat" id="stat-threats">0</div>
+              <canvas class="kpi-sparkline" id="spark-threats" width="68" height="22"></canvas>
+            </div>
+            <div class="metric-tile-sub">High &amp; critical severity</div>
+          </div>
+
+          <!-- KPI 2: Open Incidents -->
+          <div class="card metric-tile tile-incidents">
+            <div class="metric-tile-header">
+              <span class="metric-tile-label">OPEN INCIDENTS</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <div class="metric-tile-body">
+              <div class="metric-tile-value text-warning" id="stat-incidents">0</div>
+              <canvas class="kpi-sparkline" id="spark-incidents" width="68" height="22"></canvas>
+            </div>
+            <div class="metric-tile-sub">Active investigations</div>
+          </div>
+
+          <!-- KPI 3: Events Analysed -->
+          <div class="card metric-tile tile-events">
+            <div class="metric-tile-header">
+              <span class="metric-tile-label">EVENTS ANALYSED</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            </div>
+            <div class="metric-tile-body">
+              <div class="metric-tile-value text-cyan" id="stat-events">0</div>
+              <canvas class="kpi-sparkline" id="spark-events" width="68" height="22"></canvas>
+            </div>
+            <div class="metric-tile-sub">Cross-pipeline telemetry</div>
+          </div>
+
+          <!-- KPI 4: High / Critical -->
+          <div class="card metric-tile tile-critical">
+            <div class="metric-tile-header">
+              <span class="metric-tile-label">HIGH / CRITICAL</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+            </div>
+            <div class="metric-tile-body">
+              <div class="metric-tile-value text-critical" id="stat-high-critical">0</div>
+              <canvas class="kpi-sparkline" id="spark-critical" width="68" height="22"></canvas>
+            </div>
+            <div class="metric-tile-sub">Priority containment</div>
+          </div>
+
+          <!-- KPI 5: Security Posture / Engines -->
+          <div class="card metric-tile tile-posture">
+            <div class="metric-tile-header">
+              <span class="metric-tile-label">SECURITY POSTURE</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <div class="metric-tile-body">
+              <div class="metric-tile-value text-emerald" id="overview-tile-posture">—</div>
+              <canvas class="kpi-sparkline" id="spark-engines" width="68" height="22"></canvas>
+            </div>
+            <div class="metric-tile-sub" id="overview-tile-posture-sub">Real-time status</div>
+          </div>
+        </div>
+
+        <!-- ROW 2: Threat Activity Timeline (Left) + Threat Severity Profile (Right) -->
+        <div class="overview-grid-row overview-row-2">
+          <!-- Threat Activity Timeline Chart Card -->
+          <div class="card overview-activity-card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                Threat Activity Timeline
+              </h2>
+              <div class="chart-header-actions">
+                <div class="chart-range-group" id="activity-range-group">
+                  <button class="chart-range-pill" onclick="setActivityRange('1H', this)">1H</button>
+                  <button class="chart-range-pill" onclick="setActivityRange('6H', this)">6H</button>
+                  <button class="chart-range-pill" onclick="setActivityRange('24H', this)">24H</button>
+                  <button class="chart-range-pill" onclick="setActivityRange('7D', this)">7D</button>
+                  <button class="chart-range-pill active" onclick="setActivityRange('ALL', this)">ALL</button>
+                </div>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap">
+              <canvas id="overviewActivityChart"></canvas>
+            </div>
+            <div class="chart-legend-strip">
+              <span><span class="legend-dot" style="background:#ef4444;"></span> Threats Detected</span>
+              <span><span class="legend-dot" style="background:#06b6d4;"></span> Analyzed Ingestions</span>
+            </div>
+          </div>
+
+          <!-- Threat Severity Profile with Donut & Breakdown Tracks -->
+          <div class="card overview-severity-card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Threat Severity Profile
+              </h2>
+              <span class="card-tag">RISK METRICS</span>
+            </div>
+            <div class="severity-card-layout">
+              <div class="severity-donut-container">
+                <canvas id="overviewSeverityDonut"></canvas>
+              </div>
+              <div class="severity-breakdown-list" id="overview-severity-breakdown">
+                <div class="severity-breakdown-row">
+                  <div class="severity-row-top">
+                    <span style="color:#ef4444;"><span class="sev-dot-sq" style="background:#ef4444;"></span> CRITICAL</span>
+                    <span id="sev-count-critical">0 (0.0%)</span>
+                  </div>
+                  <div class="severity-track">
+                    <div class="severity-bar-fill" id="sev-bar-critical" style="width:0%; background:#ef4444;"></div>
+                  </div>
+                </div>
+                <div class="severity-breakdown-row">
+                  <div class="severity-row-top">
+                    <span style="color:#f43f5e;"><span class="sev-dot-sq" style="background:#f43f5e;"></span> HIGH</span>
+                    <span id="sev-count-high">0 (0.0%)</span>
+                  </div>
+                  <div class="severity-track">
+                    <div class="severity-bar-fill" id="sev-bar-high" style="width:0%; background:#f43f5e;"></div>
+                  </div>
+                </div>
+                <div class="severity-breakdown-row">
+                  <div class="severity-row-top">
+                    <span style="color:#f59e0b;"><span class="sev-dot-sq" style="background:#f59e0b;"></span> MEDIUM</span>
+                    <span id="sev-count-medium">0 (0.0%)</span>
+                  </div>
+                  <div class="severity-track">
+                    <div class="severity-bar-fill" id="sev-bar-medium" style="width:0%; background:#f59e0b;"></div>
+                  </div>
+                </div>
+                <div class="severity-breakdown-row">
+                  <div class="severity-row-top">
+                    <span style="color:#38bdf8;"><span class="sev-dot-sq" style="background:#38bdf8;"></span> LOW</span>
+                    <span id="sev-count-low">0 (0.0%)</span>
+                  </div>
+                  <div class="severity-track">
+                    <div class="severity-bar-fill" id="sev-bar-low" style="width:0%; background:#38bdf8;"></div>
+                  </div>
+                </div>
+                <div class="severity-breakdown-row">
+                  <div class="severity-row-top">
+                    <span style="color:#10b981;"><span class="sev-dot-sq" style="background:#10b981;"></span> SAFE</span>
+                    <span id="sev-count-safe">0 (0.0%)</span>
+                  </div>
+                  <div class="severity-track">
+                    <div class="severity-bar-fill" id="sev-bar-safe" style="width:0%; background:#10b981;"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROW 3: Threat Category Distribution (Left) + Live Threat Feed (Right) -->
+        <div class="overview-grid-row overview-row-3">
+          <!-- Threat Category Distribution Donut & Ranked List -->
+          <div class="card overview-distribution-card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                Threat Category Distribution
+              </h2>
+              <span class="card-tag" id="overview-threat-total">Across Analyzed Events</span>
+            </div>
+            <div class="donut-distribution-wrap">
+              <div class="donut-canvas-container">
+                <canvas id="overviewCategoryDonut"></canvas>
+              </div>
+              <div class="distribution-body" id="overview-distribution-body">
+                <div class="distribution-empty">Loading telemetry distribution...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Live Threat Telemetry Feed Card -->
+          <div class="card overview-feed-card">
+            <div class="card-header">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <h2 class="card-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+                  Live Threat Telemetry Feed
+                </h2>
+                <span class="card-tag live-tag">● REAL-TIME INGESTION</span>
+              </div>
+              <button class="btn btn-secondary btn-xs" onclick="loadOverviewLiveFeed(true)" title="Refresh live feed">↻ Refresh</button>
+            </div>
+            <div class="overview-feed-list" id="overview-live-feed">
+              <div style="text-align:center; padding:20px; color:var(--text-muted); font-size:12px;">Loading live threat stream...</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROW 4: Recent Correlated Security Incidents (Left) + Security Engine Health Summary (Right) -->
+        <div class="overview-grid-row overview-row-4">
+          <!-- Recent Security Incidents Table -->
+          <div class="card overview-recent-card">
+            <div class="card-header">
+              <div style="display:flex; align-items:center; gap:10px;">
+                <h2 class="card-title">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                  Recent Correlated Security Incidents
+                </h2>
+                <span class="overview-count-badge" id="overview-recent-count">0 incidents</span>
+              </div>
+              <button class="btn btn-secondary btn-xs" onclick="showTab('security-center')">
+                View All in Security Center →
+              </button>
+            </div>
+            <div class="overview-recent-table-wrap">
+              <table class="overview-recent-table">
+                <thead>
+                  <tr>
+                    <th>Incident ID</th>
+                    <th>Category</th>
+                    <th>Risk Level</th>
+                    <th>Status</th>
+                    <th>First Seen</th>
+                    <th>Asset / Indicator</th>
+                    <th style="text-align:right;">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="overview-recent-tbody">
+                  <tr><td colspan="7" class="overview-loading-row">Fetching recent incidents...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Security Engine Health Summary Card -->
+          <div class="card overview-engine-summary-card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                Security Engine Health
+              </h2>
+              <span class="card-tag live-tag">● 10 OPERATIONAL</span>
+            </div>
+            <div class="engine-summary-grid">
+              <div class="engine-summary-box">
+                <div class="engine-box-title">Voice &amp; Identity</div>
+                <div class="engine-box-status"><span id="pipe-voice-status" class="pipeline-status-badge status-ready">ACTIVE</span></div>
+                <div class="engine-box-sub">Biometrics + Clone VAD</div>
+              </div>
+              <div class="engine-summary-box">
+                <div class="engine-box-title">Phishing &amp; Web</div>
+                <div class="engine-box-status"><span id="pipe-speaker-status" class="pipeline-status-badge status-ready">READY</span></div>
+                <div class="engine-box-sub">URL + QR + NLP</div>
+              </div>
+              <div class="engine-summary-box">
+                <div class="engine-box-title">Threat Intel</div>
+                <div class="engine-box-status"><span id="pipe-vt-status" class="pipeline-status-badge status-ready">READY</span></div>
+                <div class="engine-box-sub">VT v3 + URLhaus</div>
+              </div>
+              <div class="engine-summary-box">
+                <div class="engine-box-title">Realtime Infra</div>
+                <div class="engine-box-status"><span id="pipe-uh-status" class="pipeline-status-badge status-ready">ACTIVE</span></div>
+                <div class="engine-box-sub">WebSocket + Audio Sync</div>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-full btn-xs" onclick="openSystemHealthModal()">
+              Open System Health Diagnostic Drawer →
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 2: THREAT MONITORING — REAL-TIME TELEMETRY WORKSTATION
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-monitor">
+      <div class="monitor-grid">
+
+        <!-- Col 1 Top: Risk Gauge Card -->
+        <div class="card risk-card" id="risk-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              Real-Time Risk Score
+            </h2>
+            <div class="session-badge" id="session-label">No Session</div>
+          </div>
+
+          <div class="gauge-container">
+            <canvas id="gaugeCanvas" width="280" height="160"></canvas>
+            <div class="gauge-value" id="gauge-value">0.00</div>
+            <div class="gauge-label" id="gauge-label">SCANNING...</div>
+          </div>
+
+          <div class="risk-meta">
+            <div class="risk-stat">
+              <span class="stat-label">Peak</span>
+              <span class="stat-value" id="peak-risk">—</span>
+            </div>
+            <div class="risk-stat">
+              <span class="stat-label">Mean</span>
+              <span class="stat-value" id="mean-risk">—</span>
+            </div>
+            <div class="risk-stat">
+              <span class="stat-label">Chunks</span>
+              <span class="stat-value" id="chunk-count">0</span>
+            </div>
+            <div class="risk-stat">
+              <span class="stat-label">Latency</span>
+              <span class="stat-value" id="latency">—</span>
+            </div>
+          </div>
+
+          <div class="sparkline-container">
+            <div class="sparkline-header">
+              <span>ROLLING RISK SPARKLINE</span>
+              <span id="sparkline-trend">Live Buffer</span>
+            </div>
+            <canvas id="riskSparkline" height="34"></canvas>
+          </div>
+        </div>
+
+        <!-- Col 2 Top: Alert & Current Security State -->
+        <div class="card alert-card" id="alert-card-main">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              Alert Status &amp; Defense State
+            </h2>
+            <span class="card-tag">TELEMETRY MONITOR</span>
+          </div>
+
+          <div class="alert-display" id="alert-display">
+            <div class="alert-icon-wrap safe" id="alert-icon-wrap">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <polyline points="9 12 11 14 15 10" />
+              </svg>
+            </div>
+            <div class="alert-content">
+              <h3 class="alert-title" id="alert-title">System Ready</h3>
+              <p class="alert-message" id="alert-message">Start a live session or upload an audio file to begin real-time analysis.</p>
+            </div>
+            <div class="alert-actions" id="alert-actions"></div>
+          </div>
+        </div>
+
+        <!-- Col 1 Bottom: Live Session Controls -->
+        <div class="card controls-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              Live Session Controls
+            </h2>
+            <button class="btn btn-xs btn-secondary" onclick="openSessionLogsModal()" title="Inspect complete session logs">
+              Expand Logs ↗
+            </button>
+          </div>
+
+          <div class="controls-body">
+            <div class="speaker-select-wrap">
+              <label class="form-label" for="live-speaker-id">Speaker Profile (Optional)</label>
+              <div style="display:flex; gap:6px;">
+                <select class="form-select" id="live-speaker-id" style="flex:1;">
+                  <option value="">None (No Consistency Check)</option>
+                </select>
+                <button class="btn btn-xs btn-secondary" onclick="refreshSpeakers()" title="Refresh enrolled profiles">↻</button>
+              </div>
+            </div>
+
+            <div class="session-buttons">
+              <button class="btn btn-primary btn-lg" id="start-live-btn" onclick="startLiveSession()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10" />
+                  <circle cx="12" cy="12" r="3" fill="currentColor" />
+                </svg>
+                Start Live Analysis
+              </button>
+              <button class="btn btn-danger btn-lg hidden" id="stop-live-btn" onclick="stopLiveSession()">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <rect x="4" y="4" width="16" height="16" rx="2" />
+                </svg>
+                Stop Session
+              </button>
+            </div>
+
+            <div class="live-indicator hidden" id="live-indicator">
+              <div class="pulse-dot"></div>
+              <span>LIVE — Analyzing audio stream...</span>
+            </div>
+
+            <div class="ws-log" id="ws-log">
+              <div class="log-entry info">System initialized. Ready to begin analysis.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Col 2 Bottom: Speaker Identity & Consistency -->
+        <div class="card consistency-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                <circle cx="12" cy="7" r="4" />
+              </svg>
+              Speaker Consistency &amp; Biometrics
+            </h2>
+            <span class="card-tag">ECAPA-TDNN</span>
+          </div>
+          <div class="consistency-display">
+            <div class="identity-meter">
+              <div class="identity-bar-bg">
+                <div class="identity-bar" id="identity-bar" style="width: 0%"></div>
+              </div>
+              <span class="identity-pct" id="identity-pct">—</span>
+            </div>
+            <div class="identity-labels">
+              <span>Mismatch</span>
+              <span>Match</span>
+            </div>
+            <div class="identity-status" id="identity-status">No enrolled speaker</div>
+          </div>
+
+          <div class="feature-pills" id="feature-pills">
+            <div class="feature-pill active" id="pill-mfcc">MFCC (40)</div>
+            <div class="feature-pill active" id="pill-mel">Log-Mel (80)</div>
+            <div class="feature-pill active" id="pill-prosodic">Prosodic</div>
+            <div class="feature-pill" id="pill-wav2vec">Wav2Vec2</div>
+            <div class="feature-pill" id="pill-speaker">ECAPA-192</div>
+          </div>
+        </div>
+
+        <!-- Row 3 (Full Width): Temporal Risk Timeline -->
+        <div class="card timeline-card" style="grid-column: 1 / -1;">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+              </svg>
+              Temporal Risk Timeline
+            </h2>
+            <div class="timeline-controls">
+              <button class="btn btn-xs btn-secondary" id="clear-timeline" onclick="clearTimeline()">Clear Buffer</button>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="riskTimeline"></canvas>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 3: VOICE ANALYSIS WORKSTATION
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-analyze">
+      <div class="analyze-workspace">
+
+        <!-- Modern Horizontal Pipeline Stepper -->
+        <div class="pipeline-stepper" id="analyze-pipeline-stepper">
+          <div class="stepper-step completed" id="step-1">
+            <div class="stepper-circle">1</div>
+            <span class="stepper-label">Ingestion</span>
+          </div>
+          <div class="stepper-line" id="line-1"></div>
+          <div class="stepper-step" id="step-2">
+            <div class="stepper-circle">2</div>
+            <span class="stepper-label">VAD Stripping</span>
+          </div>
+          <div class="stepper-line" id="line-2"></div>
+          <div class="stepper-step" id="step-3">
+            <div class="stepper-circle">3</div>
+            <span class="stepper-label">Feature Extraction</span>
+          </div>
+          <div class="stepper-line" id="line-3"></div>
+          <div class="stepper-step" id="step-4">
+            <div class="stepper-circle">4</div>
+            <span class="stepper-label">Model Inference</span>
+          </div>
+          <div class="stepper-line" id="line-4"></div>
+          <div class="stepper-step" id="step-5">
+            <div class="stepper-circle">5</div>
+            <span class="stepper-label">Risk &amp; Verdict</span>
+          </div>
+        </div>
+
+        <div class="analyze-grid">
+          <!-- Left Column: Audio Upload Card -->
+          <div class="card upload-card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="17 8 12 3 7 8" />
+                  <line x1="12" y1="3" x2="12" y2="15" />
+                </svg>
+                Upload Audio File
+              </h2>
+            </div>
+
+            <div class="upload-zone" id="upload-zone" onclick="document.getElementById('file-input').click()"
+              ondragover="onDragOver(event)" ondrop="onDrop(event)">
+              <input type="file" id="file-input" accept="audio/*,video/*" style="display:none"
+                onchange="onFileSelect(event)" />
+              <div class="upload-icon">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v4" stroke-linecap="round" />
+                </svg>
+              </div>
+              <p class="upload-text">Drop audio or video file here or click to browse</p>
+              <p class="upload-hint">16kHz mono PCM · WebRTC VAD silence stripping<br><small>MP3, WAV, M4A, FLAC, OGG, MP4, MKV, MOV, WebM</small></p>
+              <div class="file-selected hidden" id="file-selected"></div>
+              <canvas id="audio-waveform-canvas" class="audio-waveform-canvas hidden"></canvas>
+            </div>
+
+            <div class="analyze-options">
+              <label class="form-label" for="analyze-speaker-id">Reference Speaker Profile (Optional)</label>
+              <select class="form-select" id="analyze-speaker-id">
+                <option value="">None (Voice Cloning Detection Only)</option>
+              </select>
+            </div>
+
+            <button class="btn btn-primary btn-full" id="analyze-btn" onclick="analyzeFile()" disabled>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              Analyze Audio
+            </button>
+          </div>
+
+          <!-- Right Column: Forensic Analysis Results -->
+          <div class="card results-card" id="results-card">
+            <div class="card-header">
+              <h2 class="card-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+                </svg>
+                Voice Forensic Assessment
+              </h2>
+            </div>
+            <div class="results-body" id="results-body">
+              <div class="results-empty">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.35">
+                  <circle cx="11" cy="11" r="8" />
+                  <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                </svg>
+                <p>No audio analysis results yet. Drop an audio or video file to start forensic evaluation.</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 4: PHISHING & URL THREAT INTELLIGENCE WORKSPACE
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-threats">
+      <!-- Segmented Sub-Navigation -->
+      <div class="threat-subnav" id="threat-subnav">
+        <button class="threat-subnav-btn active" onclick="switchThreatSubTab('all', this)">All Tools</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('phishing', this)">Phishing &amp; Text Scanner</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('qr', this)">QR Forensic Analysis</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('intel', this)">Threat Intelligence Lookup</button>
+      </div>
+
+      <div class="analyze-grid">
+
+        <!-- Content & URL Scanner Card -->
+        <div class="card phish-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+              </svg>
+              Phishing &amp; Text Scanner
+            </h2>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="threat-text">Scan Text, Message or URL</label>
+            <textarea class="form-input" id="threat-text" rows="4"
+              placeholder="Paste email text, SMS message, or URL (e.g. https://...)"></textarea>
+          </div>
+          <button class="btn btn-primary btn-full" onclick="scanThreat()">Scan Content</button>
+
+          <div style="margin-top:16px; border-top: 1px solid var(--border-subtle); padding-top:14px;">
+            <label class="form-label" for="qr-input">Or Scan QR Code Image</label>
+            <input type="file" id="qr-input" accept="image/*" class="form-input" style="width:100%;" />
+            <button class="btn btn-secondary btn-full" style="margin-top:8px;" onclick="scanQR()">Scan QR Image</button>
+          </div>
+        </div>
+
+        <!-- Threat Intelligence Search Card -->
+        <div class="card intel-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              Threat Intelligence Search
+            </h2>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <div class="session-badge vt-connecting" id="vt-status" title="VirusTotal Threat Intelligence (Click to refresh)" onclick="refreshVirusTotalStatus(true)" style="cursor:pointer;">VirusTotal: Connecting...</div>
+              <div class="session-badge vt-connecting" id="uh-status" title="URLhaus Malware Intelligence (Click to refresh)" onclick="refreshURLhausStatus(true)" style="cursor:pointer;">URLhaus: Connecting...</div>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="ioc-input">Indicator of Compromise (IOC)</label>
+            <input class="form-input" id="ioc-input" placeholder="SHA-256 Hash, URL, Domain, or IP address..."
+              onkeydown="if(event.key==='Enter') searchIOC()" />
+            <div style="display:flex; gap:6px; margin-top:4px; font-size:10.5px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+              <span>Supported:</span>
+              <span class="badge" style="background:rgba(255,255,255,0.04); color:#94a3b8;">HASH</span>
+              <span class="badge" style="background:rgba(255,255,255,0.04); color:#94a3b8;">URL</span>
+              <span class="badge" style="background:rgba(255,255,255,0.04); color:#94a3b8;">DOMAIN</span>
+              <span class="badge" style="background:rgba(255,255,255,0.04); color:#94a3b8;">IP</span>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-full" style="margin-top:14px;" onclick="searchIOC()">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            Search Intelligence
+          </button>
+        </div>
+
+        <!-- Full-Width Results Container -->
+        <div class="card" id="threat-results-card" style="grid-column: 1 / -1;">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+              Threat Intelligence &amp; Forensic Analysis Results
+            </h2>
+          </div>
+          <div class="results-body" id="threat-results-body">
+            <div class="results-empty">
+              <p>No scans performed yet. Search an IOC or scan a URL/QR code above.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 5: VOICE IDENTITY BIOMETRIC WORKSPACE
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-enroll">
+      <div class="enroll-grid">
+
+        <!-- Left Column: Enrollment Form -->
+        <div class="card enroll-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="8.5" cy="7" r="4" />
+                <line x1="20" y1="8" x2="20" y2="14" />
+                <line x1="23" y1="11" x2="17" y2="11" />
+              </svg>
+              Enroll Speaker Profile
+            </h2>
+          </div>
+
+          <div class="enroll-info">
+            <div class="info-callout">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span>ECAPA-TDNN Biometric Centroid: Upload 5+ reference audio files for optimal consistency scoring.</span>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="enroll-name">Full Name *</label>
+            <input class="form-input" type="text" id="enroll-name" placeholder="e.g. Rajesh Kumar" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="enroll-org">Organization</label>
+            <input class="form-input" type="text" id="enroll-org" placeholder="e.g. Financial Services" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="enroll-role">Role</label>
+            <input class="form-input" type="text" id="enroll-role" placeholder="e.g. Finance Officer" />
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="enroll-id">Speaker ID (optional, auto-generated if empty)</label>
+            <input class="form-input" type="text" id="enroll-id" placeholder="e.g. spk_rm_001" />
+          </div>
+
+          <div class="upload-zone-sm" id="enroll-zone" onclick="document.getElementById('enroll-files').click()"
+            ondragover="onDragOver(event)" ondrop="onEnrollDrop(event)">
+            <input type="file" id="enroll-files" accept="audio/*" multiple style="display:none"
+              onchange="onEnrollFilesSelected(event)" />
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.7">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="17 8 12 3 7 8" />
+              <line x1="12" y1="3" x2="12" y2="15" />
+            </svg>
+            <p>Click or drop reference audio files</p>
+            <div id="enroll-file-count" class="file-count-badge hidden"></div>
+          </div>
+
+          <button class="btn btn-primary btn-full" id="enroll-btn" onclick="enrollSpeaker()" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+              <line x1="12" y1="3" x2="12" y2="9" />
+              <line x1="9" y1="6" x2="15" y2="6" />
+            </svg>
+            Enroll Speaker
+          </button>
+
+          <div class="enroll-result hidden" id="enroll-result"></div>
+        </div>
+
+        <!-- Right Column: Enrolled Speakers List -->
+        <div class="card speakers-list-card">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Enrolled Biometric Profiles
+            </h2>
+            <button class="btn btn-xs btn-secondary" onclick="loadSpeakers()">↻ Refresh</button>
+          </div>
+          <div class="speakers-list" id="speakers-list">
+            <div class="speakers-empty">
+              <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" opacity="0.3" style="margin-bottom:10px;">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
+              </svg>
+              <div style="font-weight:600; color:#f1f5f9; margin-bottom:4px;">NO SPEAKER PROFILES ENROLLED</div>
+              <div style="font-size:12px; color:#64748b; max-width:380px; margin:0 auto; line-height:1.5;">
+                Upload verified reference audio samples on the left to establish a 1920-dim ECAPA-TDNN biometric centroid for live voice verification.
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 6: SECURITY CENTER — PROFESSIONAL SOC INCIDENT & ALERT CONSOLE
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-security-center">
+      <div class="sc-container">
+
+        <!-- Header & Top-Level Security Summary Card -->
+        <div class="card sc-main-card">
+          <div class="sc-header">
+            <div>
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <h1 class="card-title" style="font-size:15px; letter-spacing:0.6px; margin:0;">SECURITY CENTER CONSOLE</h1>
+                <span class="sc-live-badge live" id="sc-live-status">
+                  <span class="sc-live-dot"></span> LIVE
+                </span>
+              </div>
+              <div style="font-size:11.5px; color:var(--text-secondary); margin-top:2px;">
+                Real-time incident management, alert routing and multi-pipeline threat activity.
+              </div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-xs" id="sc-thresh-toggle-btn" onclick="toggleThresholdPanel()">
+                ⚙ Alert Thresholds
+              </button>
+              <button class="btn btn-primary btn-xs" onclick="loadSecurityCenterData()">
+                ↻ Refresh Console
+              </button>
+            </div>
+          </div>
+
+          <!-- Alert Thresholds Collapsible Panel -->
+          <div id="sc-thresholds-panel" class="sc-thresholds-panel hidden">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+              <div style="font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; color:#f1f5f9;">
+                Alert Thresholds Configuration
+              </div>
+              <span style="font-size:10.5px; color:var(--text-muted);">Runtime configuration · LOW &lt; MEDIUM &lt; HIGH &lt; CRITICAL</span>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; align-items:end;">
+              <div>
+                <label class="form-label threshold-label safe" for="thr-low" style="display:block; margin-bottom:4px;">LOW Alert</label>
+                <input class="form-input threshold-input" style="width:100%; text-align:center;" type="number"
+                  id="thr-low" step="0.05" min="0" max="1" value="0.35" />
+              </div>
+              <div>
+                <label class="form-label threshold-label medium" for="thr-medium" style="display:block; margin-bottom:4px;">MEDIUM Alert</label>
+                <input class="form-input threshold-input" style="width:100%; text-align:center;" type="number"
+                  id="thr-medium" step="0.05" min="0" max="1" value="0.60" />
+              </div>
+              <div>
+                <label class="form-label threshold-label high" for="thr-high" style="display:block; margin-bottom:4px;">HIGH Alert</label>
+                <input class="form-input threshold-input" style="width:100%; text-align:center;" type="number"
+                  id="thr-high" step="0.05" min="0" max="1" value="0.80" />
+              </div>
+              <div>
+                <button class="btn btn-primary btn-full" onclick="updateThresholds()" style="padding:8px;">Apply Thresholds</button>
+              </div>
+            </div>
+            <div class="threshold-result hidden" id="threshold-result" style="margin-top:8px;"></div>
+          </div>
+
+          <!-- Security Posture & Metrics Summary -->
+          <div class="sc-stats-grid" id="sc-summary-stats">
+            <div class="sc-stat-card">
+              <div class="sc-stat-label">Security Posture</div>
+              <div class="sc-stat-value" id="sc-posture-badge"><span class="badge" style="background:rgba(255,255,255,0.06);color:#64748b;">Loading…</span></div>
+              <div class="sc-stat-desc" id="sc-posture-desc">Fetching current state</div>
+            </div>
+            <div class="sc-stat-card">
+              <div class="sc-stat-label">Active Threats</div>
+              <div class="sc-stat-value text-threat" id="sc-stat-threats">…</div>
+              <div class="sc-stat-desc">Threat events detected</div>
+            </div>
+            <div class="sc-stat-card">
+              <div class="sc-stat-label">Open Incidents</div>
+              <div class="sc-stat-value text-warning" id="sc-stat-incidents">…</div>
+              <div class="sc-stat-desc">Under investigation</div>
+            </div>
+            <div class="sc-stat-card">
+              <div class="sc-stat-label">Recent Alerts</div>
+              <div class="sc-stat-value text-cyan" id="sc-stat-alerts">…</div>
+              <div class="sc-stat-desc">Dispatched across sessions</div>
+            </div>
+            <div class="sc-stat-card">
+              <div class="sc-stat-label">High / Critical</div>
+              <div class="sc-stat-value" id="sc-stat-critical" style="color:#ef4444;">…</div>
+              <div class="sc-stat-desc">Elevated priority events</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Incident Velocity Trend & Category Mix Analytics Strip -->
+        <div class="sc-charts-row" id="sc-charts-row">
+          <div class="card sc-chart-card">
+            <div class="card-header" style="margin-bottom:6px;">
+              <h3 class="card-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                Incident Ingestion Velocity &amp; Trend
+              </h3>
+              <span class="card-tag">HISTORICAL ANALYSIS</span>
+            </div>
+            <div class="sc-chart-container">
+              <canvas id="scTrendChart"></canvas>
+            </div>
+          </div>
+
+          <div class="card sc-chart-card">
+            <div class="card-header" style="margin-bottom:6px;">
+              <h3 class="card-title">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>
+                Threat Category Mix
+              </h3>
+              <span class="card-tag">BREAKDOWN</span>
+            </div>
+            <div class="sc-chart-container">
+              <canvas id="scCategoryMix"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Filter & Search Toolbar Card -->
+        <div class="card sc-toolbar-card">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap;">
+            <div class="sc-filter-group" id="sc-filter-pills">
+              <button class="btn btn-xs btn-primary sc-filter-btn active" data-filter="all"
+                onclick="filterSecurityCenter('all')">All</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="INCIDENT"
+                onclick="filterSecurityCenter('INCIDENT')">Incidents</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="ALERT"
+                onclick="filterSecurityCenter('ALERT')">Alerts</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="THREAT"
+                onclick="filterSecurityCenter('THREAT')">Threats</button>
+              <span class="sc-filter-divider"></span>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="active"
+                onclick="filterSecurityCenter('active')">Active</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="NEW"
+                onclick="filterSecurityCenter('NEW')">New</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="INVESTIGATING"
+                onclick="filterSecurityCenter('INVESTIGATING')">Investigating</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="CONTAINED"
+                onclick="filterSecurityCenter('CONTAINED')">Contained</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="RESOLVED"
+                onclick="filterSecurityCenter('RESOLVED')">Resolved</button>
+              <span class="sc-filter-divider"></span>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="CRITICAL"
+                onclick="filterSecurityCenter('CRITICAL')">Critical</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="HIGH"
+                onclick="filterSecurityCenter('HIGH')">High</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="MEDIUM"
+                onclick="filterSecurityCenter('MEDIUM')">Medium</button>
+              <button class="btn btn-xs btn-secondary sc-filter-btn" data-filter="LOW"
+                onclick="filterSecurityCenter('LOW')">Low</button>
+            </div>
+            <div style="min-width:200px; flex:1; max-width:280px;">
+              <input type="text" id="sc-search-input" class="form-input"
+                style="padding:6px 12px; font-size:12px; width:100%;"
+                placeholder="Search ID, category, title, source..." oninput="searchSecurityCenter(this.value)" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Main Unified Security Center Table Card -->
+        <div class="card">
+          <div class="card-header" style="margin-bottom:10px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Security Records</h2>
+              <span style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;" id="sc-item-count">0 records</span>
+            </div>
+          </div>
+          <div class="history-table-wrap" id="sc-table-wrap">
+            <div class="history-empty">Loading security activity...</div>
+          </div>
+          <div class="sc-pagination" id="sc-pagination">
+            <span id="sc-pagination-info"><span id="sc-page-info">Showing records 1 to 25 of 100</span></span>
+            <div style="display:flex; gap:6px;">
+              <button class="btn btn-xs btn-secondary" id="sc-prev-btn" onclick="prevSCPage()" disabled>Previous</button>
+              <button class="btn btn-xs btn-secondary" id="sc-next-btn" onclick="nextSCPage()">Next</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Real-Time Activity Feed Card -->
+        <div class="card">
+          <div class="card-header" style="margin-bottom:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Live Security Activity Stream</h2>
+              <span class="card-tag live-tag">LIVE FEED</span>
+            </div>
+            <span style="font-size:11px; color:var(--text-muted);">Real-time event arrival window</span>
+          </div>
+          <div id="sc-live-feed" class="sc-live-feed">
+            <div class="sc-feed-empty" style="text-align:center; padding:16px; color:var(--text-muted); font-size:12px;">
+              Waiting for incoming security activity...
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 7: ANALYSIS & TRAINING REVIEW QUEUE (ADMIN ONLY)
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-review">
+      <div class="overview-container">
+        
+        <div class="card overview-hero-card">
+          <div class="overview-hero-inner">
+            <div class="overview-title-group">
+              <div class="overview-eyebrow">
+                <span class="pulse-indicator"></span>
+                HUMAN-IN-THE-LOOP CONTINUOUS LEARNING REVIEW
+              </div>
+              <h1 class="overview-title">Analysis &amp; Ground-Truth Verification Queue</h1>
+              <p class="overview-subtitle">
+                Review submitted voice cloning analyses, inspect model predictions and feature telemetry, 
+                and assign verified ground-truth labels for controlled retraining. Model predictions are NEVER automatically used as training labels.
+              </p>
+            </div>
+            <div class="overview-kpis">
+              <div class="hero-kpi-card">
+                <span class="hero-kpi-val" id="review-kpi-pending">0</span>
+                <span class="hero-kpi-label">PENDING REVIEWS</span>
+              </div>
+              <div class="hero-kpi-card">
+                <span class="hero-kpi-val" id="review-kpi-approved" style="color:var(--accent-green);">0</span>
+                <span class="hero-kpi-label">APPROVED FOR RETRAINING</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Review Controls & Queue Table Card -->
+        <div class="card">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Submitted Audio Verification Queue</h2>
+              <span class="card-tag" id="review-count-tag">0 ITEMS</span>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <select id="review-status-filter" class="form-input" style="padding:4px 10px; font-size:12px; height:32px;" onchange="loadReviewQueue()">
+                <option value="">All Statuses</option>
+                <option value="PENDING" selected>Pending Review</option>
+                <option value="APPROVED">Approved for Training</option>
+                <option value="REJECTED">Rejected / Inconclusive</option>
+              </select>
+              <button class="btn btn-xs btn-secondary" onclick="loadReviewQueue()">↻ Refresh Queue</button>
+            </div>
+          </div>
+
+          <div style="overflow-x:auto;">
+            <table class="sc-table" id="review-queue-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Date &amp; Time</th>
+                  <th>Submitter</th>
+                  <th>Filename</th>
+                  <th>Duration</th>
+                  <th>Detector Version</th>
+                  <th>Model Score</th>
+                  <th>Risk Level</th>
+                  <th>Review Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="review-queue-tbody">
+                <tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-muted);">Loading review queue...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 8: ADMIN COMMAND & CONTINUOUS LEARNING CONSOLE (ADMIN ONLY)
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-admin">
+      <div class="overview-container">
+
+        <div class="card overview-hero-card">
+          <div class="overview-hero-inner">
+            <div class="overview-title-group">
+              <div class="overview-eyebrow">
+                <span class="pulse-indicator"></span>
+                SOC ADMINISTRATIVE COMMAND CENTER
+              </div>
+              <h1 class="overview-title">User Management &amp; Model Lineage Console</h1>
+              <p class="overview-subtitle">
+                Manage user privileges, inspect production model checkpoints, trigger background candidate retraining, 
+                and execute atomic promotions and one-click rollbacks.
+              </p>
+            </div>
+            <div class="overview-kpis">
+              <div class="hero-kpi-card">
+                <span class="hero-kpi-val" id="admin-kpi-active-version" style="color:var(--accent-cyan);">v001</span>
+                <span class="hero-kpi-label">ACTIVE DETECTOR</span>
+              </div>
+              <div class="hero-kpi-card">
+                <span class="hero-kpi-val" id="admin-kpi-queue-samples" style="color:var(--accent-amber);">0</span>
+                <span class="hero-kpi-label">TRAINING QUEUE POOL</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 1: Continuous Learning & Model Upgrades -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Continuous Learning &amp; Candidate Model Gates</h2>
+              <span class="card-tag live-tag">AUTONOMOUS RETRAINING</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-xs btn-primary" onclick="openRetrainTriggerModal()">⚡ Trigger Retraining Job</button>
+              <button class="btn btn-xs btn-secondary" onclick="loadAdminTrainingStatus()">↻ Refresh</button>
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; padding:16px;">
+            <div class="hero-kpi-card" style="text-align:left; background:rgba(255,255,255,0.02); padding:16px; border-radius:8px;">
+              <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Production Checkpoint</div>
+              <div style="font-size:16px; font-weight:700; color:#38bdf8; margin:6px 0;" id="prod-model-path">backend/models/weights/detector.pt</div>
+              <div style="font-size:11.5px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;" id="prod-model-sha">SHA: d5d7112936ac04821a80...</div>
+            </div>
+            
+            <div class="hero-kpi-card" style="text-align:left; background:rgba(255,255,255,0.02); padding:16px; border-radius:8px;">
+              <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Training Queue Status</div>
+              <div style="font-size:16px; font-weight:700; color:var(--accent-amber); margin:6px 0;" id="queue-status-text">0 Approved Samples Waiting</div>
+              <div style="font-size:11.5px; color:var(--text-muted);">Replay buffer protects against catastrophic forgetting</div>
+            </div>
+
+            <div class="hero-kpi-card" style="text-align:left; background:rgba(255,255,255,0.02); padding:16px; border-radius:8px;">
+              <div style="font-size:11px; color:var(--text-muted); font-weight:600; text-transform:uppercase;">Model Rollback</div>
+              <div style="display:flex; gap:6px; margin-top:8px;">
+                <select id="rollback-version-select" class="form-input" style="font-size:11.5px; padding:4px 8px; flex:1;">
+                  <option value="v001">v001 (Baseline)</option>
+                </select>
+                <button class="btn btn-xs btn-danger" onclick="submitRollback()">Rollback</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Training Runs & Promotion Gates Table -->
+          <div style="padding:0 16px 16px 16px;">
+            <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase;">Recent Retraining Runs &amp; Candidate Gates</div>
+            <div style="overflow-x:auto;">
+              <table class="sc-table" id="training-runs-table">
+                <thead>
+                  <tr>
+                    <th>Run ID</th>
+                    <th>Status</th>
+                    <th>Base Version</th>
+                    <th>Samples</th>
+                    <th>Validation F1</th>
+                    <th>Validation EER</th>
+                    <th>Candidate SHA-256</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="training-runs-tbody">
+                  <tr><td colspan="8" style="text-align:center; padding:16px; color:var(--text-muted);">Loading training runs...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 2: User Management -->
+        <div class="card" style="margin-bottom:20px;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">User Accounts &amp; Access Control</h2>
+              <span class="card-tag">RBAC</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-xs btn-primary" onclick="openCreateUserModal()">+ Create User</button>
+              <button class="btn btn-xs btn-secondary" onclick="loadAdminUsers()">↻ Refresh</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="sc-table" id="admin-users-table">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Username</th>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Created</th>
+                  <th>Last Login</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-tbody">
+                <tr><td colspan="8" style="text-align:center; padding:16px; color:var(--text-muted);">Loading users...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 3: Administrative Audit Logs -->
+        <div class="card">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Administrative Audit Trail</h2>
+              <span class="card-tag">TAMPER-EVIDENT</span>
+            </div>
+            <button class="btn btn-xs btn-secondary" onclick="loadAdminAuditLogs()">↻ Refresh</button>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="sc-table" id="admin-audit-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Actor</th>
+                  <th>Role</th>
+                  <th>Action</th>
+                  <th>Target</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="admin-audit-tbody">
+                <tr><td colspan="6" style="text-align:center; padding:16px; color:var(--text-muted);">Loading audit logs...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Toast Notification Stack -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Security Center Incident Detail Slide-in Drawer -->
+  <div class="modal-overlay hidden" id="security-center-modal" onclick="if(event.target===this) closeSCModal()">
+    <div class="modal-card modal-drawer">
+      <div class="modal-drawer-header">
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <h2 class="card-title" id="modal-sc-title" style="font-size:15px; margin:0;">Security Record Detail</h2>
+          <div style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;" id="modal-sc-subtitle"></div>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeSCModal()" aria-label="Close dialog">✕ Close</button>
+      </div>
+      <div class="modal-drawer-body" id="modal-sc-body">
+        <!-- Populated dynamically -->
+      </div>
+    </div>
+  </div>
+
+  <!-- System Health & Engine Diagnostics Modal -->
+  <div class="modal-overlay hidden" id="system-health-modal" onclick="if(event.target===this) closeSystemHealthModal()">
+    <div class="card modal-card" style="max-width:860px; width:95%; max-height:88vh; overflow-y:auto; margin:auto;">
+      <div class="card-header"
+        style="position:sticky; top:0; background:rgba(11,17,32,0.96); backdrop-filter:blur(12px); z-index:10; border-bottom:1px solid var(--border-subtle); padding:12px 16px; margin-bottom:0;">
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <h2 class="card-title" style="font-size:14px; margin:0; display:flex; align-items:center; gap:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            System Health &amp; Security Engine Diagnostics
+          </h2>
+          <div style="font-size:10.5px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+            Real-time pipeline diagnostics · 12 Core Detection Services
+          </div>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeSystemHealthModal()" aria-label="Close dialog">✕ Close</button>
+      </div>
+      <div class="modal-body" style="padding:16px;">
+        
+        <!-- Group 1: Voice & Biometrics -->
+        <div class="health-group">
+          <div class="health-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+            Voice &amp; Biometric Identity Engines
+          </div>
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-voice-clone')">
+            <div class="health-item-top">
+              <span class="health-engine-name">Voice Clone &amp; Deepfake Detector</span>
+              <span class="pipeline-status-badge status-ready" id="sh-voice-status">ACTIVE</span>
+            </div>
+            <div class="health-engine-desc">Dual CNN-BiLSTM acoustic neural network with WebRTC VAD silence stripping</div>
+            <div class="health-detail-drawer hidden" id="det-voice-clone">
+              <div>Sample Rate: 16,000 Hz Mono</div>
+              <div>Inference Mode: PyTorch / ONNX Fallback</div>
+              <div>Input Window: 2.0s rolling chunks</div>
+              <div>Accuracy: 98.4% benchmark</div>
+            </div>
+          </div>
+
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-ecapa')">
+            <div class="health-item-top">
+              <span class="health-engine-name">SpeechBrain ECAPA-TDNN Speaker Biometrics</span>
+              <span class="pipeline-status-badge status-ready" id="sh-speaker-status">READY</span>
+            </div>
+            <div class="health-engine-desc">192-dimensional speaker embedding centroid verification</div>
+            <div class="health-detail-drawer hidden" id="det-ecapa">
+              <div>Embedding Dim: 192 features</div>
+              <div>Metric: Cosine Centroid Distance</div>
+              <div>Consistency Threshold: 0.72 EER</div>
+              <div>Reference Requirement: 5+ audio files</div>
+            </div>
+          </div>
+
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-wav2vec')">
+            <div class="health-item-top">
+              <span class="health-engine-name">Wav2Vec 2.0 Acoustic Representations</span>
+              <span class="pipeline-status-badge status-ready">READY</span>
+            </div>
+            <div class="health-engine-desc">Self-supervised transformer phoneme and temporal acoustic modeling</div>
+            <div class="health-detail-drawer hidden" id="det-wav2vec">
+              <div>Transformer Layers: 12 Encoder Blocks</div>
+              <div>Quantization: FP16 Latent Codebook</div>
+              <div>Spectral Features: MFCC (40) + Log-Mel (80)</div>
+              <div>Latency: &lt; 45ms per frame</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Group 2: Phishing & Web -->
+        <div class="health-group">
+          <div class="health-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/></svg>
+            Phishing &amp; Web Defense Engines
+          </div>
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-phish')">
+            <div class="health-item-top">
+              <span class="health-engine-name">Phishing &amp; Social Engineering Analyzer</span>
+              <span class="pipeline-status-badge status-ready">ACTIVE</span>
+            </div>
+            <div class="health-engine-desc">Urgency language, credential request, and impersonation pattern heuristics</div>
+            <div class="health-detail-drawer hidden" id="det-phish">
+              <div>Text Modalities: SMS, Email, Prompt, Chat</div>
+              <div>NLP Heuristics: Financial urgency, Auth spoofing</div>
+              <div>Risk Scoring: Multi-factor composite weight</div>
+              <div>Latency: &lt; 8ms execution</div>
+            </div>
+          </div>
+
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-qr')">
+            <div class="health-item-top">
+              <span class="health-engine-name">QR Forensic Analyzer &amp; Parser</span>
+              <span class="pipeline-status-badge status-ready">READY</span>
+            </div>
+            <div class="health-engine-desc">OpenCV image pre-processing with pyzbar forensic payload extraction</div>
+            <div class="health-detail-drawer hidden" id="det-qr">
+              <div>Payload Support: URL, vCard, Text, WiFi, Crypto</div>
+              <div>Pre-processing: Grayscale, Otsu thresholding</div>
+              <div>Redirect Analysis: Safe HTTP redirect crawler</div>
+              <div>Sandboxing: Headless verification</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Group 3: External Threat Intelligence -->
+        <div class="health-group">
+          <div class="health-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            External Threat Intelligence Feeds
+          </div>
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-vt')">
+            <div class="health-item-top">
+              <span class="health-engine-name">VirusTotal API v3 Multi-Engine Feed</span>
+              <span class="pipeline-status-badge status-ready" id="sh-vt-status">READY</span>
+            </div>
+            <div class="health-engine-desc">70+ security vendor consensus, file hash, domain and URL intelligence</div>
+            <div class="health-detail-drawer hidden" id="det-vt">
+              <div>Supported IOCs: SHA256, MD5, Domains, IPs, URLs</div>
+              <div>Vendor Engines: 70+ AV &amp; Sandbox feeds</div>
+              <div>Rate Limit: 4 requests / minute (Standard Tier)</div>
+              <div>Caching: Local SQLite IOC Cache (24h TTL)</div>
+            </div>
+          </div>
+
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-uh')">
+            <div class="health-item-top">
+              <span class="health-engine-name">URLhaus Malware Intelligence Feed</span>
+              <span class="pipeline-status-badge status-ready" id="sh-uh-status">READY</span>
+            </div>
+            <div class="health-engine-desc">Abuse.ch authoritative malicious URL and malware distribution database</div>
+            <div class="health-detail-drawer hidden" id="det-uh">
+              <div>Feed Type: Real-time REST IOC Query</div>
+              <div>Threat Types: Malware distribution, Ransomware drop</div>
+              <div>Payload Correlation: MD5/SHA256 file matches</div>
+              <div>Response Time: &lt; 320ms</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Group 4: Real-Time Infrastructure -->
+        <div class="health-group">
+          <div class="health-group-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Real-Time Defense Infrastructure
+          </div>
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-ws')">
+            <div class="health-item-top">
+              <span class="health-engine-name">WebSocket Telemetry Pipeline</span>
+              <span class="pipeline-status-badge status-ready">ACTIVE</span>
+            </div>
+            <div class="health-engine-desc">Binary 16kHz PCM audio stream + JSON incident dispatch protocol</div>
+            <div class="health-detail-drawer hidden" id="det-ws">
+              <div>Streaming Endpoint: /ws/stream</div>
+              <div>Broadcast Endpoint: /ws/incidents</div>
+              <div>Heartbeat Interval: 15 seconds</div>
+              <div>Reconnection: Exponential backoff with jitter</div>
+            </div>
+          </div>
+
+          <div class="health-engine-item" onclick="toggleEngineDetails('det-db')">
+            <div class="health-item-top">
+              <span class="health-engine-name">SQLite ACID Forensic Repository</span>
+              <span class="pipeline-status-badge status-ready">READY</span>
+            </div>
+            <div class="health-engine-desc">WAL-mode relational forensic database with immutable threat event logs</div>
+            <div class="health-detail-drawer hidden" id="det-db">
+              <div>Database File: backend/data/cyberguard.db</div>
+              <div>Journal Mode: WAL (Write-Ahead Logging)</div>
+              <div>Tables: incidents, threat_events, enrolled_speakers</div>
+              <div>Integrity: Verified operational</div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- Session Logs Modal -->
+  <div class="modal-overlay hidden" id="session-logs-modal" onclick="if(event.target===this) closeSessionLogsModal()">
+    <div class="card modal-card"
+      style="max-width:760px; width:92%; max-height:80vh; overflow-y:auto; margin:auto;">
+      <div class="card-header"
+        style="position:sticky; top:0; background:rgba(11,17,32,0.96); backdrop-filter:blur(12px); z-index:10; border-bottom:1px solid var(--border-subtle); padding:12px 16px; margin-bottom:0;">
+        <div style="display:flex; flex-direction:column; gap:2px;">
+          <h2 class="card-title" style="font-size:14px; margin:0;">Live Session Telemetry Logs</h2>
+          <div style="font-size:10.5px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+            Full buffer of WebSocket events and session diagnostics
+          </div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button class="btn btn-xs btn-secondary" onclick="copySessionLogs()">Copy Logs</button>
+          <button class="btn btn-xs btn-secondary" onclick="closeSessionLogsModal()">✕ Close</button>
+        </div>
+      </div>
+      <div class="modal-body" style="padding:16px;">
+        <pre id="modal-session-logs" style="margin:0; font-family:'JetBrains Mono', monospace; font-size:11.5px; line-height:1.6; color:#94a3b8; background:rgba(0,0,0,0.4); padding:16px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); max-height:480px; overflow-y:auto; white-space:pre-wrap;"></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication & User Profile Modal -->
+  <div class="modal-overlay hidden" id="auth-modal" onclick="if(event.target===this) closeAuthModal()">
+    <div class="card modal-card" style="max-width:440px; width:90%; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 class="card-title" id="auth-modal-title">CyberGuard Access Control</h2>
+        <button class="btn btn-xs btn-secondary" onclick="closeAuthModal()">✕</button>
+      </div>
+      
+      <!-- If logged in: profile view -->
+      <div id="auth-profile-view" class="hidden" style="padding:16px;">
+        <div style="text-align:center; padding:12px 0;">
+          <div style="font-size:32px; margin-bottom:8px;">🛡️</div>
+          <div style="font-size:18px; font-weight:700;" id="auth-profile-username">admin</div>
+          <div style="font-size:12px; color:var(--text-muted); margin-top:2px;" id="auth-profile-email">admin@cyberguard.local</div>
+          <div style="margin-top:10px;"><span class="badge" id="auth-profile-role" style="font-size:11px; padding:3px 10px; background:#0284c7; color:#fff; border-radius:12px;">ADMIN</span></div>
+        </div>
+        <div style="margin-top:20px; display:flex; gap:10px;">
+          <button class="btn btn-secondary" style="flex:1;" onclick="logoutUser()">Log Out</button>
+          <button class="btn btn-primary" style="flex:1;" onclick="closeAuthModal()">Close</button>
+        </div>
+      </div>
+
+      <!-- If logged out: login/register tabs -->
+      <div id="auth-form-view" style="padding:16px;">
+        <div style="display:flex; gap:8px; margin-bottom:16px;">
+          <button class="btn btn-xs btn-primary" id="auth-tab-login" onclick="switchAuthTab('login')" style="flex:1;">Log In</button>
+          <button class="btn btn-xs btn-secondary" id="auth-tab-register" onclick="switchAuthTab('register')" style="flex:1;">Register</button>
+        </div>
+        <div id="auth-error-alert" class="hidden" style="background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); color:#fca5a5; padding:8px 12px; border-radius:6px; font-size:12px; margin-bottom:12px;"></div>
+        
+        <form id="auth-form" onsubmit="handleAuthSubmit(event)">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12px;">Username or Email</label>
+            <input type="text" id="auth-input-username" class="form-input" style="width:100%;" required autocomplete="username" />
+          </div>
+          <div class="form-group hidden" id="auth-email-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12px;">Email Address</label>
+            <input type="email" id="auth-input-email" class="form-input" style="width:100%;" autocomplete="email" />
+          </div>
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label" style="font-size:12px;">Password</label>
+            <input type="password" id="auth-input-password" class="form-input" style="width:100%;" required autocomplete="current-password" />
+          </div>
+          <button type="submit" class="btn btn-primary" id="auth-submit-btn" style="width:100%;">Sign In</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Review Inspector & Ground-Truth Verification Modal -->
+  <div class="modal-overlay hidden" id="review-modal" onclick="if(event.target===this) closeReviewModal()">
+    <div class="card modal-card" style="max-width:680px; width:92%; max-height:85vh; overflow-y:auto; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <div>
+          <h2 class="card-title">Ground-Truth Verification &amp; Training Approval</h2>
+          <span style="font-size:11px; color:var(--text-muted);" id="review-modal-subtitle">Reviewing Analysis</span>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeReviewModal()">✕</button>
+      </div>
+      <div style="padding:16px;">
+        <!-- Audio Player Section -->
+        <div style="background:rgba(0,0,0,0.3); border:1px solid var(--border-subtle); padding:16px; border-radius:8px; margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase;">Audio Forensics Playback</div>
+          <audio id="review-audio-player" controls style="width:100%;"></audio>
+        </div>
+
+        <!-- Telemetry Breakdown -->
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:16px;">
+          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
+            <div style="font-size:10px; color:var(--text-muted);">MODEL P(SYNTHETIC)</div>
+            <div style="font-size:16px; font-weight:700; color:#38bdf8;" id="review-modal-prob">--</div>
+          </div>
+          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
+            <div style="font-size:10px; color:var(--text-muted);">COMBINED RISK</div>
+            <div style="font-size:16px; font-weight:700; color:var(--accent-amber);" id="review-modal-risk">--</div>
+          </div>
+          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
+            <div style="font-size:10px; color:var(--text-muted);">DETECTOR VERSION</div>
+            <div style="font-size:16px; font-weight:700; color:#cbd5e1;" id="review-modal-version">--</div>
+          </div>
+          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
+            <div style="font-size:10px; color:var(--text-muted);">AUDIO DURATION</div>
+            <div style="font-size:16px; font-weight:700; color:#cbd5e1;" id="review-modal-duration">--</div>
+          </div>
+        </div>
+
+        <!-- Ground-Truth Decision Section -->
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); padding:16px; border-radius:8px; margin-bottom:16px;">
+          <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase;">Assign Verified Ground-Truth Label</div>
+          <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:12px;">
+            Assign ground truth based on manual auditory and spectral inspection. Only BONAFIDE or SPOOF labels will enter model retraining.
+          </div>
+          <div style="display:flex; gap:10px; margin-bottom:12px;">
+            <button class="btn btn-secondary" id="btn-label-bonafide" style="flex:1; border-color:#22c55e;" onclick="selectGroundTruth('BONAFIDE')">✓ Confirm BONAFIDE (Genuine)</button>
+            <button class="btn btn-secondary" id="btn-label-spoof" style="flex:1; border-color:#ef4444;" onclick="selectGroundTruth('SPOOF')">⚠ Confirm SPOOF (Cloned)</button>
+            <button class="btn btn-secondary" id="btn-label-reject" style="flex:1;" onclick="selectGroundTruth('REJECT')">✕ Inconclusive (Reject)</button>
+          </div>
+          <div class="form-group">
+            <label class="form-label" style="font-size:11px;">Analyst Verification Notes</label>
+            <input type="text" id="review-notes-input" class="form-input" style="width:100%; font-size:12px;" placeholder="Optional rationale for ground-truth confirmation..." />
+          </div>
+        </div>
+
+        <button class="btn btn-primary" id="btn-submit-review-decision" style="width:100%; padding:10px;" onclick="submitGroundTruthDecision()">
+          Authorize &amp; Finalize Decision
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Create User Modal -->
+  <div class="modal-overlay hidden" id="create-user-modal" onclick="if(event.target===this) closeCreateUserModal()">
+    <div class="card modal-card" style="max-width:440px; width:90%; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 class="card-title">Create User Account</h2>
+        <button class="btn btn-xs btn-secondary" onclick="closeCreateUserModal()">✕</button>
+      </div>
+      <div style="padding:16px;">
+        <form onsubmit="handleCreateUserSubmit(event)">
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12px;">Username</label>
+            <input type="text" id="new-user-username" class="form-input" style="width:100%;" required />
+          </div>
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12px;">Email</label>
+            <input type="email" id="new-user-email" class="form-input" style="width:100%;" required />
+          </div>
+          <div class="form-group" style="margin-bottom:12px;">
+            <label class="form-label" style="font-size:12px;">Initial Password</label>
+            <input type="password" id="new-user-password" class="form-input" style="width:100%;" required />
+          </div>
+          <div class="form-group" style="margin-bottom:16px;">
+            <label class="form-label" style="font-size:12px;">Role</label>
+            <select id="new-user-role" class="form-input" style="width:100%;">
+              <option value="user">Normal User (Detection Only)</option>
+              <option value="admin">Administrator (Full SOC &amp; Retraining Access)</option>
+            </select>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%;">Create Account</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- Retraining Trigger Modal -->
+  <div class="modal-overlay hidden" id="retrain-modal" onclick="if(event.target===this) closeRetrainModal()">
+    <div class="card modal-card" style="max-width:480px; width:90%; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <h2 class="card-title">Trigger Background Retraining Pipeline</h2>
+        <button class="btn btn-xs btn-secondary" onclick="closeRetrainModal()">✕</button>
+      </div>
+      <div style="padding:16px;">
+        <p style="font-size:12px; color:var(--text-muted); line-height:1.5; margin-bottom:14px;">
+          This initiates an isolated background retraining job combining verified admin-approved samples with the ASVspoof replay buffer. 
+          Normal inference continues on the active production model without interruption.
+        </p>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;">Retraining Epochs</label>
+          <input type="number" id="retrain-epochs" class="form-input" value="5" min="1" max="25" style="width:100%;" />
+        </div>
+        <div class="form-group" style="margin-bottom:16px;">
+          <label class="form-label" style="font-size:12px;">Learning Rate</label>
+          <input type="number" id="retrain-lr" class="form-input" value="0.0001" step="0.00005" min="0.00001" style="width:100%;" />
+        </div>
+        <button class="btn btn-primary" style="width:100%;" onclick="submitRetrainTrigger()">Launch Retraining Job</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>
