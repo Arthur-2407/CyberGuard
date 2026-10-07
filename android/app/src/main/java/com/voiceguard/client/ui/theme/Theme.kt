@@ -21,7 +21,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun VoiceGuardClientTheme(
+fun CyberGuardClientTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
@@ -30,3 +30,9 @@ fun VoiceGuardClientTheme(
         content = content
     )
 }
+
+@Composable
+fun VoiceGuardClientTheme(
+    content: @Composable () -> Unit
+) = CyberGuardClientTheme(content = content)
+

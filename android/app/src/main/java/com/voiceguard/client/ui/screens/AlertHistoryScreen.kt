@@ -51,7 +51,7 @@ fun AlertHistoryScreen(navController: NavController, viewModel: MainViewModel) {
                 CircularProgressIndicator(color = CyberBlue)
             }
         } else if (errorMessage != null) {
-            VoiceGuardCard {
+            CyberGuardCard {
                 Text("SYSTEM ERROR", style = MaterialTheme.typography.labelSmall, color = StatusCritical)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(errorMessage!!, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
@@ -64,13 +64,13 @@ fun AlertHistoryScreen(navController: NavController, viewModel: MainViewModel) {
                 }
             }
         } else if (alerts.isEmpty()) {
-            VoiceGuardCard {
+            CyberGuardCard {
                 Text("NO SECURITY INCIDENTS DETECTED", style = MaterialTheme.typography.labelSmall, color = StatusOnline)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(alerts) { alert ->
-                    VoiceGuardCard {
+                    CyberGuardCard {
                         val riskColor = when (alert.alertLevel.uppercase()) {
                             "CRITICAL" -> StatusCritical
                             "HIGH" -> StatusWarning

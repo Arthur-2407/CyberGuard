@@ -51,7 +51,7 @@ fun SpeakerManagementScreen(navController: NavController, viewModel: MainViewMod
                 CircularProgressIndicator(color = CyberBlue)
             }
         } else if (errorMessage != null) {
-            VoiceGuardCard {
+            CyberGuardCard {
                 Text("SYSTEM ERROR", style = MaterialTheme.typography.labelSmall, color = StatusCritical)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(errorMessage!!, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
@@ -64,13 +64,13 @@ fun SpeakerManagementScreen(navController: NavController, viewModel: MainViewMod
                 }
             }
         } else if (speakers.isEmpty()) {
-            VoiceGuardCard {
+            CyberGuardCard {
                 Text("NO PROFILES REGISTERED", style = MaterialTheme.typography.labelSmall, color = TextTertiary)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 items(speakers) { speaker ->
-                    VoiceGuardCard {
+                    CyberGuardCard {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,

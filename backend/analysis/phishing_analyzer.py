@@ -14,17 +14,39 @@ class PhishingAnalyzer:
         
         self.urgency_keywords = [
             "urgent", "immediately", "action required", "account suspended",
-            "last chance", "act now", "final notice", "within 24 hours"
+            "last chance", "act now", "final notice", "within 24 hours",
+            "expiring soon", "limited time", "immediate attention"
         ]
         
         self.credential_keywords = [
             "password", "login", "verify your account", "confirm identity",
-            "ssn", "social security", "credit card", "bank details", "pin code"
+            "ssn", "social security", "credit card", "bank details", "pin code",
+            "passcode", "security question", "unlock account", "re-authenticate"
         ]
         
         self.financial_keywords = [
             "wire transfer", "gift card", "crypto", "bitcoin", "payment",
-            "invoice attached", "unpaid", "overdue", "bank account"
+            "invoice attached", "unpaid", "overdue", "bank account", "remittance",
+            "direct deposit", "payroll", "refund", "tax return"
+        ]
+
+        self.authority_impersonation_keywords = [
+            "ceo", "chief executive", "managing director", "it support", "helpdesk",
+            "system administrator", "hr department", "human resources", "legal counsel",
+            "aicte", "cyber security cell", "income tax", "police department",
+            "compliance officer", "audit committee"
+        ]
+
+        self.brand_impersonation_keywords = [
+            "paypal", "microsoft 365", "office 365", "google workspace", "apple id",
+            "netflix", "amazon prime", "state bank of india", "sbi", "hdfc bank",
+            "icici bank", "chase bank", "wells fargo", "binance", "metamask"
+        ]
+
+        self.psychological_pressure_keywords = [
+            "legal action", "arrest warrant", "account will be terminated",
+            "strictly confidential", "keep this private", "do not discuss with anyone",
+            "security breach detected", "unauthorized access reported"
         ]
 
     def analyze(self, text: str, source: str = "text_submission", correlation_id: str = None) -> ThreatEvent:
@@ -82,6 +104,42 @@ class PhishingAnalyzer:
                 source="phishing_analyzer"
             ))
             risk_score += 0.1
+
+        # Rule 5: Authority & Executive Impersonation
+        found_authority = [kw for kw in self.authority_impersonation_keywords if kw in text_lower]
+        if found_authority:
+            evidences.append(Evidence(
+                evidence_type="executive_authority_impersonation",
+                description="Text exhibits indicators of executive, managerial or institutional authority impersonation.",
+                value=",".join(found_authority),
+                severity_contribution=0.35,
+                source="phishing_analyzer"
+            ))
+            risk_score += 0.35
+
+        # Rule 6: Brand Impersonation & Spoofing
+        found_brands = [kw for kw in self.brand_impersonation_keywords if kw in text_lower]
+        if found_brands:
+            evidences.append(Evidence(
+                evidence_type="brand_impersonation",
+                description="Text references trusted high-value corporate or financial brands often abused in phishing lures.",
+                value=",".join(found_brands),
+                severity_contribution=0.25,
+                source="phishing_analyzer"
+            ))
+            risk_score += 0.25
+
+        # Rule 7: Psychological Coercion & Pressure
+        found_pressure = [kw for kw in self.psychological_pressure_keywords if kw in text_lower]
+        if found_pressure:
+            evidences.append(Evidence(
+                evidence_type="psychological_coercion",
+                description="Text employs psychological pressure, fear tactics, or artificial secrecy to inhibit verification.",
+                value=",".join(found_pressure),
+                severity_contribution=0.3,
+                source="phishing_analyzer"
+            ))
+            risk_score += 0.3
             
         # Determine severity
         risk_score = min(risk_score, 1.0)
@@ -103,8 +161,11 @@ class PhishingAnalyzer:
 
         # Explanation
         if evidences:
-            summary = "Phishing indicators detected in text."
-            reasoning = "The text exhibits characteristics of social engineering, combining multiple suspicious factors."
+            summary = "Phishing & social engineering indicators detected in message."
+            reasoning = (
+                f"Content exhibits {len(evidences)} corroborating social engineering vectors "
+                f"(urgency, credential probing, or institutional impersonation)."
+            )
         else:
             summary = "No phishing indicators detected."
             reasoning = "The text appears normal based on current heuristic rules."
@@ -114,18 +175,50 @@ class PhishingAnalyzer:
             reasoning=reasoning
         )
 
-        return ThreatEvent(
+        actions = []
+        if severity in [RiskLevel.HIGH, RiskLevel.CRITICAL]:
+            actions = [
+                "Do not click embedded links or download attachments",
+                "Verify sender authenticity via known out-of-band contact channel",
+                "Quarantine communication and notify SOC team",
+                "Report impersonation attempt to security operations"
+            ]
+
+        event = ThreatEvent(
             source=source,
             source_type="text",
             modality="text",
             threat_category=ThreatCategory.PHISHING if risk_score >= 0.35 else ThreatCategory.SAFE,
             severity=severity,
-            confidence=0.7 if evidences else 1.0,
+            confidence=0.85 if evidences else 1.0,
             classification=classification,
             evidence=evidences,
             explanation=explanation,
-            recommended_actions=["Do not click links", "Verify sender identity out-of-band"] if severity in [RiskLevel.HIGH, RiskLevel.CRITICAL] else [],
+            recommended_actions=actions,
             detector="PhishingHeuristicAnalyzer",
             processing_time_ms=(time.time() - start_time) * 1000.0,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
+            mitre_technique_id="T1566.002" if risk_score >= 0.35 else None,
+            mitre_technique_name="Spearphishing Link" if risk_score >= 0.35 else None,
         )
+
+        # Trigger automatic policy enforcement if critical
+        try:
+            from backend.security.enforcement import get_enforcement_engine
+            get_enforcement_engine().evaluate_threat_for_auto_block(event)
+        except Exception:
+            pass
+
+        # Trigger threshold email alert if critical
+        try:
+            from backend.alerts.email_notifier import get_email_notifier
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(get_email_notifier().notify_threat_event(event))
+            except RuntimeError:
+                pass
+        except Exception:
+            pass
+
+        return event

@@ -43,10 +43,30 @@ async def get_dashboard_summary():
             "open_incidents": 0,
             "total_events_analyzed": 0,
             "high_critical_threats": 0,
+            "active_high_critical_threats": 0,
+            "critical_threats": 0,
             "categories": {},
+            "severities": {},
             "recent_incidents": [],
         }
     return incident_manager.get_dashboard_summary()
+
+
+@router.get("/activity/timeline")
+async def get_activity_timeline(range: str = "ALL"):
+    """Fetches real chronological time-bucketed telemetry for the Threat Activity Timeline."""
+    incident_manager = get_app_incident_manager()
+    if not incident_manager:
+        return {
+            "range": range,
+            "labels": [],
+            "telemetry": [],
+            "threats": [],
+            "total_events": 0,
+            "total_threats": 0
+        }
+    return incident_manager.get_activity_timeline(range_mode=range)
+
 
 
 @router.get("/{incident_id}", response_model=Incident)

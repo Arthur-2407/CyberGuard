@@ -60,7 +60,7 @@ class ConnectionManager(private val context: Context) {
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
-    var api: VoiceGuardApi? = null
+    var api: CyberGuardApi? = null
         private set
 
     init {
@@ -218,7 +218,7 @@ class ConnectionManager(private val context: Context) {
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                // Real health check to the VoiceGuard API
+                // Real health check to the CyberGuard API
                 val httpUrl = URL("${url}health")
                 val connection = httpUrl.openConnection() as HttpURLConnection
                 connection.connectTimeout = 3000
@@ -236,7 +236,7 @@ class ConnectionManager(private val context: Context) {
                             .addConverterFactory(GsonConverterFactory.create())
                             .build()
                         
-                        api = retrofit.create(VoiceGuardApi::class.java)
+                        api = retrofit.create(CyberGuardApi::class.java)
                         _connectionState.value = ConnectionState.CONNECTED
                         stopDiscovery() // Stop discovering once cleanly connected
                     }

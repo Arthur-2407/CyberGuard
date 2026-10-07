@@ -189,10 +189,10 @@
             <div class="metric-tile-sub">Cross-pipeline telemetry</div>
           </div>
 
-          <!-- KPI 4: High / Critical -->
+          <!-- KPI 4: Critical Threats -->
           <div class="card metric-tile tile-critical">
             <div class="metric-tile-header">
-              <span class="metric-tile-label">HIGH / CRITICAL</span>
+              <span class="metric-tile-label">CRITICAL THREATS</span>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
             </div>
             <div class="metric-tile-body">
@@ -622,7 +622,7 @@
 
         <!-- Modern Horizontal Pipeline Stepper -->
         <div class="pipeline-stepper" id="analyze-pipeline-stepper">
-          <div class="stepper-step completed" id="step-1">
+          <div class="stepper-step" id="step-1">
             <div class="stepper-circle">1</div>
             <span class="stepper-label">Ingestion</span>
           </div>
@@ -725,15 +725,20 @@
       <!-- Segmented Sub-Navigation -->
       <div class="threat-subnav" id="threat-subnav">
         <button class="threat-subnav-btn active" onclick="switchThreatSubTab('all', this)">All Tools</button>
-        <button class="threat-subnav-btn" onclick="switchThreatSubTab('phishing', this)">Phishing &amp; Text Scanner</button>
-        <button class="threat-subnav-btn" onclick="switchThreatSubTab('qr', this)">QR Forensic Analysis</button>
-        <button class="threat-subnav-btn" onclick="switchThreatSubTab('intel', this)">Threat Intelligence Lookup</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('phishing', this)">Phishing &amp; Text</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('image', this)">Image &amp; Deepfake</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('qr', this)">QR Forensics</button>
+        <button class="threat-subnav-btn" onclick="switchThreatSubTab('intel', this)">Threat Intelligence</button>
+        <button class="threat-subnav-btn btn-llm-pill" onclick="openLLMCopilotModal()" style="margin-left:auto; border-color: rgba(6,182,212,0.5); color: #06b6d4;">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline-block; vertical-align:middle; margin-right:4px;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+          LLM Forensic Copilot
+        </button>
       </div>
 
       <div class="analyze-grid">
 
         <!-- Content & URL Scanner Card -->
-        <div class="card phish-card">
+        <div class="card phish-card" id="card-threat-phish">
           <div class="card-header">
             <h2 class="card-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -757,8 +762,38 @@
           </div>
         </div>
 
+        <!-- Image & Visual Deepfake Forensics Card -->
+        <div class="card image-card" id="card-threat-image">
+          <div class="card-header">
+            <h2 class="card-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              Image &amp; Deepfake Forensics
+            </h2>
+            <span class="card-tag" style="background:rgba(6,182,212,0.12); color:#06b6d4;">2D FFT &amp; LAPLACIAN</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="image-forensic-input">Upload Image for Forensic Inspection</label>
+            <input type="file" id="image-forensic-input" accept="image/*" class="form-input" style="width:100%;" onchange="previewForensicImage(event)" />
+            <div id="image-preview-container" style="display:none; margin-top:10px; text-align:center; background:rgba(0,0,0,0.3); border-radius:6px; padding:10px; border:1px dashed var(--border-subtle);">
+              <img id="image-forensic-preview" style="max-height:130px; border-radius:4px; max-width:100%; object-fit:contain;" alt="Forensic Image Preview" />
+              <div id="image-preview-meta" style="font-size:11px; color:var(--text-muted); margin-top:4px; font-family:'JetBrains Mono', monospace;"></div>
+            </div>
+            <div style="font-size:11px; color:var(--text-muted); margin-top:6px; line-height:1.4;">
+              Extracts high-frequency spectral artifacts, edge variance discontinuities, and EXIF software signatures.
+            </div>
+          </div>
+          <button class="btn btn-primary btn-full" id="btn-scan-image" onclick="scanImageForensics()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            Analyze Image Forensics
+          </button>
+        </div>
+
         <!-- Threat Intelligence Search Card -->
-        <div class="card intel-card">
+        <div class="card intel-card" id="card-threat-intel">
           <div class="card-header">
             <h2 class="card-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -797,7 +832,7 @@
 
         <!-- Full-Width Results Container -->
         <div class="card" id="threat-results-card" style="grid-column: 1 / -1;">
-          <div class="card-header">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
             <h2 class="card-title">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -805,10 +840,13 @@
               </svg>
               Threat Intelligence &amp; Forensic Analysis Results
             </h2>
+            <button class="btn btn-xs btn-secondary" id="btn-threat-llm-analyze" onclick="openLLMCopilotWithCurrentThreat()" style="display:none; border-color:rgba(6,182,212,0.4); color:#38bdf8;">
+              ⚡ Deep LLM Threat Analysis
+            </button>
           </div>
           <div class="results-body" id="threat-results-body">
             <div class="results-empty">
-              <p>No scans performed yet. Search an IOC or scan a URL/QR code above.</p>
+              <p>No scans performed yet. Search an IOC or scan a URL, image, or QR code above.</p>
             </div>
           </div>
         </div>
@@ -940,6 +978,10 @@
               </div>
             </div>
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <button class="btn btn-secondary btn-xs" onclick="openReportModal()" style="border-color: rgba(6,182,212,0.4); color: #38bdf8;">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline-block; vertical-align:middle; margin-right:3px;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                Export Report
+              </button>
               <button class="btn btn-secondary btn-xs" id="sc-thresh-toggle-btn" onclick="toggleThresholdPanel()">
                 ⚙ Alert Thresholds
               </button>
@@ -1003,9 +1045,9 @@
               <div class="sc-stat-desc">Dispatched across sessions</div>
             </div>
             <div class="sc-stat-card">
-              <div class="sc-stat-label">High / Critical</div>
-              <div class="sc-stat-value" id="sc-stat-critical" style="color:#ef4444;">…</div>
-              <div class="sc-stat-desc">Elevated priority events</div>
+              <div class="sc-stat-label">Critical Threats</div>
+              <div class="sc-stat-value text-critical" id="sc-stat-critical" style="color:#ef4444;">…</div>
+              <div class="sc-stat-desc">Priority containment</div>
             </div>
           </div>
         </div>
@@ -1123,72 +1165,170 @@
          TAB 7: ANALYSIS & TRAINING REVIEW QUEUE (ADMIN ONLY)
          ════════════════════════════════════════════════════════════════════════ -->
     <div class="tab-panel hidden" id="panel-review">
-      <div class="overview-container">
+      <div class="overview-container review-soc-container">
         
-        <div class="card overview-hero-card">
-          <div class="overview-hero-inner">
-            <div class="overview-title-group">
-              <div class="overview-eyebrow">
+        <!-- 2050 Cyber SOC Hero Header -->
+        <div class="card review-hero-card">
+          <div class="review-hero-inner">
+            <div class="review-title-group">
+              <div class="review-eyebrow">
                 <span class="pulse-indicator"></span>
-                HUMAN-IN-THE-LOOP CONTINUOUS LEARNING REVIEW
+                <span class="cyber-glitch-text">CYBERGUARD // FORENSIC REVIEW</span>
+                <span class="cyber-shield-badge">HUMAN-IN-THE-LOOP</span>
               </div>
-              <h1 class="overview-title">Analysis &amp; Ground-Truth Verification Queue</h1>
-              <p class="overview-subtitle">
-                Review submitted voice cloning analyses, inspect model predictions and feature telemetry, 
-                and assign verified ground-truth labels for controlled retraining. Model predictions are NEVER automatically used as training labels.
-              </p>
+              <h1 class="review-title">Human-in-the-Loop Acoustic Verification</h1>
+              <!-- Compact Live System Status Strip -->
+              <div class="review-status-strip">
+                <span class="review-status-pill status-queue">
+                  <span class="status-dot-mini cyan"></span> REVIEW QUEUE: <strong id="review-chip-queue-status">ACTIVE</strong>
+                </span>
+                <span class="review-status-pill status-learning">
+                  <span class="status-dot-mini green"></span> CONTROLLED LEARNING: <strong id="review-chip-learning-status">ARMED</strong>
+                </span>
+                <span class="review-status-pill status-model">
+                  <span class="status-dot-mini sky"></span> ACTIVE DETECTOR: <strong id="review-header-detector-ver">v011</strong>
+                </span>
+                <span class="review-status-pill status-engine" id="review-header-engine-pill" style="display:none;">
+                  <span class="status-dot-mini purple"></span> RETRAIN ENGINE: <strong id="review-header-engine-status">STANDBY</strong>
+                </span>
+              </div>
             </div>
-            <div class="overview-kpis">
-              <div class="hero-kpi-card">
-                <span class="hero-kpi-val" id="review-kpi-pending">0</span>
-                <span class="hero-kpi-label">PENDING REVIEWS</span>
-              </div>
-              <div class="hero-kpi-card">
-                <span class="hero-kpi-val" id="review-kpi-approved" style="color:var(--accent-green);">0</span>
-                <span class="hero-kpi-label">APPROVED FOR RETRAINING</span>
-              </div>
+            <div class="review-hero-actions">
+              <button class="btn btn-sm btn-secondary" onclick="loadReviewQueue()" title="Refresh queue from database">
+                <span class="refresh-icon">↻</span> Refresh Queue
+              </button>
+              <button class="btn btn-sm btn-primary" onclick="handleRetrainButtonClick()" id="btn-trigger-retrain-hero" title="Open retraining configuration and run candidate training">
+                ⚡ Retrain Pipeline (<span id="review-hero-pool-count">0</span> queued)
+              </button>
             </div>
           </div>
         </div>
 
+        <!-- 2050 SOC Operational KPI Matrix -->
+        <div class="review-kpi-grid">
+          <div class="review-kpi-card" data-severity="pending">
+            <div class="review-kpi-content">
+              <span class="review-kpi-val" id="review-kpi-pending">0</span>
+              <span class="review-kpi-label">PENDING REVIEWS</span>
+              <span class="review-kpi-sub">Awaiting operator ground truth</span>
+            </div>
+            <div class="review-kpi-bar"><div class="review-kpi-bar-fill" style="width: 100%; background: #f59e0b;"></div></div>
+          </div>
+
+          <div class="review-kpi-card" data-severity="approved">
+            <div class="review-kpi-content">
+              <span class="review-kpi-val" id="review-kpi-approved" style="color:#10b981;">0</span>
+              <span class="review-kpi-label">APPROVED SAMPLES</span>
+              <span class="review-kpi-sub">Registered into training pool</span>
+            </div>
+            <div class="review-kpi-bar"><div class="review-kpi-bar-fill" style="width: 100%; background: #10b981;"></div></div>
+          </div>
+
+          <div class="review-kpi-card" data-severity="rejected">
+            <div class="review-kpi-content">
+              <span class="review-kpi-val" id="review-kpi-rejected" style="color:#f43f5e;">0</span>
+              <span class="review-kpi-label">REJECTED / INCONCLUSIVE</span>
+              <span class="review-kpi-sub">Zero weight change / excluded</span>
+            </div>
+            <div class="review-kpi-bar"><div class="review-kpi-bar-fill" style="width: 100%; background: #f43f5e;"></div></div>
+          </div>
+
+          <div class="review-kpi-card" data-severity="pool">
+            <div class="review-kpi-content">
+              <span class="review-kpi-val" id="review-kpi-pool" style="color:#06b6d4;">0</span>
+              <span class="review-kpi-label">TRAINING QUEUE POOL</span>
+              <span class="review-kpi-sub">Replay buffer protected</span>
+            </div>
+            <div class="review-kpi-bar"><div class="review-kpi-bar-fill" style="width: 100%; background: #06b6d4;"></div></div>
+          </div>
+
+          <div class="review-kpi-card" data-severity="active">
+            <div class="review-kpi-content">
+              <span class="review-kpi-val" id="review-kpi-active-version" style="color:#38bdf8; font-size:18px;">v011</span>
+              <span class="review-kpi-label">ACTIVE DETECTOR</span>
+              <span class="review-kpi-sub">EnsembleDual-BiLSTM</span>
+            </div>
+            <div class="review-kpi-bar"><div class="review-kpi-bar-fill" style="width: 100%; background: #38bdf8;"></div></div>
+          </div>
+
+          <div class="review-kpi-card" data-severity="candidate">
+            <div class="review-kpi-content">
+              <span class="review-kpi-val" id="review-kpi-candidate" style="color:#a855f7; font-size:16px;">STANDBY</span>
+              <span class="review-kpi-label">CANDIDATE STATUS</span>
+              <span class="review-kpi-sub">Multi-gate validation ready</span>
+            </div>
+            <div class="review-kpi-bar"><div class="review-kpi-bar-fill" style="width: 100%; background: #a855f7;"></div></div>
+          </div>
+        </div>
+
         <!-- Review Controls & Queue Table Card -->
-        <div class="card">
-          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
-            <div style="display:flex; align-items:center; gap:8px;">
+        <div class="card review-table-card">
+          <div class="card-header review-table-header">
+            <div class="review-table-title-wrap">
               <h2 class="card-title">Submitted Audio Verification Queue</h2>
               <span class="card-tag" id="review-count-tag">0 ITEMS</span>
+              <span class="review-vault-status-tag">FLAC ENCRYPTED VAULT</span>
             </div>
-            <div style="display:flex; gap:8px; align-items:center;">
-              <select id="review-status-filter" class="form-input" style="padding:4px 10px; font-size:12px; height:32px;" onchange="loadReviewQueue()">
-                <option value="">All Statuses</option>
-                <option value="PENDING" selected>Pending Review</option>
-                <option value="APPROVED">Approved for Training</option>
-                <option value="REJECTED">Rejected / Inconclusive</option>
-              </select>
-              <button class="btn btn-xs btn-secondary" onclick="loadReviewQueue()">↻ Refresh Queue</button>
+            
+            <!-- Filters Console -->
+            <div class="review-filter-bar">
+              <div class="review-search-wrap">
+                <input type="text" id="review-search-input" class="form-input review-search-input" placeholder="Search filename, ID, submitter..." oninput="debounceReviewFilter()" />
+              </div>
+              <div class="review-select-group">
+                <select id="review-status-filter" class="form-input review-filter-select" onchange="loadReviewQueue()">
+                  <option value="">All Review Statuses</option>
+                  <option value="PENDING" selected>Pending Review</option>
+                  <option value="APPROVED">Approved for Training</option>
+                  <option value="REJECTED">Rejected / Inconclusive</option>
+                </select>
+                <select id="review-risk-filter" class="form-input review-filter-select" onchange="loadReviewQueue()">
+                  <option value="">All Risk Levels</option>
+                  <option value="CRITICAL">Critical Risk</option>
+                  <option value="HIGH">High Risk</option>
+                  <option value="MEDIUM">Medium Risk</option>
+                  <option value="LOW">Low Risk</option>
+                  <option value="SAFE">Safe / Clean</option>
+                </select>
+                <select id="review-gt-filter" class="form-input review-filter-select" onchange="loadReviewQueue()">
+                  <option value="">All Ground Truth</option>
+                  <option value="UNKNOWN">Unverified (Pending)</option>
+                  <option value="BONAFIDE">Human / Bonafide</option>
+                  <option value="SPOOF">Cloned / Spoof</option>
+                  <option value="INCONCLUSIVE">Inconclusive</option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <div style="overflow-x:auto;">
-            <table class="sc-table" id="review-queue-table">
+          <div class="review-table-container">
+            <table class="sc-table review-sc-table" id="review-queue-table">
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Date &amp; Time</th>
-                  <th>Submitter</th>
-                  <th>Filename</th>
-                  <th>Duration</th>
-                  <th>Detector Version</th>
-                  <th>Model Score</th>
-                  <th>Risk Level</th>
-                  <th>Review Status</th>
-                  <th>Actions</th>
+                  <th style="width:125px;">ID</th>
+                  <th style="width:115px;">Timestamp</th>
+                  <th style="width:105px;">Submitter</th>
+                  <th>Audio Evidence</th>
+                  <th style="width:75px;">Duration</th>
+                  <th style="width:85px;">Detector</th>
+                  <th style="width:120px;">Model Score</th>
+                  <th style="width:95px;">Risk Level</th>
+                  <th style="width:125px;">Ground Truth</th>
+                  <th style="width:110px;">Review Status</th>
+                  <th style="width:130px; text-align:right;">Forensics Action</th>
                 </tr>
               </thead>
               <tbody id="review-queue-tbody">
-                <tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-muted);">Loading review queue...</td></tr>
+                <tr><td colspan="11" style="text-align:center; padding:32px; color:var(--text-muted);">Initializing Forensic Review Pipeline...</td></tr>
               </tbody>
             </table>
+          </div>
+
+          <div class="review-table-footer">
+            <span id="review-pagination-info" style="font-size:11.5px; color:var(--text-muted); font-family:var(--font-mono);">Showing active items</span>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-xs btn-secondary" onclick="loadReviewQueue()">↻ Reload</button>
+            </div>
           </div>
         </div>
 
@@ -1221,8 +1361,209 @@
               </div>
               <div class="hero-kpi-card">
                 <span class="hero-kpi-val" id="admin-kpi-queue-samples" style="color:var(--accent-amber);">0</span>
-                <span class="hero-kpi-label">TRAINING QUEUE POOL</span>
+                <span class="hero-kpi-label">TRAINING QUEUE</span>
               </div>
+              <div class="hero-kpi-card">
+                <span class="hero-kpi-val" id="admin-kpi-blocked-entities" style="color:#ef4444;">0</span>
+                <span class="hero-kpi-label">QUARANTINED ENTITIES</span>
+              </div>
+              <div class="hero-kpi-card">
+                <span class="hero-kpi-val" id="admin-kpi-policy-posture" style="color:#10b981;">STRICT</span>
+                <span class="hero-kpi-label">ENFORCEMENT MODE</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section A: Organization Security Policy & Autonomous Protection Engine -->
+        <div class="card" style="margin-bottom:20px; border-left: 3px solid #06b6d4;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Organization Security Policy &amp; Autonomous Protection Engine</h2>
+              <span class="card-tag live-tag" style="background:rgba(6,182,212,0.15); color:#06b6d4;">ACTIVE ENFORCEMENT</span>
+            </div>
+            <button class="btn btn-xs btn-secondary" onclick="loadAdminPolicies()">↻ Reload Policy</button>
+          </div>
+          <div style="padding:18px;">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:16px; line-height:1.5;">
+              Configure organization-wide threat response automation, volumetric DDoS thresholds, automated quarantine gates, and executive email dispatch triggers.
+            </p>
+            <form onsubmit="saveAdminPolicies(event)" id="policy-config-form">
+              <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:16px; margin-bottom:16px;">
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-name">Organization / Policy Profile Name</label>
+                  <input type="text" id="cfg-policy-name" class="form-input" style="width:100%; font-size:12px;" value="Default Security Posture" required />
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-action">Enforcement Action on Critical Threat</label>
+                  <select id="cfg-policy-action" class="form-input" style="width:100%; font-size:12px;">
+                    <option value="FULL_BLOCK">FULL_BLOCK (Zero-Trust Immediate 403 Ban)</option>
+                    <option value="QUARANTINE_ISOLATE">QUARANTINE_ISOLATE (Contain in Sandbox)</option>
+                    <option value="CHALLENGE_RATE_LIMIT">CHALLENGE_RATE_LIMIT (Volumetric Throttling)</option>
+                    <option value="FLAG_AND_ALERT">FLAG_AND_ALERT (Passive Alerting Only)</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-threshold">
+                    Auto-Block Threat Score Threshold: <span id="cfg-threshold-val" style="color:#38bdf8; font-weight:700;">75</span>/100
+                  </label>
+                  <input type="range" id="cfg-policy-threshold" min="30" max="95" value="75" step="5" class="form-range" style="width:100%;" oninput="document.getElementById('cfg-threshold-val').textContent=this.value" />
+                  <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-top:2px;">
+                    <span>30 (Aggressive)</span>
+                    <span>75 (Recommended)</span>
+                    <span>95 (Conservative)</span>
+                  </div>
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-ddos-limit">Volumetric DDoS Request Limit (req / min)</label>
+                  <input type="number" id="cfg-policy-ddos-limit" class="form-input" style="width:100%; font-size:12px;" value="120" min="20" max="1000" />
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-ddos-burst">Burst Threshold / 5 Seconds (Auto-Ban Trigger)</label>
+                  <input type="number" id="cfg-policy-ddos-burst" class="form-input" style="width:100%; font-size:12px;" value="40" min="5" max="300" />
+                </div>
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-email-severity">Email Alert Minimum Severity</label>
+                  <select id="cfg-policy-email-severity" class="form-input" style="width:100%; font-size:12px;">
+                    <option value="CRITICAL">CRITICAL Only (P1 Priority Incidents)</option>
+                    <option value="HIGH" selected>HIGH &amp; CRITICAL (P1 &amp; P2 Incidents)</option>
+                    <option value="MEDIUM">MEDIUM, HIGH &amp; CRITICAL</option>
+                    <option value="LOW">All Detections (Debug Verbose)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div style="display:grid; grid-template-columns: 1fr auto; gap:16px; align-items:end; background:rgba(255,255,255,0.02); padding:12px; border-radius:6px; margin-bottom:16px; border:1px solid var(--border-subtle);">
+                <div>
+                  <label class="form-label" style="font-size:11.5px;" for="cfg-policy-recipients">Security Notification Recipient Emails (Comma-separated)</label>
+                  <input type="text" id="cfg-policy-recipients" class="form-input" style="width:100%; font-size:12px;" placeholder="soc-lead@cyberguard.internal, admin@organization.com" value="soc-lead@cyberguard.internal" />
+                </div>
+                <div style="display:flex; align-items:center; gap:8px; padding-bottom:6px;">
+                  <label style="font-size:12px; color:#f1f5f9; display:flex; align-items:center; gap:6px; cursor:pointer;">
+                    <input type="checkbox" id="cfg-policy-email-enabled" checked style="accent-color:#06b6d4;" />
+                    <span>Enable Email Dispatch</span>
+                  </label>
+                </div>
+              </div>
+
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <span id="policy-save-status" style="font-size:11.5px; color:var(--text-muted);">Policies actively enforced by DDoS middleware &amp; telemetry pipelines.</span>
+                <button type="submit" class="btn btn-primary btn-sm" id="btn-save-policy">
+                  💾 Save &amp; Enforce Organization Policy
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Section B: Active Containment & Quarantined Entity Registry -->
+        <div class="card" style="margin-bottom:20px; border-left: 3px solid #ef4444;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Active Containment &amp; Quarantined Entity Registry</h2>
+              <span class="card-tag" style="background:rgba(239,68,68,0.15); color:#ef4444;">ZERO-TRUST FIREWALL</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-xs btn-primary" onclick="openQuarantineModal()">+ Quarantine Entity</button>
+              <button class="btn btn-xs btn-secondary" onclick="loadEnforcementData()">↻ Refresh</button>
+            </div>
+          </div>
+          <div style="padding:14px 16px 6px 16px;">
+            <div style="font-size:12px; color:var(--text-muted); line-height:1.5;">
+              Active containment list blocking volumetric attacks, brute-force agents, malicious domains, and compromised devices in real-time.
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="sc-table" id="admin-quarantine-table">
+              <thead>
+                <tr>
+                  <th>Type</th>
+                  <th>Target Entity</th>
+                  <th>Threat Reason</th>
+                  <th>Source</th>
+                  <th>Quarantined At</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-quarantine-tbody">
+                <tr><td colspan="7" style="text-align:center; padding:16px; color:var(--text-muted);">Loading quarantined entities...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section C: Threshold-Based Email Notification Journal -->
+        <div class="card" style="margin-bottom:20px; border-left: 3px solid #f59e0b;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Threshold-Based Email Alert Journal</h2>
+              <span class="card-tag" style="background:rgba(245,158,11,0.15); color:#f59e0b;">EXECUTIVE DISPATCH</span>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-xs btn-secondary" onclick="sendTestEmailAlert()">⚡ Send Test Alert</button>
+              <button class="btn btn-xs btn-secondary" onclick="loadEmailAlertJournal()">↻ Refresh</button>
+            </div>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="sc-table" id="admin-email-alerts-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Recipient</th>
+                  <th>Severity</th>
+                  <th>Threat Category</th>
+                  <th>Subject</th>
+                  <th>Delivery Mode</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="admin-email-alerts-tbody">
+                <tr><td colspan="7" style="text-align:center; padding:16px; color:var(--text-muted);">Loading alert notification journal...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Section 0: Manual Audio Classification & Live detector.py Adaptation -->
+        <div class="card" style="margin-bottom:20px; border-left: 3px solid #38bdf8;">
+          <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h2 class="card-title">Manual Audio Classification &amp; Live detector.py Adaptation</h2>
+              <span class="card-tag live-tag" style="background:rgba(56,189,248,0.15); color:#38bdf8;">INSTANT ADAPTATION</span>
+            </div>
+            <span style="font-size:11px; color:var(--text-muted);">Admin Manual Control</span>
+          </div>
+          <div style="padding:16px;">
+            <p style="font-size:12px; color:var(--text-muted); margin-bottom:14px; line-height:1.5;">
+              Manually classify an audio sample as <strong>Human Voice (Genuine)</strong> or <strong>Cloned Voice (Deepfake)</strong>.
+              Submitting will automatically run micro-adaptation on <code>detector.py</code>'s neural weights and dynamic acoustic calibration, updating production inference in real time.
+            </p>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:16px; margin-bottom:16px;">
+              <div>
+                <label class="form-label" style="font-size:11px;">1. Select Audio Source</label>
+                <div style="margin-bottom:8px;">
+                  <input type="file" id="manual-detector-file" accept="audio/*" class="form-input" style="font-size:11.5px; width:100%; padding:6px;" />
+                </div>
+                <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">Or reference an existing Analysis / Review ID:</div>
+                <input type="text" id="manual-detector-id" placeholder="e.g. REV_1791187... or session_id" class="form-input" style="font-size:11.5px; width:100%;" />
+              </div>
+              <div>
+                <label class="form-label" style="font-size:11px;">2. Select Ground-Truth Classification</label>
+                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                  <button type="button" class="btn btn-secondary" id="btn-manual-human" style="flex:1; border-color:#22c55e;" onclick="setManualDetectorLabel('HUMAN')">👤 Human Voice</button>
+                  <button type="button" class="btn btn-secondary" id="btn-manual-cloned" style="flex:1; border-color:#ef4444;" onclick="setManualDetectorLabel('CLONED')">🤖 Cloned Voice</button>
+                </div>
+                <input type="text" id="manual-detector-notes" placeholder="Optional notes (e.g. ElevenLabs clone, studio mic)..." class="form-input" style="font-size:11.5px; width:100%;" />
+              </div>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+              <div id="manual-detector-status" style="font-size:12px; color:var(--text-muted);">
+                Select an audio source and choose Human Voice or Cloned Voice to adapt <code>detector.py</code>.
+              </div>
+              <button class="btn btn-primary" id="btn-submit-manual-detector" onclick="submitManualDetectorUpdate()">
+                ⚡ Apply Label &amp; Auto-Update detector.py
+              </button>
             </div>
           </div>
         </div>
@@ -1622,63 +1963,355 @@
     </div>
   </div>
 
-  <!-- Review Inspector & Ground-Truth Verification Modal -->
-  <div class="modal-overlay hidden" id="review-modal" onclick="if(event.target===this) closeReviewModal()">
-    <div class="card modal-card" style="max-width:680px; width:92%; max-height:85vh; overflow-y:auto; margin:auto;">
-      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-        <div>
-          <h2 class="card-title">Ground-Truth Verification &amp; Training Approval</h2>
-          <span style="font-size:11px; color:var(--text-muted);" id="review-modal-subtitle">Reviewing Analysis</span>
+  <!-- ════════════════════════════════════════════════════════════════════════
+       2050 SOC AUDIO FORENSICS INVESTIGATION DRAWER
+       ════════════════════════════════════════════════════════════════════════ -->
+  <div class="review-drawer-backdrop hidden" id="review-drawer-backdrop" onclick="closeReviewDrawer()"></div>
+  <aside class="review-drawer hidden" id="review-drawer" aria-label="Audio Forensics Investigation Drawer">
+    
+    <!-- Drawer Header -->
+    <div class="review-drawer-header">
+      <div class="review-drawer-title-wrap">
+        <div class="review-drawer-eyebrow">
+          <span class="pulse-indicator"></span> FORENSIC TELEMETRY // REVIEW TARGET
+          <span class="drawer-header-pill" id="drawer-header-ver-badge">v011</span>
+          <span class="drawer-header-pill" id="drawer-header-status-badge">PENDING</span>
         </div>
-        <button class="btn btn-xs btn-secondary" onclick="closeReviewModal()">✕</button>
+        <h2 class="review-drawer-title" id="drawer-item-title">#REV_00000000</h2>
+        <div class="review-drawer-subtitle" id="drawer-item-subtitle">Filename: unknown</div>
       </div>
-      <div style="padding:16px;">
-        <!-- Audio Player Section -->
-        <div style="background:rgba(0,0,0,0.3); border:1px solid var(--border-subtle); padding:16px; border-radius:8px; margin-bottom:16px;">
-          <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:8px; text-transform:uppercase;">Audio Forensics Playback</div>
-          <audio id="review-audio-player" controls style="width:100%;"></audio>
+      <button class="review-drawer-close" onclick="closeReviewDrawer()" title="Close Drawer (Esc)">✕</button>
+    </div>
+
+    <!-- 2050 SOC Training Pipeline Breadcrumb (Section 33) -->
+    <div class="drawer-pipeline-bar">
+      <div class="pipe-breadcrumb" id="drawer-pipeline-breadcrumb">
+        <div class="pipe-step active" id="pipe-step-review">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">REVIEW</span>
+        </div>
+        <div class="pipe-connector" id="pipe-conn-1"></div>
+        <div class="pipe-step" id="pipe-step-gt">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">GROUND TRUTH</span>
+        </div>
+        <div class="pipe-connector" id="pipe-conn-2"></div>
+        <div class="pipe-step" id="pipe-step-approval">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">APPROVAL</span>
+        </div>
+        <div class="pipe-connector" id="pipe-conn-3"></div>
+        <div class="pipe-step" id="pipe-step-queued">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">TRAINING QUEUE</span>
+        </div>
+        <div class="pipe-connector" id="pipe-conn-4"></div>
+        <div class="pipe-step" id="pipe-step-training">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">TRAINING</span>
+        </div>
+        <div class="pipe-connector" id="pipe-conn-5"></div>
+        <div class="pipe-step" id="pipe-step-validation">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">VALIDATION</span>
+        </div>
+        <div class="pipe-connector" id="pipe-conn-6"></div>
+        <div class="pipe-step" id="pipe-step-promotion">
+          <span class="pipe-dot"></span>
+          <span class="pipe-name">PROMOTION</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Drawer Content Scroll Area -->
+    <div class="review-drawer-body">
+
+      <!-- Panel 1: Audio Forensics & Interactive Waveform Player -->
+      <section class="drawer-section">
+        <div class="drawer-section-header">
+          <div class="drawer-section-title">
+            <span class="section-icon">🔊</span> AUDIO FORENSICS &amp; WAVEFORM ANALYSIS
+          </div>
+          <span class="badge" id="drawer-audio-status-badge" style="background:rgba(16,185,129,0.15); color:#10b981; border:1px solid rgba(16,185,129,0.3);">VAULT AUTHENTICATED</span>
         </div>
 
-        <!-- Telemetry Breakdown -->
-        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:16px;">
-          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
-            <div style="font-size:10px; color:var(--text-muted);">MODEL P(SYNTHETIC)</div>
-            <div style="font-size:16px; font-weight:700; color:#38bdf8;" id="review-modal-prob">--</div>
+        <div class="drawer-audio-meta-grid">
+          <div class="drawer-meta-pill">
+            <span class="meta-label">DURATION</span>
+            <span class="meta-val" id="drawer-audio-duration">0.00s</span>
           </div>
-          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
-            <div style="font-size:10px; color:var(--text-muted);">COMBINED RISK</div>
-            <div style="font-size:16px; font-weight:700; color:var(--accent-amber);" id="review-modal-risk">--</div>
+          <div class="drawer-meta-pill">
+            <span class="meta-label">AUDIO HASH</span>
+            <span class="meta-val hash-truncate" id="drawer-audio-hash" title="Click to copy SHA-256" onclick="copyAudioHash()">unknown</span>
           </div>
-          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
-            <div style="font-size:10px; color:var(--text-muted);">DETECTOR VERSION</div>
-            <div style="font-size:16px; font-weight:700; color:#cbd5e1;" id="review-modal-version">--</div>
+          <div class="drawer-meta-pill">
+            <span class="meta-label">VAULT FORMAT</span>
+            <span class="meta-val" id="drawer-audio-format">FLAC 16-BIT</span>
           </div>
-          <div class="hero-kpi-card" style="padding:10px; text-align:left;">
-            <div style="font-size:10px; color:var(--text-muted);">AUDIO DURATION</div>
-            <div style="font-size:16px; font-weight:700; color:#cbd5e1;" id="review-modal-duration">--</div>
-          </div>
-        </div>
-
-        <!-- Ground-Truth Decision Section -->
-        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); padding:16px; border-radius:8px; margin-bottom:16px;">
-          <div style="font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase;">Assign Verified Ground-Truth Label</div>
-          <div style="font-size:11.5px; color:var(--text-muted); margin-bottom:12px;">
-            Assign ground truth based on manual auditory and spectral inspection. Only BONAFIDE or SPOOF labels will enter model retraining.
-          </div>
-          <div style="display:flex; gap:10px; margin-bottom:12px;">
-            <button class="btn btn-secondary" id="btn-label-bonafide" style="flex:1; border-color:#22c55e;" onclick="selectGroundTruth('BONAFIDE')">✓ Confirm BONAFIDE (Genuine)</button>
-            <button class="btn btn-secondary" id="btn-label-spoof" style="flex:1; border-color:#ef4444;" onclick="selectGroundTruth('SPOOF')">⚠ Confirm SPOOF (Cloned)</button>
-            <button class="btn btn-secondary" id="btn-label-reject" style="flex:1;" onclick="selectGroundTruth('REJECT')">✕ Inconclusive (Reject)</button>
-          </div>
-          <div class="form-group">
-            <label class="form-label" style="font-size:11px;">Analyst Verification Notes</label>
-            <input type="text" id="review-notes-input" class="form-input" style="width:100%; font-size:12px;" placeholder="Optional rationale for ground-truth confirmation..." />
+          <div class="drawer-meta-pill">
+            <span class="meta-label">ANALYSIS ID</span>
+            <span class="meta-val" id="drawer-audio-analysis-id">unknown</span>
           </div>
         </div>
 
-        <button class="btn btn-primary" id="btn-submit-review-decision" style="width:100%; padding:10px;" onclick="submitGroundTruthDecision()">
-          Authorize &amp; Finalize Decision
-        </button>
+        <!-- Real Waveform Canvas Container -->
+        <div class="drawer-waveform-wrap" id="drawer-waveform-container">
+          <canvas id="review-waveform-canvas" width="600" height="96"></canvas>
+          <div class="waveform-overlay-timeline">
+            <span id="waveform-cur-time" class="time-label">00:00.0</span>
+            <span id="waveform-total-time" class="time-label">00:00.0</span>
+          </div>
+          <div id="drawer-audio-error-banner" class="drawer-audio-error hidden">
+            <span>⚠️ Audio playback unavailable or could not be decoded.</span>
+            <button class="btn btn-xs btn-secondary" onclick="retryLoadAudio()">Retry</button>
+          </div>
+        </div>
+
+        <!-- Custom Audio Controls Bar -->
+        <div class="drawer-player-controls">
+          <div class="player-left-controls">
+            <button class="player-btn-play" id="btn-player-play" onclick="toggleAudioPlayback()" title="Play / Pause">
+              <span id="player-play-icon">▶</span>
+            </button>
+            <button class="player-btn-secondary" onclick="restartAudioPlayback()" title="Restart Audio">
+              ↺
+            </button>
+          </div>
+
+          <div class="player-seek-wrap">
+            <input type="range" id="drawer-audio-seekbar" min="0" max="100" value="0" step="0.1" class="player-seekbar" oninput="onSeekbarInput(this.value)" />
+          </div>
+
+          <div class="player-right-controls">
+            <div class="player-speed-selector">
+              <button class="speed-btn active" id="speed-1x" onclick="setPlaybackSpeed(1.0)">1.0x</button>
+              <button class="speed-btn" id="speed-125x" onclick="setPlaybackSpeed(1.25)">1.25x</button>
+              <button class="speed-btn" id="speed-15x" onclick="setPlaybackSpeed(1.5)">1.5x</button>
+            </div>
+            <div class="player-volume-wrap">
+              <span class="vol-icon">🔊</span>
+              <input type="range" id="drawer-audio-volume" min="0" max="1" step="0.05" value="1" class="player-vol-slider" oninput="setAudioVolume(this.value)" />
+            </div>
+          </div>
+
+          <!-- Hidden Native Audio Object -->
+          <audio id="review-audio-player" preload="metadata" style="display:none;"></audio>
+        </div>
+      </section>
+
+      <!-- Panel 2: Model Assessment Evidence -->
+      <section class="drawer-section">
+        <div class="drawer-section-header">
+          <div class="drawer-section-title">
+            <span class="section-icon">🧠</span> EVIDENTIARY MODEL ASSESSMENT
+          </div>
+          <span class="badge" style="background:rgba(56,189,248,0.12); color:#38bdf8; border:1px solid rgba(56,189,248,0.3);">
+            NON-BINDING EVIDENCE
+          </span>
+        </div>
+
+        <div class="drawer-evidence-card">
+          <div class="evidence-main-row">
+            <div class="evidence-score-box">
+              <div class="evidence-score-label">P(SYNTHETIC CLONE)</div>
+              <div class="evidence-score-val" id="drawer-model-prob">0.0%</div>
+            </div>
+            <div class="evidence-risk-box">
+              <div class="evidence-risk-label">ASSESSED RISK LEVEL</div>
+              <div class="evidence-risk-val" id="drawer-model-risk">SAFE (0%)</div>
+            </div>
+            <div class="evidence-version-box">
+              <div class="evidence-risk-label">DETECTOR VERSION</div>
+              <div class="evidence-version-val" id="drawer-model-version">v011</div>
+            </div>
+          </div>
+
+          <!-- Dual-Model Comparison Grid (Section 31) -->
+          <div class="drawer-comparison-box" id="drawer-dual-model-box">
+            <div class="comparison-header">
+              <span class="comp-title">MULTI-DETECTOR TELEMETRY COMPARISON</span>
+              <span class="comp-badge" id="drawer-aasist-status-badge">AASIST ACTIVE</span>
+            </div>
+            <div class="comp-metrics-grid">
+              <div class="comp-metric-item">
+                <div class="comp-metric-header">
+                  <span>Native EnsembleDetector</span>
+                  <span id="drawer-comp-native-val" style="color:#00f5ff; font-weight:700;">0.0%</span>
+                </div>
+                <div class="comp-meter-track">
+                  <div class="comp-meter-fill cyan" id="drawer-comp-native-fill" style="width:0%;"></div>
+                </div>
+              </div>
+              <div class="comp-metric-item">
+                <div class="comp-metric-header">
+                  <span>AASIST Graph/Spectral</span>
+                  <span id="drawer-comp-aasist-val" style="color:#a855f7; font-weight:700;">N/A</span>
+                </div>
+                <div class="comp-meter-track">
+                  <div class="comp-meter-fill purple" id="drawer-comp-aasist-fill" style="width:0%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Synthetic probability progress meter -->
+          <div class="evidence-meter-container">
+            <div class="evidence-meter-track">
+              <div class="evidence-meter-fill" id="drawer-meter-fill" style="width: 0%;"></div>
+            </div>
+            <div class="evidence-meter-scale">
+              <span>0% (Human)</span>
+              <span>50% (Threshold)</span>
+              <span>100% (Cloned)</span>
+            </div>
+          </div>
+
+          <div class="evidence-notice">
+            <span class="notice-icon">ℹ️</span>
+            <span>
+              Neural predictions and risk scores are evidence only. The ground-truth classification below is determined exclusively by human operator judgment.
+            </span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 3: Human Ground-Truth Verification -->
+      <section class="drawer-section">
+        <div class="drawer-section-header">
+          <div class="drawer-section-title">
+            <span class="section-icon">👤</span> HUMAN OPERATOR VERIFICATION
+          </div>
+          <span class="badge" id="drawer-gt-status-badge" style="background:rgba(245,158,11,0.12); color:#f59e0b; border:1px solid rgba(245,158,11,0.3);">AWAITING GROUND TRUTH</span>
+        </div>
+
+        <div class="ground-truth-controls">
+          <p class="gt-prompt-text">Select authoritative acoustic ground truth based on forensic listening &amp; analysis:</p>
+          <div class="gt-button-group">
+            <button class="gt-choice-btn" id="btn-gt-bonafide" onclick="selectDrawerGroundTruth('BONAFIDE')">
+              <span class="gt-btn-icon">👤</span>
+              <span class="gt-btn-title">HUMAN / BONAFIDE</span>
+              <span class="gt-btn-desc">Authentic biological speech (Target: 0.0)</span>
+            </button>
+            <button class="gt-choice-btn" id="btn-gt-spoof" onclick="selectDrawerGroundTruth('SPOOF')">
+              <span class="gt-btn-icon">🤖</span>
+              <span class="gt-btn-title">CLONED / SPOOF</span>
+              <span class="gt-btn-desc">Deepfake / synthesized voice (Target: 1.0)</span>
+            </button>
+            <button class="gt-choice-btn" id="btn-gt-inconclusive" onclick="selectDrawerGroundTruth('INCONCLUSIVE')">
+              <span class="gt-btn-icon">❓</span>
+              <span class="gt-btn-title">INCONCLUSIVE</span>
+              <span class="gt-btn-desc">Ambiguous or degraded audio (Not trained)</span>
+            </button>
+          </div>
+
+          <!-- Analyst Notes -->
+          <div class="drawer-notes-wrap">
+            <label class="form-label" style="font-size:11px; margin-bottom:4px;">Forensic Review Notes &amp; Acoustic Observations (Optional):</label>
+            <textarea id="drawer-review-notes" class="form-input drawer-notes-textarea" rows="2" placeholder="Record acoustic artifacts, phase distortion, prosody glitches, or verification context..."></textarea>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel 4: Retraining Approval & Training Decision -->
+      <section class="drawer-section">
+        <div class="drawer-section-header">
+          <div class="drawer-section-title">
+            <span class="section-icon">⚡</span> CONTINUOUS RETRAINING DECISION
+          </div>
+          <span class="badge" id="drawer-training-eligibility-badge" style="background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.3);">REQUIRES HUMAN LABEL</span>
+        </div>
+
+        <div class="drawer-decision-card">
+          <p class="decision-desc">
+            Approved samples enter the cryptographic training pool and trigger background candidate model training.
+            <strong>detector.pt is never directly overwritten</strong> — new weights are validated across multi-gate benchmarks before promotion.
+          </p>
+
+          <div class="decision-action-row">
+            <button class="btn btn-primary btn-approve-training" id="btn-drawer-approve" onclick="openApprovalConfirmation()" disabled>
+              ⚡ Approve for Retraining
+            </button>
+            <button class="btn btn-secondary btn-reject-training" id="btn-drawer-reject" onclick="submitRejectionDecision()">
+              ✕ Reject from Training Pool
+            </button>
+          </div>
+          <div id="drawer-decision-feedback" class="decision-feedback hidden"></div>
+        </div>
+      </section>
+
+      <!-- Panel 5: Audit Trail & Lineage History -->
+      <section class="drawer-section">
+        <div class="drawer-section-header">
+          <div class="drawer-section-title">
+            <span class="section-icon">📜</span> AUDIT TRAIL &amp; LINEAGE
+          </div>
+        </div>
+        <div class="drawer-audit-wrap" id="drawer-audit-trail-list">
+          <div style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">No previous audit actions recorded for this item.</div>
+        </div>
+      </section>
+
+    </div>
+  </aside>
+
+  <!-- Pre-Approval Confirmation Modal -->
+  <div class="modal-overlay hidden" id="review-confirm-modal" onclick="if(event.target===this) closeApprovalConfirmation()">
+    <div class="card modal-card review-confirm-card" style="max-width:540px; width:92%; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="pulse-indicator"></span>
+          <h2 class="card-title">CYBERGUARD // TRAINING AUTHORIZATION</h2>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeApprovalConfirmation()">✕</button>
+      </div>
+      <div style="padding:18px;">
+        <p style="font-size:12px; color:var(--text-secondary); line-height:1.5; margin-bottom:14px;">
+          Please verify the forensic ground-truth classification before authorizing this sample for the controlled training pipeline:
+        </p>
+
+        <div class="confirm-summary-box">
+          <div class="confirm-row">
+            <span class="confirm-lbl">REVIEW ID:</span>
+            <span class="confirm-val" id="confirm-modal-review-id" style="font-family:var(--font-mono); color:#38bdf8;">-</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-lbl">AUDIO FILE:</span>
+            <span class="confirm-val" id="confirm-modal-filename">-</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-lbl">VERIFIED GROUND TRUTH:</span>
+            <span class="confirm-val" id="confirm-modal-gt" style="font-weight:700; color:#10b981;">-</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-lbl">MODEL PREDICTION:</span>
+            <span class="confirm-val" id="confirm-modal-prediction">-</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-lbl">MODEL SCORE:</span>
+            <span class="confirm-val" id="confirm-modal-score">-</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-lbl">RISK LEVEL:</span>
+            <span class="confirm-val" id="confirm-modal-risk">-</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-lbl">AUDIO SHA-256:</span>
+            <span class="confirm-val hash-truncate" id="confirm-modal-hash">-</span>
+          </div>
+        </div>
+
+        <div class="confirm-safety-note">
+          🛡️ <strong>Safety Guarantee:</strong> This verified sample will enter the controlled training pipeline.
+          The active production detector (<code>detector.pt</code>) will <strong>NOT</strong> be overwritten directly.
+          Candidate weights must pass multi-gate validation benchmarks before promotion is authorized.
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
+          <button class="btn btn-secondary" onclick="closeApprovalConfirmation()">Cancel</button>
+          <button class="btn btn-primary" id="btn-confirm-approval-submit" onclick="executeApprovedTrainingDecision()">
+            ✓ Confirm &amp; Approve Sample
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -1738,6 +2371,165 @@
           <input type="number" id="retrain-lr" class="form-input" value="0.0001" step="0.00005" min="0.00001" style="width:100%;" />
         </div>
         <button class="btn btn-primary" style="width:100%;" onclick="submitRetrainTrigger()">Launch Retraining Job</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LLM Security Analyst & Forensic Copilot Modal -->
+  <div class="modal-overlay hidden" id="llm-copilot-modal" onclick="if(event.target===this) closeLLMCopilotModal()">
+    <div class="card modal-card" style="max-width:820px; width:95%; max-height:90vh; overflow-y:auto; margin:auto;">
+      <div class="card-header" style="position:sticky; top:0; background:rgba(11,17,32,0.98); backdrop-filter:blur(14px); z-index:10; border-bottom:1px solid var(--border-subtle); padding:14px 18px; margin-bottom:0;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:28px; height:28px; border-radius:6px; background:rgba(6,182,212,0.15); display:flex; align-items:center; justify-content:center; color:#06b6d4; font-size:16px;">
+            ⚡
+          </div>
+          <div>
+            <h2 class="card-title" style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px;">
+              LLM Threat Analyst &amp; Forensic Copilot
+              <span class="card-tag" style="background:rgba(6,182,212,0.12); color:#06b6d4; font-size:10px;">MITRE ATT&amp;CK REASONING</span>
+            </h2>
+            <div style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+              Autonomous multi-phase threat reconstruction, Kill Chain mapping, and containment playbooks.
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeLLMCopilotModal()">✕ Close</button>
+      </div>
+
+      <div style="padding:18px;">
+        <!-- Copilot Input Controls -->
+        <div style="background:rgba(255,255,255,0.02); border-radius:8px; padding:14px; border:1px solid var(--border-subtle); margin-bottom:18px;">
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin-bottom:10px;">
+            <div>
+              <label class="form-label" style="font-size:11.5px;" for="llm-input-context">Artifact / Forensic Details or Indicator</label>
+              <textarea id="llm-input-context" class="form-input" rows="3" style="width:100%; font-size:12px; font-family:'JetBrains Mono', monospace;" placeholder="Paste suspicious message, URL, domain, IP, or forensic telemetry..."></textarea>
+            </div>
+            <div>
+              <label class="form-label" style="font-size:11.5px;" for="llm-threat-type">Threat Context Modality</label>
+              <select id="llm-threat-type" class="form-input" style="width:100%; font-size:12px; margin-bottom:8px;">
+                <option value="PHISHING_SOCIAL_ENG">Phishing / Social Engineering</option>
+                <option value="DEEPFAKE_VOICE">AI Voice Clone / Impersonation</option>
+                <option value="DEEPFAKE_IMAGE">Visual Deepfake / Image Manipulation</option>
+                <option value="MALICIOUS_INFRASTRUCTURE">Malicious IP / Domain / C2</option>
+                <option value="DDOS_VOLUMETRIC">DDoS / Volumetric Flood</option>
+                <option value="BRUTE_FORCE_AUTH">Authentication Brute Force</option>
+              </select>
+              <label class="form-label" style="font-size:11.5px;" for="llm-severity">Severity Context</label>
+              <select id="llm-severity" class="form-input" style="width:100%; font-size:12px;">
+                <option value="CRITICAL">CRITICAL</option>
+                <option value="HIGH" selected>HIGH</option>
+                <option value="MEDIUM">MEDIUM</option>
+                <option value="LOW">LOW</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <span style="font-size:11px; color:var(--text-muted);">Deterministic zero-latency offline cyber-analyst engine</span>
+            <button class="btn btn-primary btn-sm" id="btn-run-llm" onclick="runLLMCopilotAnalysis()">
+              ⚡ Run AI Security Analysis
+            </button>
+          </div>
+        </div>
+
+        <!-- Copilot Analysis Results Area -->
+        <div id="llm-results-container" style="display:none;">
+          <!-- Populated dynamically by app.js -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Threat Intelligence Report Export Modal -->
+  <div class="modal-overlay hidden" id="threat-report-modal" onclick="if(event.target===this) closeReportModal()">
+    <div class="card modal-card" style="max-width:520px; width:92%; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#06b6d4;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <h2 class="card-title" style="font-size:14px; margin:0;">Export Executive Threat Report</h2>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeReportModal()">✕</button>
+      </div>
+      <div style="padding:16px;">
+        <p style="font-size:12px; color:var(--text-muted); line-height:1.5; margin-bottom:14px;">
+          Generate comprehensive incident dossiers formatted for executive review, SIEM ingestion, or compliance audits.
+        </p>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;">Report Format</label>
+          <select id="report-format" class="form-input" style="width:100%; font-size:12px;">
+            <option value="html" selected>Executive HTML Dossier (Printable / PDF-Ready)</option>
+            <option value="json">STIX-2.1 / JSON Forensic Telemetry Bundle</option>
+            <option value="csv">SOC Incident Audit Log (CSV Format)</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;">Time Horizon</label>
+          <select id="report-timeframe" class="form-input" style="width:100%; font-size:12px;">
+            <option value="24h" selected>Last 24 Hours</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+            <option value="all">All Telemetry History</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:16px;">
+          <label class="form-label" style="font-size:12px;">Minimum Incident Severity Filter</label>
+          <select id="report-severity" class="form-input" style="width:100%; font-size:12px;">
+            <option value="ALL">All Severities (Safe to Critical)</option>
+            <option value="MEDIUM">Medium, High &amp; Critical</option>
+            <option value="HIGH" selected>High &amp; Critical Only</option>
+            <option value="CRITICAL">Critical Only</option>
+          </select>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="closeReportModal()">Cancel</button>
+          <button class="btn btn-primary btn-sm" id="btn-generate-report" onclick="generateThreatReport()">
+            📄 Generate &amp; Download Report
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Manual Entity Quarantine Modal -->
+  <div class="modal-overlay hidden" id="quarantine-modal" onclick="if(event.target===this) closeQuarantineModal()">
+    <div class="card modal-card" style="max-width:480px; width:92%; margin:auto;">
+      <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:#ef4444;"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          <h2 class="card-title" style="font-size:14px; margin:0;">Quarantine Target Entity</h2>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeQuarantineModal()">✕</button>
+      </div>
+      <div style="padding:16px;">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;">Entity Type</label>
+          <select id="quarantine-entity-type" class="form-input" style="width:100%; font-size:12px;">
+            <option value="ip" selected>IP Address</option>
+            <option value="device_fingerprint">Device Fingerprint / Hardware ID</option>
+            <option value="domain">Domain / Hostname</option>
+            <option value="hash">File SHA-256 Hash</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;">Target Identifier</label>
+          <input type="text" id="quarantine-entity-val" class="form-input" style="width:100%; font-size:12px; font-family:'JetBrains Mono', monospace;" placeholder="e.g. 198.51.100.42 or evil-domain.com" required />
+        </div>
+        <div class="form-group" style="margin-bottom:12px;">
+          <label class="form-label" style="font-size:12px;">Threat Justification / Reason</label>
+          <input type="text" id="quarantine-reason" class="form-input" style="width:100%; font-size:12px;" placeholder="e.g. Brute force credential stuffing, DDoS source" value="Admin manual security quarantine" />
+        </div>
+        <div class="form-group" style="margin-bottom:16px;">
+          <label class="form-label" style="font-size:12px;">Containment Duration</label>
+          <select id="quarantine-duration" class="form-input" style="width:100%; font-size:12px;">
+            <option value="permanent" selected>Permanent / Indefinite Ban</option>
+            <option value="3600">1 Hour (Temporary Containment)</option>
+            <option value="86400">24 Hours</option>
+            <option value="604800">7 Days</option>
+          </select>
+        </div>
+        <div style="display:flex; justify-content:flex-end; gap:8px;">
+          <button class="btn btn-secondary btn-sm" onclick="closeQuarantineModal()">Cancel</button>
+          <button class="btn btn-danger btn-sm" onclick="submitManualQuarantine()">⚡ Enforce Quarantine</button>
+        </div>
       </div>
     </div>
   </div>

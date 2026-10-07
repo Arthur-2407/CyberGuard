@@ -15,9 +15,14 @@ from backend.services.continuous_learning import ContinuousLearningService
 factory = get_session_factory("data/cyberguard.db")
 db = factory()
 
+# Record active production version so test rollback restores it rather than hardcoded v001
+initial_mv = db.query(ModelVersionModel).filter(ModelVersionModel.status == "ACTIVE").first()
+target_rollback = initial_mv.version if initial_mv else "v008"
+
 print("=" * 65)
 print("Testing Continuous Learning Retraining, Validation, Promotion, and Rollback")
 print("=" * 65)
+print(f"Base Production Model Version: {target_rollback}")
 
 # 1. Trigger retraining
 print("\n1. Triggering background retraining (epochs=2 for test speed)...")
@@ -72,10 +77,10 @@ assert det_pt.stat().st_size > 30_000_000
 print(f"✓ detector.pt verified on disk: {det_pt.stat().st_size:,} bytes")
 
 # 4. Test Model Rollback
-print("\n4. Testing Model Rollback to v001...")
+print(f"\n4. Testing Model Rollback to {target_rollback}...")
 rb_result = ContinuousLearningService.rollback_model(
     db=db,
-    target_version="v001",
+    target_version=target_rollback,
     admin_id=1,
     admin_username="admin",
 )
@@ -84,8 +89,8 @@ assert rb_result["status"] == "ROLLED_BACK"
 
 db.expire_all()
 restored_mv = db.query(ModelVersionModel).filter(ModelVersionModel.status == "ACTIVE").first()
-assert restored_mv.version == "v001", f"Expected v001, got {restored_mv.version}"
-print(f"✓ Production model successfully rolled back to {restored_mv.version}!")
+assert restored_mv.version == target_rollback, f"Expected {target_rollback}, got {restored_mv.version}"
+print(f"✓ Production model successfully restored to {restored_mv.version}!")
 
 db.close()
 print("=" * 65)

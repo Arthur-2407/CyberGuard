@@ -40,6 +40,7 @@ data/*.backup
 data/audit.log
 *.log
 logs/
+scratch/
 
 # ------------------------------------------------------------------------------
 # 3. Data, Datasets, Audio Vault & Archives (CRUCIAL - Large Media/Datasets)
@@ -199,6 +200,7 @@ test_heuristic.py
 test_integration.py
 test_torchaudio.py
 antigravity_5tool_launcher.py
+scratch_*.py
 
 # ------------------------------------------------------------------------------
 # 10. IDE, OS & AI Assistant Files
@@ -211,6 +213,9 @@ Thumbs.db
 ehthumbs.db
 desktop.ini
 
+# Browser profile and test automation caches
+.edge_profile/
+
 # AI Agents & Workspaces
 .agents/
 .gemini/
@@ -222,3 +227,9 @@ desktop.ini
 # 11. Documents & Problem Statements
 # ------------------------------------------------------------------------------
 Problem_Statement_9.pdf
+
+# ------------------------------------------------------------------------------
+# 12. Local Verification Dumps & Audit Evidence
+# ------------------------------------------------------------------------------
+verification/
+

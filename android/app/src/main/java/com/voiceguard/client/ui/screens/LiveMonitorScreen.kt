@@ -76,7 +76,7 @@ fun LiveMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(32.dp))
         
         SectionHeader("UPLINK CONTROL")
-        VoiceGuardCard {
+        CyberGuardCard {
             if (!hasPermission) {
                 Text("MICROPHONE ACCESS REQUIRED", style = MaterialTheme.typography.labelSmall, color = StatusWarning)
                 Spacer(modifier = Modifier.height(16.dp))
@@ -161,7 +161,7 @@ fun LiveMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         
         if (isRecording) {
             SectionHeader("LIVE TELEMETRY")
-            VoiceGuardCard {
+            CyberGuardCard {
                 val riskColor = when (alertLevel.uppercase()) {
                     "CRITICAL" -> StatusCritical
                     "HIGH" -> StatusWarning

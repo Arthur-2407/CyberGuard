@@ -1,8 +1,10 @@
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends
 from typing import List, Optional, Dict, Any
-import time
+import asyncio
 import copy
+import json
 import logging
+import time
 import uuid
 
 from backend.config import get_settings
@@ -190,6 +192,121 @@ async def analyze_deepfake(
     return event
 
 
+@router.post("/image", response_model=ThreatEvent)
+async def analyze_image_forensics(
+    file: UploadFile = File(...),
+    source: str = Form("image_upload"),
+    correlation_id: Optional[str] = Form(None)
+):
+    """
+    Dedicated General Image & Deepfake Forensic Analysis Endpoint.
+    Evaluates 2D FFT spectral distributions, high-frequency anomalies,
+    Laplacian edge variance, and generative AI metadata signatures.
+    """
+    settings, incident_manager = _get_dependencies()
+    from backend.main import get_app_detector
+    voice_detector = get_app_detector()
+
+    coordinator = DeepfakeCoordinator(settings, voice_detector)
+    content = await file.read()
+
+    event = coordinator.analyze(
+        media_bytes=content,
+        filename=file.filename or "uploaded_image.png",
+        source=source,
+        correlation_id=correlation_id
+    )
+
+    if incident_manager:
+        incident_manager.process_event(event)
+
+    try:
+        from backend.security.enforcement import get_enforcement_engine
+        enforcement = get_enforcement_engine()
+        if enforcement:
+            enforcement.evaluate_threat_for_auto_block(event)
+    except Exception as enf_err:
+        logger.debug(f"Image enforcement evaluation notice: {enf_err}")
+
+    _broadcast_threat_event(event)
+    return event
+
+
+@router.post("/llm-analysis")
+async def perform_llm_security_analysis(
+    payload: Dict[str, Any]
+):
+    """
+    Explainable AI & LLM Security Analysis Layer.
+    Synthesizes executive briefing, MITRE ATT&CK mapping,
+    Cyber Kill Chain reconstruction, and Incident Response Playbook.
+    """
+    from backend.analysis.llm_analyst import get_llm_analyst
+    analyst = get_llm_analyst()
+
+    # If an incident_id is passed, load incident data from DB
+    incident_id = payload.get("incident_id")
+    event_data = payload.get("event") or payload.get("threat_data") or payload
+
+    if incident_id:
+        try:
+            from backend.storage.database import get_session_factory, IncidentModel, ThreatEventModel
+            session = get_session_factory()()
+            inc = session.query(IncidentModel).filter(IncidentModel.incident_id == incident_id).first()
+            if inc:
+                evs = session.query(ThreatEventModel).filter(ThreatEventModel.incident_id == incident_id).all()
+                event_data = {
+                    "incident_id": inc.incident_id,
+                    "threat_category": inc.category,
+                    "severity": inc.risk,
+                    "status": inc.status,
+                    "source": "Incident Case Management",
+                    "evidence": [e.explanation_summary for e in evs if e.explanation_summary],
+                    "recommendations": json.loads(inc.recommendations_json or "[]"),
+                }
+            session.close()
+        except Exception as exc:
+            logger.debug(f"Incident retrieval for LLM analysis notice: {exc}")
+
+    result = analyst.analyze(event_data)
+
+    # Ensure standard schema aliases for forensic copilot and test clients
+    if "mitre_attack_mapping" in result and "mitre_attack_techniques" not in result:
+        result["mitre_attack_techniques"] = [
+            {"technique_id": m.get("id"), "name": m.get("name"), "tactic": m.get("tactic")}
+            for m in result["mitre_attack_mapping"]
+        ]
+    if "kill_chain_reconstruction" in result and "kill_chain_stage" not in result:
+        kc = result["kill_chain_reconstruction"]
+        result["kill_chain_stage"] = kc.get("phase") if isinstance(kc, dict) else "Delivery / Exploitation"
+    if "immediate_containment" not in result:
+        playbook = result.get("incident_response_playbook", [])
+        if playbook:
+            result["immediate_containment"] = [
+                f"{p.get('step', '')}: {p.get('action', '')}".strip(": ")
+                for p in playbook
+            ]
+        elif result.get("assessed_severity") == "SAFE":
+            result["immediate_containment"] = [
+                "Operational Clearance: Asset verified authentic. No containment actions required."
+            ]
+        else:
+            result["immediate_containment"] = [
+                f"Containment Window: {result.get('recommended_containment_window', 'Standard')}",
+                "Review evidence artifacts and verify origin through out-of-band channel."
+            ]
+    if "executive_summary" in result and "executive_briefing" not in result:
+        result["executive_briefing"] = result["executive_summary"]
+    if "mitre_attack_mapping" in result and "mitre_mapping" not in result:
+        result["mitre_mapping"] = result["mitre_attack_mapping"]
+    if "technical_deep_dive" in result and "narrative" not in result:
+        result["narrative"] = result["technical_deep_dive"]
+    if "technical_deep_dive" in result and "threat_narrative" not in result:
+        result["threat_narrative"] = result["technical_deep_dive"]
+
+    return result
+
+
 @router.post("/events", response_model=ThreatEvent)
 async def ingest_event(
     event_data: dict,
@@ -228,12 +345,21 @@ async def urlhaus_status(force_refresh: bool = False):
 
 @router.get("/pipeline/status")
 async def threat_intel_pipeline_status(force_refresh: bool = False):
-    """Return real-time status of the entire Threat Intelligence pipeline (VT + URLhaus)."""
+    """Return real-time status of the entire Threat Intelligence pipeline (VT + URLhaus) concurrently."""
     settings, _ = _get_dependencies()
     vt_provider = get_virustotal_provider(settings)
     uh_provider = get_urlhaus_provider(settings)
-    vt_status = await vt_provider.check_status(force_refresh=force_refresh)
-    uh_status = await uh_provider.check_status(force_refresh=force_refresh)
+    vt_res, uh_res = await asyncio.gather(
+        vt_provider.check_status(force_refresh=force_refresh),
+        uh_provider.check_status(force_refresh=force_refresh),
+        return_exceptions=True,
+    )
+    vt_status = vt_res if isinstance(vt_res, dict) else {
+        "provider": "VirusTotal", "status": "ERROR", "configured": True, "enabled": True, "message": str(vt_res)
+    }
+    uh_status = uh_res if isinstance(uh_res, dict) else {
+        "provider": "URLhaus", "status": "ERROR", "configured": True, "enabled": True, "message": str(uh_res)
+    }
     is_active = (vt_status.get("status") == "READY") and (uh_status.get("status") == "READY")
     return {
         "status": "READY" if is_active else ("DEGRADED" if (vt_status.get("status") == "READY" or uh_status.get("status") == "READY") else "OFFLINE"),

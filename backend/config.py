@@ -165,6 +165,24 @@ class URLhausConfig:
 
 
 @dataclass
+class EnforcementConfig:
+    enabled: bool = True
+    auto_block_critical: bool = True
+    auto_block_threshold: float = 0.85
+    ddos_protection: bool = True
+    ddos_rpm_limit: int = 120
+    ddos_burst_limit: int = 30
+    ban_duration_minutes: int = 60
+
+
+@dataclass
+class EmailAlertsConfig:
+    enabled: bool = True
+    recipient: str = "security-ops@cyberguard.local"
+    threshold: str = "CRITICAL"
+
+
+@dataclass
 class Settings:
     audio: AudioConfig = field(default_factory=AudioConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
@@ -178,6 +196,8 @@ class Settings:
     cyberguard: CyberGuardConfig = field(default_factory=CyberGuardConfig)
     virustotal: VirusTotalConfig = field(default_factory=VirusTotalConfig)
     urlhaus: URLhausConfig = field(default_factory=URLhausConfig)
+    enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
+    email_alerts: EmailAlertsConfig = field(default_factory=EmailAlertsConfig)
     project_root: Path = field(default_factory=lambda: _PROJECT_ROOT)
 
     def abs_path(self, relative: str) -> Path:
@@ -198,6 +218,8 @@ def _build_settings(raw: dict) -> Settings:
     cyberguard_raw = raw.get("cyberguard", {})
     virustotal_raw = raw.get("virustotal", {})
     urlhaus_raw = raw.get("urlhaus", {})
+    enforcement_raw = raw.get("enforcement", {})
+    email_alerts_raw = raw.get("email_alerts", {})
 
     thresholds_raw = risk_raw.get("alert_thresholds", {})
 
@@ -304,6 +326,20 @@ def _build_settings(raw: dict) -> Settings:
             timeout_sec=urlhaus_raw.get("timeout_sec", 10),
             cache_enabled=urlhaus_raw.get("cache_enabled", True),
             auth_key=_clean_secret(os.getenv("URLHAUS_AUTH_KEY", urlhaus_raw.get("auth_key", ""))),
+        ),
+        enforcement=EnforcementConfig(
+            enabled=bool(enforcement_raw.get("enabled", True)),
+            auto_block_critical=bool(enforcement_raw.get("auto_block_critical", True)),
+            auto_block_threshold=float(enforcement_raw.get("auto_block_threshold", 0.85)),
+            ddos_protection=bool(enforcement_raw.get("ddos_protection", True)),
+            ddos_rpm_limit=int(enforcement_raw.get("ddos_rpm_limit", 120)),
+            ddos_burst_limit=int(enforcement_raw.get("ddos_burst_limit", 30)),
+            ban_duration_minutes=int(enforcement_raw.get("ban_duration_minutes", 60)),
+        ),
+        email_alerts=EmailAlertsConfig(
+            enabled=bool(email_alerts_raw.get("enabled", True)),
+            recipient=str(email_alerts_raw.get("recipient", "security-ops@cyberguard.local")),
+            threshold=str(email_alerts_raw.get("threshold", "CRITICAL")),
         ),
     )
 

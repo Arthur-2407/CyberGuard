@@ -96,8 +96,8 @@ class URLhausProvider:
         now = time.time()
         cached = URLhausProvider._cached_status
         cached_st = cached.get("status") if cached else None
-        # Only cache healthy or permanent auth failures for the long TTL; transient errors expire in 10s to allow quick auto-recovery
-        ttl = URLhausProvider._CACHE_TTL_SEC if cached_st in ("READY", "AUTHENTICATION_FAILED") else 10.0
+        # Cache healthy/permanent auth failures for CACHE_TTL_SEC; transient/timeout errors cooldown for 30s
+        ttl = URLhausProvider._CACHE_TTL_SEC if cached_st in ("READY", "AUTHENTICATION_FAILED") else 30.0
         if (
             not force_refresh
             and cached
@@ -105,9 +105,9 @@ class URLhausProvider:
         ):
             return dict(cached)
 
-        # Probe with a minimal recent URLs request (Auth-Key validated here)
+        # Probe with a minimal recent URLs request (Auth-Key validated here, bounded probe timeout)
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(timeout=min(self.timeout, 4.0)) as client:
                 resp = await client.get(
                     f"{_URLHAUS_BASE}/urls/recent/limit/1/",
                     headers=self._get_headers(),

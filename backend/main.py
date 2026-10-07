@@ -22,6 +22,7 @@ import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 # Ensure project root is on PYTHONPATH
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -31,17 +32,41 @@ if str(_PROJECT_ROOT) not in sys.path:
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 from backend.config import get_settings
 
-# Configure logging
+# Configure logging with sensitive parameter redaction
+import re
+
+class SensitiveDataFilter(logging.Filter):
+    """Redact sensitive credentials (tokens, auth keys, passwords) from access & server logs."""
+    _PATTERN = re.compile(r'([?&](?:token|key|secret|password|auth|api_key)=)[^&\s]+', re.IGNORECASE)
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.args:
+            new_args = []
+            for arg in record.args:
+                if isinstance(arg, str):
+                    new_args.append(self._PATTERN.sub(r'\1[REDACTED]', arg))
+                else:
+                    new_args.append(arg)
+            record.args = tuple(new_args)
+        if isinstance(record.msg, str):
+            record.msg = self._PATTERN.sub(r'\1[REDACTED]', record.msg)
+        return True
+
 settings = get_settings()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Attach sensitive data redactor to all loggers including uvicorn.access
+sensitive_filter = SensitiveDataFilter()
+logging.getLogger().addFilter(sensitive_filter)
+logging.getLogger("uvicorn.access").addFilter(sensitive_filter)
 
 # ── Application-level singletons ───────────────────────────────────────────────
 # Use a single authoritative state dict so that every `from backend.main import …`
@@ -71,31 +96,53 @@ def _get_state() -> dict:
 
 def get_app_detector() -> VoiceCloneDetector:
     """Return the live detector singleton."""
-    return _APP_STATE["detector"]
+    detector = _APP_STATE.get("detector")
+    if detector is None:
+        detector = VoiceCloneDetector(app_settings)
+        detector.initialize()
+        _APP_STATE["detector"] = detector
+    return detector
 
 
 def get_app_ws_notifier() -> WebSocketNotifier:
-    """Return the live WebSocket notifier singleton."""
+    """Return the live WebSocket notifier singleton with lazy init."""
+    if _APP_STATE.get("ws_notifier") is None:
+        _setup_alert_infrastructure()
     return _APP_STATE["ws_notifier"]
 
 
 def get_app_alert_manager() -> AlertManager:
-    """Return the live alert manager singleton."""
+    """Return the live alert manager singleton with lazy init."""
+    if _APP_STATE.get("alert_manager") is None:
+        _setup_alert_infrastructure()
     return _APP_STATE["alert_manager"]
 
-def get_app_incident_manager() -> IncidentManager:
-    """Return the live incident manager singleton."""
+
+def get_app_incident_manager() -> Optional[IncidentManager]:
+    """Return the live incident manager singleton with lazy init."""
+    if _APP_STATE.get("incident_manager") is None and getattr(app_settings.cyberguard, "incident_management_enabled", True):
+        _setup_alert_infrastructure()
     return _APP_STATE["incident_manager"]
 
 
 def get_app_virustotal_provider():
-    """Return the live VirusTotal provider singleton."""
-    return _APP_STATE["virustotal_provider"]
+    """Return the live VirusTotal provider singleton with lazy init."""
+    provider = _APP_STATE.get("virustotal_provider")
+    if provider is None:
+        from backend.threats.virustotal import get_virustotal_provider
+        provider = get_virustotal_provider(app_settings)
+        _APP_STATE["virustotal_provider"] = provider
+    return provider
 
 
 def get_app_urlhaus_provider():
-    """Return the live URLhaus provider singleton."""
-    return _APP_STATE["urlhaus_provider"]
+    """Return the live URLhaus provider singleton with lazy init."""
+    provider = _APP_STATE.get("urlhaus_provider")
+    if provider is None:
+        from backend.threats.urlhaus import get_urlhaus_provider
+        provider = get_urlhaus_provider(app_settings)
+        _APP_STATE["urlhaus_provider"] = provider
+    return provider
 
 # ---------------------------------------------------------------------------
 # Backwards-compatible module-level properties:
@@ -118,6 +165,10 @@ def _setup_alert_infrastructure():
     ) if getattr(app_settings.cyberguard, "incident_management_enabled", True) else None
 
     _APP_STATE["alert_manager"].register_notifier(_APP_STATE["ws_notifier"])
+
+    from backend.alerts.email_notifier import get_email_notifier
+    _APP_STATE["email_notifier"] = get_email_notifier()
+    _APP_STATE["alert_manager"].register_notifier(_APP_STATE["email_notifier"])
 
     from backend.threats.virustotal import get_virustotal_provider
     from backend.threats.urlhaus import get_urlhaus_provider
@@ -161,6 +212,11 @@ async def lifespan(app: FastAPI):
 
     # 4. Set up alert infrastructure + create singletons
     _setup_alert_infrastructure()
+
+    # 4b. Initialize Policy Enforcement & DDoS Protection Engine
+    from backend.security.enforcement import get_enforcement_engine
+    get_enforcement_engine()
+    logger.info("✓ Security Policy Enforcement & DDoS Shield active.")
 
     # 5. Initialize detector (loads models)
     logger.info("Initializing detection models (this may take a moment)...")
@@ -212,11 +268,15 @@ async def lifespan(app: FastAPI):
                 properties=desc,
                 server=f"cyberguard-{local_ip.replace('.', '-')}.local.",
             )
-            zeroconf_instance = AsyncZeroconf()
-            await zeroconf_instance.async_register_service(info_cyber)
-            await zeroconf_instance.async_register_service(info_voice)
-            logger.info(f"Zeroconf mDNS service registered (_cyberguard & _voiceguard) on {local_ip}:{app_settings.server.port}")
-            zeroconf_status = "READY"
+            zeroconf_instance = AsyncZeroconf(interfaces=[local_ip])
+            try:
+                await zeroconf_instance.async_register_service(info_cyber)
+                await zeroconf_instance.async_register_service(info_voice)
+                logger.info(f"Zeroconf mDNS service registered (_cyberguard & _voiceguard) on {local_ip}:{app_settings.server.port}")
+                zeroconf_status = "READY"
+            except Exception as reg_exc:
+                logger.warning(f"Zeroconf service registration notice: {reg_exc}")
+                zeroconf_status = "DEGRADED"
         else:
             logger.info("Zeroconf skipped: Server not bound to 0.0.0.0 or LAN IP unavailable.")
             zeroconf_status = "SKIPPED"
@@ -224,7 +284,7 @@ async def lifespan(app: FastAPI):
         logger.warning("Zeroconf not installed. Automatic network discovery will be unavailable.")
         zeroconf_status = "UNAVAILABLE"
     except Exception as exc:
-        logger.exception(f"Failed to start Zeroconf service: {exc}")
+        logger.warning(f"Zeroconf service initialization notice: {exc}")
         zeroconf_status = "FAILED"
 
     # 7. Auto-start & link Threat Intelligence Pipeline (VirusTotal + URLhaus)
@@ -345,6 +405,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Enforcement & DDoS Shield Middleware
+from backend.security.middleware import EnforcementMiddleware
+app.add_middleware(EnforcementMiddleware)
+
 # ── Route Registration ─────────────────────────────────────────────────────────
 from backend.api.routes_stream import router as stream_router
 from backend.api.routes_analyze import router as analyze_router
@@ -381,7 +445,25 @@ if _FRONTEND_DIR.exists():
     async def serve_frontend():
         return FileResponse(str(_FRONTEND_DIR / "index.html"))
 
-# ── Health Check ───────────────────────────────────────────────────────────────
+# ── Health & Favicon ───────────────────────────────────────────────────────────
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    """Return CyberGuard SVG shield favicon with 24h client-side caching."""
+    svg_favicon = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+        '<path fill="#020617" d="M0 0h32v32H0z"/>'
+        '<path fill="#06b6d4" d="M16 3l11 4v8c0 8.5-5 13-11 14C10 28 5 23.5 5 15V7l11-4z"/>'
+        '<path fill="#0f172a" d="M16 6.5l8 3v5.5c0 6.5-3.5 10-8 11-4.5-1-8-4.5-8-11V9.5l8-3z"/>'
+        '<circle cx="16" cy="15" r="3.5" fill="#38bdf8"/>'
+        '</svg>'
+    )
+    return Response(
+        content=svg_favicon,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/health", tags=["Health"])
 async def health_check():
     return {
@@ -389,3 +471,5 @@ async def health_check():
         "service": "CyberGuard",
         "version": "1.0.0",
     }
+# Auto-reload trigger: v008 restored
+

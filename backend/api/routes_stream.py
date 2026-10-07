@@ -164,6 +164,8 @@ async def websocket_stream(websocket: WebSocket):
                         risk_engine.session_type = "CALL_MONITOR"
                         risk_engine.audio_source = msg.get("audio_source", "MIXED_ACOUSTIC")
                         risk_engine.capture_mode = msg.get("capture_mode", "ACOUSTIC_FALLBACK")
+                    elif msg.get("type") == "ping":
+                        await websocket.send_text(json.dumps({"type": "pong", "timestamp": time.time()}))
                     elif msg.get("type") == "stop_call_monitor":
                         logger.info(f"Session {session_id} stopped CALL_MONITOR mode")
                         risk_engine.session_type = "LIVE_MONITOR"
@@ -347,11 +349,14 @@ async def websocket_stream(websocket: WebSocket):
         summary = risk_engine.get_session_summary()
         peak_risk = summary.get('peak_risk')
         peak_risk_display = f"{peak_risk:.3f}" if isinstance(peak_risk, (int, float)) else str(peak_risk)
-        logger.info(
-            f"Session {session_id} ended: "
-            f"peak_risk={peak_risk_display}, "
-            f"chunks={summary.get('total_chunks', 0)}, "
-            f"frames_received={frames_received}, "
-            f"valid_frames={valid_frames}, "
-            f"empty_frames={empty_frames}"
-        )
+        if frames_received > 0:
+            logger.info(
+                f"Audio stream session {session_id} ended: "
+                f"peak_risk={peak_risk_display}, "
+                f"chunks={summary.get('total_chunks', 0)}, "
+                f"frames_received={frames_received}, "
+                f"valid_frames={valid_frames}, "
+                f"empty_frames={empty_frames}"
+            )
+        else:
+            logger.debug(f"Telemetry/monitor session {session_id} closed cleanly (0 audio frames).")

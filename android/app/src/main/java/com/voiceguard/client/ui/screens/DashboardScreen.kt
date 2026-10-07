@@ -39,7 +39,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
         
         // SYSTEM STATUS
         SectionHeader("SYSTEM STATE")
-        VoiceGuardCard {
+        CyberGuardCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -71,7 +71,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
         SectionHeader("COMMAND CENTER")
         
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            VoiceGuardCard(
+            CyberGuardCard(
                 modifier = Modifier.weight(1f),
                 onClick = { navController.navigate(Screen.FileAnalysis.route) }
             ) {
@@ -81,7 +81,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                 Text("Inspect audio media", style = MaterialTheme.typography.bodyMedium, color = TextSecondary, modifier = Modifier.padding(top = 4.dp))
             }
             
-            VoiceGuardCard(
+            CyberGuardCard(
                 modifier = Modifier.weight(1f),
                 onClick = { navController.navigate(Screen.LiveMonitor.route) }
             ) {
@@ -95,7 +95,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(16.dp))
         
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            VoiceGuardCard(
+            CyberGuardCard(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = { navController.navigate(Screen.CallMonitor.route) }
             ) {
@@ -113,7 +113,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(16.dp))
         
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            VoiceGuardCard(
+            CyberGuardCard(
                 modifier = Modifier.weight(1f),
                 onClick = { navController.navigate(Screen.Speakers.route) }
             ) {
@@ -123,7 +123,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                 Text("Trusted profiles", style = MaterialTheme.typography.bodyMedium, color = TextSecondary, modifier = Modifier.padding(top = 4.dp))
             }
             
-            VoiceGuardCard(
+            CyberGuardCard(
                 modifier = Modifier.weight(1f),
                 onClick = { navController.navigate(Screen.Alerts.route) }
             ) {

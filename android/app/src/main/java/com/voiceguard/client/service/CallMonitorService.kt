@@ -26,8 +26,8 @@ class CallMonitorService : Service() {
     private lateinit var repository: CallMonitorRepository
 
     companion object {
-        private const val CHANNEL_ID = "VoiceGuardCallMonitor"
-        private const val ALERT_CHANNEL_ID = "VoiceGuardSecurityAlert"
+        private const val CHANNEL_ID = "CyberGuardCallMonitor"
+        private const val ALERT_CHANNEL_ID = "CyberGuardSecurityAlert"
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID = 1002
     }

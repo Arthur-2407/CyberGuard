@@ -14,8 +14,8 @@ import androidx.navigation.compose.rememberNavController
 import com.voiceguard.client.ui.BottomNavScreens
 import com.voiceguard.client.ui.MainViewModel
 import com.voiceguard.client.ui.Screen
-import com.voiceguard.client.ui.VoiceGuardNavHost
-import com.voiceguard.client.ui.theme.VoiceGuardClientTheme
+import com.voiceguard.client.ui.CyberGuardNavHost
+import com.voiceguard.client.ui.theme.CyberGuardClientTheme
 
 class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            VoiceGuardClientTheme {
+            CyberGuardClientTheme {
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()
                 val currentRoute = navBackStackEntry?.destination?.route
@@ -63,7 +63,7 @@ class MainActivity : ComponentActivity() {
                             .padding(innerPadding),
                         color = MaterialTheme.colorScheme.background
                     ) {
-                        VoiceGuardNavHost(navController = navController, viewModel = viewModel)
+                        CyberGuardNavHost(navController = navController, viewModel = viewModel)
                     }
                 }
             }

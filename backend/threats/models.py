@@ -82,6 +82,11 @@ class ThreatEvent(BaseModel):
     mitre_technique_id: Optional[str] = None
     mitre_technique_name: Optional[str] = None
     threat_intelligence: Optional[Dict[str, Any]] = None
+    forensic_metrics: Optional[Dict[str, Any]] = None
+    threat_score: Optional[float] = None
+    media_info: Optional[Dict[str, Any]] = None
+    metadata_details: Optional[Dict[str, Any]] = None
+    frame_analysis: Optional[Dict[str, Any]] = None
 
 class Incident(BaseModel):
     incident_id: str = Field(default_factory=lambda: str(uuid.uuid4()))

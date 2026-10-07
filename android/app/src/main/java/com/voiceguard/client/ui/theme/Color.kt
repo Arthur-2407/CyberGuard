@@ -2,7 +2,7 @@ package com.voiceguard.client.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// VoiceGuard 2050+ Advanced AI Security Palette
+// CyberGuard Advanced AI Security Palette
 
 // Base Surfaces
 val DeepSpaceBackground = Color(0xFF090A10)

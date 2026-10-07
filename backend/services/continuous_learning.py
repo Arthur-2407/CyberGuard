@@ -94,6 +94,20 @@ class ContinuousLearningService:
     """Orchestrator for sample curation, retraining, validation, and promotion."""
 
     @staticmethod
+    def is_active_training() -> bool:
+        """True if training worker is actively executing."""
+        global _TRAINING_LOCK, _CURRENT_RUN_ID
+        if _CURRENT_RUN_ID is not None:
+            return True
+        return _TRAINING_LOCK.locked()
+
+    @staticmethod
+    def get_current_run_id() -> Optional[str]:
+        """Return currently active training run ID, if any."""
+        global _CURRENT_RUN_ID
+        return _CURRENT_RUN_ID
+
+    @staticmethod
     def approve_review_sample(
         db: Session,
         review_id: str,
@@ -101,11 +115,15 @@ class ContinuousLearningService:
         admin_id: int,
         admin_username: str,
         notes: Optional[str] = None,
+        auto_update_detector: bool = True,
+        approve_for_training: Optional[bool] = None,
+        decision: Optional[str] = None,
+        trigger_training: bool = False,
     ) -> Dict:
         """
         Approve or reject a sample in the review queue.
-        If ground_truth is 'BONAFIDE' or 'SPOOF', it becomes an approved training sample.
-        If 'INCONCLUSIVE' or 'REJECT', it is archived and NEVER trained.
+        Supports clean separation between Ground-Truth (BONAFIDE, SPOOF, INCONCLUSIVE)
+        and Training Decision (APPROVE for retraining vs REJECT from retraining).
         """
         review = db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == review_id).first()
         if not review:
@@ -118,6 +136,16 @@ class ContinuousLearningService:
             raise ValueError(f"Associated analysis {review.analysis_id} not found.")
 
         gt = ground_truth.upper().strip()
+        # Accept HUMAN/CLONED aliases non-destructively
+        if gt in ("HUMAN", "GENUINE", "REAL", "BONAFIDE"):
+            gt = "BONAFIDE"
+        elif gt in ("CLONED", "SYNTHETIC", "AI", "FAKE", "DEEPFAKE", "SPOOF"):
+            gt = "SPOOF"
+        elif gt in ("INCONCLUSIVE", "UNCERTAIN"):
+            gt = "INCONCLUSIVE"
+        elif gt in ("REJECT", "REJECTED"):
+            gt = "REJECT"
+
         if gt not in ("BONAFIDE", "SPOOF", "INCONCLUSIVE", "REJECT"):
             raise ValueError(f"Invalid ground truth label: {ground_truth}")
 
@@ -126,7 +154,16 @@ class ContinuousLearningService:
         review.ground_truth_label = gt
         review.notes = notes
 
+        # Explicit training approval determination:
+        # If decision is explicitly REJECT or approve_for_training is explicitly False or gt is INCONCLUSIVE/REJECT:
+        is_training_approved = False
         if gt in ("BONAFIDE", "SPOOF"):
+            if decision == "REJECT" or approve_for_training is False:
+                is_training_approved = False
+            else:
+                is_training_approved = True
+
+        if is_training_approved:
             # Check for conflicting audio hash
             existing = db.query(TrainingSampleModel).filter(
                 TrainingSampleModel.audio_hash == analysis.audio_hash
@@ -145,19 +182,48 @@ class ContinuousLearningService:
             sample_id = f"SMP_{uuid.uuid4().hex[:10]}"
             target_path = analysis.audio_path or f"data/audio_vault/{analysis.audio_hash}.flac"
 
-            sample = TrainingSampleModel(
-                sample_id=sample_id,
-                source_analysis_id=analysis.analysis_id,
-                review_id=review.review_id,
-                approved_by_admin_id=admin_id,
-                ground_truth=gt,
-                audio_hash=analysis.audio_hash or "unknown",
-                dataset_path=target_path,
-                used_in_training=False,
-                created_at=_utcnow(),
-            )
-            db.add(sample)
+            sample = db.query(TrainingSampleModel).filter(
+                TrainingSampleModel.audio_hash == analysis.audio_hash
+            ).first()
+            if not sample:
+                sample = TrainingSampleModel(
+                    sample_id=sample_id,
+                    source_analysis_id=analysis.analysis_id,
+                    review_id=review.review_id,
+                    approved_by_admin_id=admin_id,
+                    ground_truth=gt,
+                    audio_hash=analysis.audio_hash or "unknown",
+                    dataset_path=target_path,
+                    used_in_training=False,
+                    created_at=_utcnow(),
+                )
+                db.add(sample)
+            else:
+                sample.review_id = review.review_id
+                sample.source_analysis_id = analysis.analysis_id
+                sample.approved_by_admin_id = admin_id
+                sample.ground_truth = gt
+                sample.dataset_path = target_path
+                sample.used_in_training = False
+                sample_id = sample.sample_id
             db.commit()
+
+            detector_adaptation = None
+            if auto_update_detector:
+                try:
+                    from backend.main import get_app_detector
+                    detector = get_app_detector()
+                    if detector is not None:
+                        full_audio_path = PROJECT_ROOT / target_path
+                        if not full_audio_path.exists() and analysis.audio_hash:
+                            full_audio_path = VAULT_DIR / f"{analysis.audio_hash}.flac"
+                        if full_audio_path.exists():
+                            detector_adaptation = detector.adapt_from_labeled_audio(
+                                audio_or_path=full_audio_path,
+                                label=gt,
+                            )
+                except Exception as adapt_err:
+                    logger.warning(f"Live detector auto-adaptation skipped: {adapt_err}")
 
             # Audit
             audit = AdminAuditLogModel(
@@ -168,34 +234,68 @@ class ContinuousLearningService:
                 target_type="review_queue",
                 target_id=review_id,
                 timestamp=_utcnow(),
-                details_json=json.dumps({"ground_truth": gt, "sample_id": sample_id}),
+                details_json=json.dumps({
+                    "ground_truth": gt,
+                    "sample_id": sample_id,
+                    "approved_for_training": True,
+                    "auto_adapted": bool(detector_adaptation and detector_adaptation.get("success")),
+                    "adaptation_telemetry": detector_adaptation,
+                }),
             )
             db.add(audit)
             db.commit()
 
-            return {
+            queued_count = db.query(TrainingSampleModel).filter(
+                TrainingSampleModel.used_in_training.is_(False)
+            ).count()
+
+            training_job = None
+            if trigger_training and queued_count > 0:
+                try:
+                    training_job = ContinuousLearningService.start_retraining_job(
+                        db=db,
+                        admin_id=admin_id,
+                        admin_username=admin_username,
+                        epochs=1,
+                    )
+                except Exception as t_err:
+                    logger.warning(f"Training trigger upon approval skipped: {t_err}")
+
+            res = {
                 "status": "APPROVED",
                 "review_id": review_id,
                 "ground_truth": gt,
                 "sample_id": sample_id,
-                "message": "Sample successfully approved for future model retraining.",
+                "approved_for_training": True,
+                "queued_count": queued_count,
+                "message": "Sample successfully approved and queued for model retraining.",
             }
+            if training_job:
+                res["training_job"] = training_job
+            if detector_adaptation:
+                res["detector_adaptation"] = detector_adaptation
+            return res
         else:
             review.status = "REJECTED"
             review.approved_for_training = False
-            review.rejection_reason = notes or "Marked as Inconclusive / Rejected."
+            review.rejection_reason = notes or ("Marked as Inconclusive." if gt == "INCONCLUSIVE" else f"Human labeled as {gt} but rejected from training pool.")
             db.commit()
 
             # Audit
+            action_tag = "SAMPLE_INCONCLUSIVE" if gt == "INCONCLUSIVE" else "SAMPLE_REJECTED"
             audit = AdminAuditLogModel(
                 actor_user_id=admin_id,
                 actor_username=admin_username,
                 actor_role="ADMIN",
-                action="SAMPLE_REJECTED",
+                action=action_tag,
                 target_type="review_queue",
                 target_id=review_id,
                 timestamp=_utcnow(),
-                details_json=json.dumps({"ground_truth": gt, "reason": review.rejection_reason}),
+                details_json=json.dumps({
+                    "ground_truth": gt,
+                    "approved_for_training": False,
+                    "reason": review.rejection_reason,
+                }),
             )
             db.add(audit)
             db.commit()
@@ -204,8 +304,166 @@ class ContinuousLearningService:
                 "status": "REJECTED",
                 "review_id": review_id,
                 "ground_truth": gt,
-                "message": "Sample archived. It will NOT be used for model training.",
+                "approved_for_training": False,
+                "message": f"Sample archived ({gt}). It will NOT be used for model training.",
             }
+
+    @staticmethod
+    def manual_label_and_update_detector(
+        db: Session,
+        admin_id: int,
+        admin_username: str,
+        ground_truth: str,
+        audio_bytes: Optional[bytes] = None,
+        filename: Optional[str] = None,
+        review_id: Optional[str] = None,
+        analysis_id: Optional[str] = None,
+        notes: Optional[str] = None,
+        learning_rate: float = 1e-4,
+        steps: int = 3,
+    ) -> Dict:
+        """
+        Manual mechanism for admin to directly classify audio as human or cloned voice,
+        immediately modifying and auto-updating detector.py.
+        """
+        gt_raw = str(ground_truth).strip().upper()
+        if gt_raw in ("HUMAN", "BONAFIDE", "GENUINE", "REAL", "0", "0.0"):
+            gt = "BONAFIDE"
+            label_display = "HUMAN"
+        elif gt_raw in ("CLONED", "SPOOF", "SYNTHETIC", "AI", "FAKE", "DEEPFAKE", "1", "1.0"):
+            gt = "SPOOF"
+            label_display = "CLONED"
+        else:
+            raise ValueError(f"Invalid classification label: '{ground_truth}'. Must be HUMAN or CLONED.")
+
+        resolved_audio_path: Optional[Path] = None
+        target_analysis_id: Optional[str] = analysis_id
+        audio_hash: str = "unknown"
+
+        if review_id:
+            review = db.query(ReviewQueueModel).filter(
+                (ReviewQueueModel.review_id == str(review_id)) |
+                (ReviewQueueModel.analysis_id == str(review_id)) |
+                (ReviewQueueModel.id == (int(review_id) if str(review_id).isdigit() else -1))
+            ).first()
+            if review:
+                target_analysis_id = review.analysis_id
+                review.status = "APPROVED"
+                review.approved_for_training = True
+                review.ground_truth_label = gt
+                review.reviewed_at = _utcnow()
+                review.reviewer_admin_id = admin_id
+                review.notes = notes
+
+        if target_analysis_id:
+            analysis = db.query(AnalysisRecordModel).filter(
+                AnalysisRecordModel.analysis_id == target_analysis_id
+            ).first()
+            if analysis:
+                audio_hash = analysis.audio_hash or "unknown"
+                if analysis.audio_path:
+                    p = PROJECT_ROOT / analysis.audio_path
+                    if p.exists():
+                        resolved_audio_path = p
+                if not resolved_audio_path and analysis.audio_hash:
+                    p = VAULT_DIR / f"{analysis.audio_hash}.flac"
+                    if p.exists():
+                        resolved_audio_path = p
+
+        if audio_bytes and len(audio_bytes) > 0:
+            audio_hash = compute_audio_sha256(audio_bytes)
+            VAULT_DIR.mkdir(parents=True, exist_ok=True)
+            saved_vault_file = VAULT_DIR / f"{audio_hash}.flac"
+            
+            # Save audio bytes / convert to flac
+            if not saved_vault_file.exists():
+                try:
+                    import io
+                    import soundfile as sf
+                    from backend.audio.preprocessor import normalize
+                    data, in_sr = sf.read(io.BytesIO(audio_bytes))
+                    if data.ndim > 1:
+                        data = data.mean(axis=1)
+                    data = normalize(data.astype(np.float32))
+                    sf.write(str(saved_vault_file), data, 16000, format="FLAC")
+                except Exception:
+                    saved_vault_file.write_bytes(audio_bytes)
+            resolved_audio_path = saved_vault_file
+
+        if not resolved_audio_path or not resolved_audio_path.exists():
+            raise FileNotFoundError("Audio could not be located or decoded. Please upload a valid audio file or provide a valid Analysis/Review ID.")
+
+        # Record in TrainingSampleModel
+        sample_id = f"SMP_{uuid.uuid4().hex[:10]}"
+        try:
+            rel_dataset_path = str(resolved_audio_path.relative_to(PROJECT_ROOT)).replace("\\", "/")
+        except Exception:
+            rel_dataset_path = str(resolved_audio_path).replace("\\", "/")
+
+        sample = db.query(TrainingSampleModel).filter(
+            TrainingSampleModel.audio_hash == audio_hash
+        ).first()
+        if not sample:
+            sample = TrainingSampleModel(
+                sample_id=sample_id,
+                source_analysis_id=target_analysis_id,
+                review_id=review_id,
+                approved_by_admin_id=admin_id,
+                ground_truth=gt,
+                audio_hash=audio_hash,
+                dataset_path=rel_dataset_path,
+                used_in_training=False,
+                created_at=_utcnow(),
+            )
+            db.add(sample)
+        else:
+            sample.ground_truth = gt
+            sample.dataset_path = rel_dataset_path
+        db.commit()
+
+        # Execute auto-adaptation on detector.py
+        from backend.main import get_app_detector
+        detector = get_app_detector()
+        if detector is None:
+            raise RuntimeError("Live detector instance is not initialized.")
+
+        adaptation_info = detector.adapt_from_labeled_audio(
+            audio_or_path=resolved_audio_path,
+            label=gt,
+            learning_rate=learning_rate,
+            steps=steps,
+        )
+
+        # Audit log
+        audit = AdminAuditLogModel(
+            actor_user_id=admin_id,
+            actor_username=admin_username,
+            actor_role="ADMIN",
+            action="DETECTOR_MANUAL_ADAPTATION",
+            target_type="detector",
+            target_id="detector.py",
+            timestamp=_utcnow(),
+            details_json=json.dumps({
+                "ground_truth": gt,
+                "label_display": label_display,
+                "audio_hash": audio_hash,
+                "sample_id": sample.sample_id,
+                "notes": notes,
+                "adaptation": adaptation_info,
+            }),
+        )
+        db.add(audit)
+        db.commit()
+
+        return {
+            "status": "SUCCESS",
+            "ground_truth": gt,
+            "label_display": label_display,
+            "sample_id": sample.sample_id,
+            "audio_hash": audio_hash,
+            "adaptation": adaptation_info,
+            "message": f"detector.py modified and auto-updated successfully for {label_display} audio.",
+        }
 
     @staticmethod
     def start_retraining_job(
@@ -230,6 +488,15 @@ class ContinuousLearningService:
             new_samples = db.query(TrainingSampleModel).filter(
                 TrainingSampleModel.used_in_training.is_(False)
             ).all()
+
+            if not new_samples:
+                _TRAINING_LOCK.release()
+                _CURRENT_RUN_ID = None
+                return {
+                    "status": "NO_SAMPLES",
+                    "sample_count": 0,
+                    "message": "No eligible verified samples are currently queued.",
+                }
 
             run_id = f"RUN_{int(time.time())}"
             _CURRENT_RUN_ID = run_id
@@ -583,6 +850,28 @@ class ContinuousLearningService:
 
         target_mv.status = "ACTIVE"
         target_mv.promoted_at = _utcnow()
+
+        # Update detector_manifest.json
+        manifest_path = WEIGHTS_DIR / "detector_manifest.json"
+        manifest_data = {
+            "model_name": "CyberGuard EnsembleDetector",
+            "version": target_version,
+            "architecture": "EnsembleDetector (Dual-modality CNN-BiLSTM + Gated Multi-Modal Fusion)",
+            "checkpoint_path": "backend/models/weights/detector.pt",
+            "checkpoint_size_bytes": prod_path.stat().st_size if prod_path.exists() else 0,
+            "sha256": target_mv.sha256 or "unknown",
+            "parameters": 8941976,
+            "parent_version": target_mv.parent_version or "v001",
+            "training_run_id": target_version,
+            "validation_metrics": json.loads(target_mv.validation_metrics_json or "{}"),
+            "promoted_at": _utcnow().isoformat(),
+            "promoted_by": admin_username,
+        }
+        try:
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest_data, f, indent=2)
+        except Exception as m_err:
+            logger.warning(f"Could not update manifest during rollback: {m_err}")
 
         # Reload live model
         from backend.main import get_app_detector

@@ -33,7 +33,7 @@ val BottomNavScreens = listOf(
 )
 
 @Composable
-fun VoiceGuardNavHost(
+fun CyberGuardNavHost(
     navController: NavHostController,
     viewModel: MainViewModel,
     modifier: Modifier = Modifier
@@ -48,3 +48,10 @@ fun VoiceGuardNavHost(
         composable(Screen.Alerts.route) { AlertHistoryScreen(navController, viewModel) }
     }
 }
+
+@Composable
+fun VoiceGuardNavHost(
+    navController: NavHostController,
+    viewModel: MainViewModel,
+    modifier: Modifier = Modifier
+) = CyberGuardNavHost(navController = navController, viewModel = viewModel, modifier = modifier)

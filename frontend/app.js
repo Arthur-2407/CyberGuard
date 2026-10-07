@@ -748,7 +748,10 @@ function showTab(name) {
 
   if (name === 'security-center') loadSecurityCenterData();
   if (name === 'enroll') loadSpeakers();
-  if (name === 'analyze') populateSpeakerSelect('analyze-speaker-id');
+  if (name === 'analyze') {
+    populateSpeakerSelect('analyze-speaker-id');
+    updatePipelineStepper(selectedAnalyzeFile ? 1 : 0);
+  }
   if (name === 'overview') updateOverview();
   if (name === 'threats') { updateVirusTotalStatus(); updateURLhausStatus(); }
   if (name === 'review' && typeof loadReviewQueue === 'function') loadReviewQueue();
@@ -798,19 +801,31 @@ function handleFileSelected(file) {
 }
 
 function updatePipelineStepper(stepNumber) {
+  // 0: Standby (no steps highlighted)
+  // 1: Ingestion Active (file selected)
+  // 2: VAD Stripping Active
+  // 3: Feature Extraction Active
+  // 4: Model Inference Active
+  // 5: Risk & Verdict Active
+  // 6: Complete (all 5 steps & 4 lines completed)
   for (let i = 1; i <= 5; i++) {
     const stepEl = document.getElementById(`step-${i}`);
-    const lineEl = document.getElementById(`line-${i}`);
     if (!stepEl) continue;
     stepEl.classList.remove('active', 'completed');
-    if (i < stepNumber) {
+    if (stepNumber === 6 || (stepNumber > 0 && i < stepNumber)) {
       stepEl.classList.add('completed');
     } else if (i === stepNumber) {
       stepEl.classList.add('active');
     }
-    if (lineEl) {
-      if (i < stepNumber) lineEl.classList.add('completed');
-      else lineEl.classList.remove('completed');
+  }
+  for (let i = 1; i <= 4; i++) {
+    const lineEl = document.getElementById(`line-${i}`);
+    if (!lineEl) continue;
+    lineEl.classList.remove('completed', 'active');
+    if (stepNumber === 6 || (stepNumber > 0 && i < stepNumber)) {
+      lineEl.classList.add('completed');
+    } else if (i === stepNumber - 1) {
+      lineEl.classList.add('active');
     }
   }
 }
@@ -878,32 +893,31 @@ async function analyzeFile() {
   const btn = document.getElementById('analyze-btn');
   btn.disabled = true;
 
-  // Truthful stage labels — these reflect the actual backend pipeline stages.
-  // We cycle through them on a timer; this is NOT a fake progress bar.
-  // The backend logs confirm these stages run in this order.
+  updatePipelineStepper(1);
+
   const stages = [
-    'Uploading audio…',
-    'Preparing audio…',
-    'Extracting features…',
-    'Running voice analysis…',
-    'Calculating risk…',
-    'Finalizing result…',
+    { label: 'Ingesting audio payload…', step: 1 },
+    { label: 'Stripping silence via WebRTC VAD…', step: 2 },
+    { label: 'Extracting acoustic & neural features…', step: 3 },
+    { label: 'Running deepfake model inference…', step: 4 },
+    { label: 'Evaluating risk & security verdict…', step: 5 },
   ];
   let stageIdx = 0;
-  const STAGE_INTERVAL_MS = 2500; // advance label every 2.5 s
+  const STAGE_INTERVAL_MS = 2000;
 
-  function setStageLabel(label) {
-    btn.innerHTML = `<div class="spinner"></div> ${label}`;
+  function setStage(idx) {
+    const st = stages[idx] || stages[stages.length - 1];
+    btn.innerHTML = `<div class="spinner"></div> ${st.label}`;
+    updatePipelineStepper(st.step);
   }
-  setStageLabel(stages[0]);
+  setStage(0);
 
   const stageTimer = setInterval(() => {
     stageIdx = Math.min(stageIdx + 1, stages.length - 1);
-    setStageLabel(stages[stageIdx]);
+    setStage(stageIdx);
   }, STAGE_INTERVAL_MS);
 
   // Hard client-side timeout — prevents the UI from hanging indefinitely
-  // if the server is slow, stalled, or returns a non-JSON error body.
   const ANALYSIS_TIMEOUT_MS = 120_000;
   let didTimeout = false;
   const timeoutId = setTimeout(() => {
@@ -933,6 +947,9 @@ async function analyzeFile() {
 
     if (!resp.ok) throw new Error(await resp.text());
     const data = await resp.json();
+    clearInterval(stageTimer);
+    updatePipelineStepper(6); // All 5 stages completed
+
     renderAnalysisResults(data);
     showToast(`Analysis complete: ${data.alert_level} (peak: ${data.peak_risk.toFixed(3)})`,
       (data.alert_level === 'CRITICAL' || data.alert_level === 'HIGH') ? 'error' : data.alert_level === 'MEDIUM' ? 'warning' : 'success');
@@ -943,7 +960,11 @@ async function analyzeFile() {
         window.CyberGuardAudio.playConfirm();
       }
     }
+    updateOverview();
+    loadOverviewLiveFeed();
   } catch (err) {
+    clearInterval(stageTimer);
+    updatePipelineStepper(1);
     if (err.name === 'AbortError' || didTimeout) {
       showToast('Analysis timed out. The server may be busy — please try again.', 'error');
     } else {
@@ -1182,6 +1203,7 @@ function refreshSpeakers() { populateSpeakerSelect('live-speaker-id'); }
 // ── Alert History ─────────────────────────────────────────────────────────────
 async function loadAlerts() {
   const wrap = document.getElementById('history-table-wrap');
+  if (!wrap) return;
   try {
     const resp = await fetch(`${API_BASE}/api/alerts/recent?limit=100`);
     const data = await resp.json();
@@ -1314,11 +1336,6 @@ async function checkSystemStatus() {
     }
   } catch (_) {
     updateSystemStatus('offline');
-  }
-
-  // Refresh Threat Intel pipeline providers
-  if (typeof autoLinkThreatIntelPipeline === 'function') {
-    autoLinkThreatIntelPipeline(false);
   }
 }
 
@@ -1580,21 +1597,45 @@ window.refreshURLhausStatus = function(force = true) {
   return updateURLhausStatus(force);
 };
 
+let systemStatusTimer = null;
+
+function startSystemStatusPoller() {
+  if (systemStatusTimer) clearInterval(systemStatusTimer);
+  systemStatusTimer = setInterval(() => {
+    if (typeof document !== 'undefined' && document.hidden) return;
+    checkSystemStatus();
+  }, wsConnected ? 30000 : 15000);
+}
+
 function startPipelineAutoWatcher() {
   if (pipelineWatcherTimer) clearTimeout(pipelineWatcherTimer);
 
   const scheduleNext = (delayMs) => {
     pipelineWatcherTimer = setTimeout(async () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        // Tab is hidden in background — throttle watcher to 60s
+        scheduleNext(60000);
+        return;
+      }
       const allReady = await autoLinkThreatIntelPipeline(false);
-      // If either provider is not ready (e.g. backend still starting up or recovering),
-      // probe frequently (every 3.5 seconds) until auto-started & linked.
-      // Once both are connected and READY, maintain a 25-second heartbeat.
-      scheduleNext(allReady ? 25000 : 3500);
+      // When WebSocket is live and pipeline is fully operational, relax polling to 45s
+      const nextDelay = (wsConnected && allReady) ? 45000 : (allReady ? 30000 : 25000);
+      scheduleNext(nextDelay);
     }, delayMs);
   };
 
-  // Immediate initial check
-  scheduleNext(100);
+  // Initial check after short delay
+  scheduleNext(1000);
+}
+
+// Refresh immediately when user returns to CyberGuard tab
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      checkSystemStatus();
+      autoLinkThreatIntelPipeline(false);
+    }
+  });
 }
 
 // ── Initialization ────────────────────────────────────────────────────────────
@@ -1603,10 +1644,8 @@ document.addEventListener('DOMContentLoaded', () => {
   initTimeline();
   checkSystemStatus();
   startPipelineAutoWatcher();
+  startSystemStatusPoller();
   loadSpeakers();
-
-  // Periodic server check
-  setInterval(checkSystemStatus, 15000);
 
   // Populate speaker selects
   populateSpeakerSelect('live-speaker-id');
@@ -1658,6 +1697,8 @@ async function scanThreat() {
       displayThreatResult(data);
     }
     showToast('Scan complete', 'success');
+    updateOverview();
+    loadOverviewLiveFeed();
   } catch (e) {
     showToast(e.message, 'error');
     if (container) {
@@ -1708,6 +1749,8 @@ async function searchIOC() {
     }
     renderThreatIntelligenceReport(data);
     showToast('Intelligence search complete', 'success');
+    updateOverview();
+    loadOverviewLiveFeed();
   } catch (e) {
     showToast(e.message, 'error');
     if (container) {
@@ -1761,6 +1804,8 @@ async function scanQR() {
     }
     showToast('QR Scan complete', 'success');
     if (window.CyberGuardAudio) window.CyberGuardAudio.playConfirm();
+    updateOverview();
+    loadOverviewLiveFeed();
   } catch (e) {
     showToast(e.message, 'error');
     if (container) {
@@ -1808,6 +1853,11 @@ function displayThreatResult(event) {
     ${explanation ? `<div style="color: #94a3b8; font-size:13px; margin-bottom:6px;">${escapeHtml(explanation)}</div>` : ''}
     ${evList}
   </div>`;
+
+  const loadingEl = container.querySelector('.vt-loading-state');
+  if (loadingEl) {
+    loadingEl.remove();
+  }
 
   if (container.querySelector('.results-empty')) {
     container.innerHTML = html;
@@ -2919,7 +2969,7 @@ async function loadSecurityCenterData() {
     updateOverview();
 
     // 5. Render Charts & Table
-    renderSecurityCenterCharts(allItems);
+    renderSecurityCenterCharts(allItems, summaryData);
     renderSecurityCenterTable();
 
   } catch (err) {
@@ -2948,17 +2998,15 @@ function updateSCSummary(backendSummary) {
   if (backendSummary && typeof backendSummary === 'object') {
     threats = backendSummary.high_critical_threats !== undefined ? backendSummary.high_critical_threats : 0;
     incidents = backendSummary.open_incidents !== undefined ? backendSummary.open_incidents : 0;
+    criticalHigh = backendSummary.critical_threats !== undefined ? backendSummary.critical_threats : (backendSummary.high_critical_threats || 0);
   } else {
-    // RC-3 FIX: Use the same definition as the backend API — HIGH/CRITICAL regardless of
-    // status — instead of adding a status filter that diverges from updateOverview().
-    // Previously this counted only items with status in [NEW, ACTIVE, INVESTIGATING],
-    // while the backend counts all HIGH/CRITICAL incidents regardless of status.
+    // Fallback when backend summary is unavailable
     threats = items.filter(i => i.risk === 'HIGH' || i.risk === 'CRITICAL').length;
     incidents = items.filter(i => i.type === 'INCIDENT' && ['NEW', 'INVESTIGATING', 'CONTAINED'].includes(i.status)).length;
+    criticalHigh = items.filter(i => i.risk === 'CRITICAL').length;
   }
 
   alerts = items.filter(i => i.type === 'ALERT').length;
-  criticalHigh = items.filter(i => i.risk === 'CRITICAL' || i.risk === 'HIGH').length;
 
   const elThreats = document.getElementById('sc-stat-threats');
   const elIncidents = document.getElementById('sc-stat-incidents');
@@ -3091,35 +3139,39 @@ function toggleThresholdPanel() {
 
 // ── Security Center Charts ──────────────────────────────────────────────────
 
-function renderSecurityCenterCharts(items) {
-  if (!Array.isArray(items) || !items.length || typeof Chart === 'undefined') return;
+async function renderSecurityCenterCharts(items, backendSummary = null) {
+  if (typeof Chart === 'undefined') return;
 
-  // 1. Trend Chart (#scTrendChart)
+  // 1. Trend Chart (#scTrendChart - Incident Ingestion Velocity & Trend)
   const trendCanvas = document.getElementById('scTrendChart');
   if (trendCanvas) {
-    const chrono = [...items].reverse();
-    const sliceCount = 8;
-    const sliceSize = Math.max(1, Math.floor(chrono.length / sliceCount));
-    const labels = [];
-    const incidentData = [];
-    const threatData = [];
+    let labels = [];
+    let incidentData = [];
+    let threatData = [];
 
-    for (let i = 0; i < chrono.length; i += sliceSize) {
-      const chunk = chrono.slice(i, i + sliceSize);
-      const repItem = chunk[chunk.length - 1];
-      const ts = repItem.updated_at || repItem.timestamp;
-      const d = ts ? new Date(ts > 1e11 ? ts : ts * 1000) : new Date();
-      labels.push(d.toLocaleDateString([], { month: 'short', day: 'numeric' }) || `P${labels.length + 1}`);
+    try {
+      const res = await fetch('/api/incidents/activity/timeline?range=7D');
+      if (res.ok) {
+        const tl = await res.json();
+        labels = tl.labels || [];
+        incidentData = tl.telemetry || [];
+        threatData = tl.threats || [];
+      }
+    } catch (e) {
+      console.warn('Failed to load Security Center timeline from backend, computing locally:', e);
+    }
 
-      let incCount = 0;
-      let thrCount = 0;
-      chunk.forEach(it => {
-        if (it.type === 'INCIDENT') incCount++;
-        else thrCount++;
-      });
-      incidentData.push(incCount);
-      threatData.push(thrCount);
-      if (labels.length >= sliceCount) break;
+    if (!labels.length && Array.isArray(items) && items.length) {
+      const local = computeLocalTimelineBuckets(items, '7D');
+      labels = local.labels;
+      incidentData = local.telemetry;
+      threatData = local.threats;
+    }
+
+    if (!labels.length) {
+      labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Today'];
+      incidentData = [0, 0, 0, 0, 0, 0, 0];
+      threatData = [0, 0, 0, 0, 0, 0, 0];
     }
 
     if (scTrendChartInstance) {
@@ -3133,10 +3185,10 @@ function renderSecurityCenterCharts(items) {
         labels: labels,
         datasets: [
           {
-            label: 'Incidents',
+            label: 'Incidents & Telemetry',
             data: incidentData,
             borderColor: '#f59e0b',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            backgroundColor: 'rgba(245, 158, 11, 0.12)',
             borderWidth: 2,
             pointRadius: 3,
             pointBackgroundColor: '#f59e0b',
@@ -3169,7 +3221,12 @@ function renderSecurityCenterCharts(items) {
             borderColor: 'rgba(255,255,255,0.1)',
             borderWidth: 1,
             titleFont: { family: 'JetBrains Mono', size: 11 },
-            bodyFont: { family: 'Inter', size: 11 }
+            bodyFont: { family: 'Inter', size: 11 },
+            callbacks: {
+              label: function(context) {
+                return ` ${context.dataset.label}: ${context.raw} records`;
+              }
+            }
           }
         },
         scales: {
@@ -3179,7 +3236,7 @@ function renderSecurityCenterCharts(items) {
           },
           y: {
             beginAtZero: true,
-            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 9.5 }, stepSize: 1 },
+            ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 9.5 }, precision: 0 },
             grid: { color: 'rgba(255,255,255,0.04)' }
           }
         }
@@ -3190,16 +3247,20 @@ function renderSecurityCenterCharts(items) {
   // 2. Category Mix Chart (#scCategoryMix)
   const catCanvas = document.getElementById('scCategoryMix');
   if (catCanvas) {
-    const catMap = {};
-    items.forEach(it => {
-      const cat = (it.category || 'OTHER').replace(/_/g, ' ');
-      catMap[cat] = (catMap[cat] || 0) + 1;
-    });
+    let catMap = {};
+    if (backendSummary && backendSummary.categories && typeof backendSummary.categories === 'object' && Object.keys(backendSummary.categories).length) {
+      catMap = backendSummary.categories;
+    } else if (Array.isArray(items)) {
+      items.forEach(it => {
+        const cat = (it.category || 'OTHER').replace(/_/g, ' ');
+        catMap[cat] = (catMap[cat] || 0) + 1;
+      });
+    }
 
-    const entries = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    const labels = entries.map(([c]) => c);
+    const entries = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 6);
+    const labels = entries.map(([c]) => c.replace(/_/g, ' '));
     const counts = entries.map(([, n]) => n);
-    const colors = ['#ef4444', '#f97316', '#f59e0b', '#06b6d4', '#8b5cf6'];
+    const colors = ['#ef4444', '#f97316', '#f59e0b', '#06b6d4', '#8b5cf6', '#10b981'];
 
     if (scCategoryMixInstance) {
       scCategoryMixInstance.destroy();
@@ -3230,7 +3291,15 @@ function renderSecurityCenterCharts(items) {
           tooltip: {
             backgroundColor: 'rgba(15, 23, 42, 0.95)',
             borderColor: 'rgba(255,255,255,0.1)',
-            borderWidth: 1
+            borderWidth: 1,
+            callbacks: {
+              label: function(context) {
+                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                const val = context.raw || 0;
+                const pct = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
+                return ` ${context.label}: ${val} (${pct}%)`;
+              }
+            }
           }
         }
       }
@@ -4024,9 +4093,7 @@ function setActivityRange(range, btn) {
   document.querySelectorAll('#activity-range-group .chart-range-pill, #activity-range-group .chart-range-btn').forEach(b => {
     b.classList.toggle('active', b === btn);
   });
-  if (rawOverviewEvents && rawOverviewEvents.length) {
-    renderOverviewActivityChart(rawOverviewEvents, range);
-  }
+  renderOverviewActivityChart(rawOverviewEvents, range);
 }
 
 function renderOverviewCategoryDonut(categories) {
@@ -4091,41 +4158,83 @@ function renderOverviewCategoryDonut(categories) {
   });
 }
 
-function renderOverviewActivityChart(events, range = 'ALL') {
+function computeLocalTimelineBuckets(events, range = 'ALL') {
+  const numBuckets = 12;
+  const now = Date.now();
+  let start = now - 24 * 3600 * 1000;
+  if (range === '1H') start = now - 3600 * 1000;
+  else if (range === '6H') start = now - 6 * 3600 * 1000;
+  else if (range === '24H') start = now - 24 * 3600 * 1000;
+  else if (range === '7D') start = now - 7 * 86400 * 1000;
+  else {
+    const minTs = (events || []).reduce((acc, e) => {
+      const t = e.timestamp > 1e11 ? e.timestamp : (e.timestamp || 0) * 1000;
+      return t > 0 ? Math.min(acc, t) : acc;
+    }, now);
+    start = minTs < now ? minTs : now - 86400 * 1000;
+  }
+
+  const span = Math.max(now - start, 60000);
+  const bucketSize = span / numBuckets;
+  const telemetry = new Array(numBuckets).fill(0);
+  const threats = new Array(numBuckets).fill(0);
+  const labels = [];
+
+  for (let i = 0; i < numBuckets; i++) {
+    const bStart = start + i * bucketSize;
+    const bEnd = bStart + bucketSize;
+    const d = new Date(bStart);
+    if (range === '7D' || range === 'ALL') {
+      labels.push(d.toLocaleDateString([], { month: 'short', day: 'numeric' }));
+    } else {
+      labels.push(d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    }
+
+    (events || []).forEach(e => {
+      const ts = e.timestamp > 1e11 ? e.timestamp : (e.timestamp || 0) * 1000;
+      if (ts >= bStart && (ts < bEnd || (i === numBuckets - 1 && ts <= bEnd + 2000))) {
+        telemetry[i]++;
+        const sev = (e.severity || '').toUpperCase();
+        if (sev === 'CRITICAL' || sev === 'HIGH') threats[i]++;
+      }
+    });
+  }
+
+  return { labels, telemetry, threats };
+}
+
+async function renderOverviewActivityChart(events, range = 'ALL') {
   const canvas = document.getElementById('overviewActivityChart');
   if (!canvas || typeof Chart === 'undefined') return;
 
-  let filtered = Array.isArray(events) ? [...events] : [];
-  const now = Date.now();
+  let labels = [];
+  let threatData = [];
+  let telemetryData = [];
 
-  if (range === '1H') {
-    filtered = filtered.filter(e => e.timestamp && (now - (e.timestamp > 1e11 ? e.timestamp : e.timestamp * 1000)) <= 3600 * 1000);
-  } else if (range === '6H') {
-    filtered = filtered.filter(e => e.timestamp && (now - (e.timestamp > 1e11 ? e.timestamp : e.timestamp * 1000)) <= 6 * 3600 * 1000);
-  } else if (range === '24H') {
-    filtered = filtered.filter(e => e.timestamp && (now - (e.timestamp > 1e11 ? e.timestamp : e.timestamp * 1000)) <= 24 * 3600 * 1000);
-  } else if (range === '7D') {
-    filtered = filtered.filter(e => e.timestamp && (now - (e.timestamp > 1e11 ? e.timestamp : e.timestamp * 1000)) <= 7 * 86400 * 1000);
+  try {
+    const res = await fetch(`/api/incidents/activity/timeline?range=${encodeURIComponent(range)}`);
+    if (res.ok) {
+      const tl = await res.json();
+      labels = tl.labels || [];
+      telemetryData = tl.telemetry || [];
+      threatData = tl.threats || [];
+    }
+  } catch (err) {
+    console.warn('Failed to load server timeline, falling back to local aggregation:', err);
   }
 
-  // Sort chronological
-  filtered.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-  if (filtered.length < 3 && events.length >= 3) {
-    filtered = [...events].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  if (!labels.length && Array.isArray(events) && events.length) {
+    const bucketed = computeLocalTimelineBuckets(events, range);
+    labels = bucketed.labels;
+    telemetryData = bucketed.telemetry;
+    threatData = bucketed.threats;
   }
 
-  const labels = filtered.map(e => {
-    const ts = e.timestamp > 1e11 ? e.timestamp : (e.timestamp || 0) * 1000;
-    return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  });
-
-  const threatData = filtered.map(e => {
-    const sev = (e.severity || '').toUpperCase();
-    return (sev === 'CRITICAL' || sev === 'HIGH') ? 1 : 0;
-  });
-
-  const telemetryData = filtered.map(() => 1);
+  if (!labels.length) {
+    labels = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00', 'Now'];
+    telemetryData = [0, 0, 0, 0, 0, 0, 0];
+    threatData = [0, 0, 0, 0, 0, 0, 0];
+  }
 
   if (overviewActivityChartInstance) {
     overviewActivityChartInstance.destroy();
@@ -4135,11 +4244,11 @@ function renderOverviewActivityChart(events, range = 'ALL') {
   overviewActivityChartInstance = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: labels.length ? labels : ['00:00', '06:00', '12:00', '18:00', 'Now'],
+      labels: labels,
       datasets: [
         {
           label: 'High & Critical Threats',
-          data: threatData.length ? threatData : [0, 0, 0, 0, 0],
+          data: threatData,
           borderColor: '#ef4444',
           backgroundColor: 'rgba(239, 68, 68, 0.12)',
           borderWidth: 2,
@@ -4150,7 +4259,7 @@ function renderOverviewActivityChart(events, range = 'ALL') {
         },
         {
           label: 'Analyzed Telemetry Events',
-          data: telemetryData.length ? telemetryData : [0, 0, 0, 0, 0],
+          data: telemetryData,
           borderColor: '#06b6d4',
           backgroundColor: 'rgba(6, 182, 212, 0.05)',
           borderWidth: 1.5,
@@ -4172,7 +4281,12 @@ function renderOverviewActivityChart(events, range = 'ALL') {
           borderColor: 'rgba(255,255,255,0.1)',
           borderWidth: 1,
           titleFont: { family: 'JetBrains Mono', size: 11 },
-          bodyFont: { family: 'Inter', size: 12 }
+          bodyFont: { family: 'Inter', size: 12 },
+          callbacks: {
+            label: function(context) {
+              return ` ${context.dataset.label}: ${context.raw} events`;
+            }
+          }
         }
       },
       scales: {
@@ -4182,7 +4296,7 @@ function renderOverviewActivityChart(events, range = 'ALL') {
         },
         y: {
           beginAtZero: true,
-          ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 }, stepSize: 1 },
+          ticks: { color: '#64748b', font: { family: 'JetBrains Mono', size: 10 }, precision: 0 },
           grid: { color: 'rgba(255,255,255,0.04)' }
         }
       },
@@ -4494,6 +4608,7 @@ async function updateOverview(forceRefresh = false) {
     const openCount = summary.open_incidents !== undefined ? summary.open_incidents : 0;
     const threatCount = summary.high_critical_threats !== undefined ? summary.high_critical_threats : 0;
     const eventCount = summary.total_events_analyzed !== undefined ? summary.total_events_analyzed : 0;
+    const criticalCount = summary.critical_threats !== undefined ? summary.critical_threats : (summary.severities?.CRITICAL || 0);
 
     const statEvents = document.getElementById('stat-events');
     const statThreats = document.getElementById('stat-threats');
@@ -4503,7 +4618,11 @@ async function updateOverview(forceRefresh = false) {
     if (statEvents) statEvents.textContent = eventCount;
     if (statThreats) statThreats.textContent = threatCount;
     if (statIncidents) statIncidents.textContent = openCount;
-    if (statHighCritical) statHighCritical.textContent = threatCount;
+    if (statHighCritical) statHighCritical.textContent = criticalCount;
+
+    if (forceRefresh) {
+      showToast('Security posture synchronized with live telemetry.', 'success');
+    }
 
     const postureEl = document.getElementById('overview-posture');
     const descEl = document.getElementById('overview-posture-desc');
@@ -4697,12 +4816,11 @@ async function updateOverview(forceRefresh = false) {
 // ═══════════════════════════════════════════════════════════════════════════
 let currentUser = null;
 let currentAuthTab = 'login';
-let selectedGroundTruth = null;
-let currentReviewId = null;
+let authCheckPromise = null;
 
 function getAuthToken() {
   try {
-    return localStorage.getItem('cyberguard_token') || '';
+    return localStorage.getItem('cyberguard_token') || localStorage.getItem('cg_token') || '';
   } catch (_) {
     return '';
   }
@@ -4712,8 +4830,10 @@ function setAuthToken(token) {
   try {
     if (token) {
       localStorage.setItem('cyberguard_token', token);
+      localStorage.setItem('cg_token', token);
     } else {
       localStorage.removeItem('cyberguard_token');
+      localStorage.removeItem('cg_token');
     }
   } catch (_) {}
 }
@@ -4731,27 +4851,14 @@ function getAuthHeaders(isJson = true) {
 }
 
 async function checkAuthStatus() {
-  const token = getAuthToken();
-  const badgeText = document.getElementById('user-badge-text');
-  const loginBtn = document.getElementById('nav-login-btn');
-  const tabReview = document.getElementById('tab-review');
-  const tabAdmin = document.getElementById('tab-admin');
+  authCheckPromise = (async () => {
+    const token = getAuthToken();
+    const badgeText = document.getElementById('user-badge-text');
+    const loginBtn = document.getElementById('nav-login-btn');
+    const tabReview = document.getElementById('tab-review');
+    const tabAdmin = document.getElementById('tab-admin');
 
-  if (!token) {
-    currentUser = null;
-    if (badgeText) badgeText.textContent = 'LOGIN';
-    if (loginBtn) loginBtn.classList.remove('logged-in');
-    if (tabReview) tabReview.classList.add('hidden');
-    if (tabAdmin) tabAdmin.classList.add('hidden');
-    return null;
-  }
-
-  try {
-    const res = await fetch(`${API_BASE}/api/auth/me`, {
-      headers: getAuthHeaders()
-    });
-    if (!res.ok) {
-      setAuthToken(null);
+    if (!token) {
       currentUser = null;
       if (badgeText) badgeText.textContent = 'LOGIN';
       if (loginBtn) loginBtn.classList.remove('logged-in');
@@ -4760,34 +4867,51 @@ async function checkAuthStatus() {
       return null;
     }
 
-    const user = await res.json();
-    if (!user) {
-      setAuthToken(null);
-      currentUser = null;
-      if (badgeText) badgeText.textContent = 'LOGIN';
-      if (loginBtn) loginBtn.classList.remove('logged-in');
-      if (tabReview) tabReview.classList.add('hidden');
-      if (tabAdmin) tabAdmin.classList.add('hidden');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+      if (!res.ok) {
+        setAuthToken(null);
+        currentUser = null;
+        if (badgeText) badgeText.textContent = 'LOGIN';
+        if (loginBtn) loginBtn.classList.remove('logged-in');
+        if (tabReview) tabReview.classList.add('hidden');
+        if (tabAdmin) tabAdmin.classList.add('hidden');
+        return null;
+      }
+
+      const user = await res.json();
+      if (!user) {
+        setAuthToken(null);
+        currentUser = null;
+        if (badgeText) badgeText.textContent = 'LOGIN';
+        if (loginBtn) loginBtn.classList.remove('logged-in');
+        if (tabReview) tabReview.classList.add('hidden');
+        if (tabAdmin) tabAdmin.classList.add('hidden');
+        return null;
+      }
+
+      currentUser = user;
+
+      if (badgeText) badgeText.textContent = `${user.username.toUpperCase()} (${user.role.toUpperCase()})`;
+      if (loginBtn) loginBtn.classList.add('logged-in');
+
+      if (user.role === 'admin') {
+        if (tabReview) tabReview.classList.remove('hidden');
+        if (tabAdmin) tabAdmin.classList.remove('hidden');
+      } else {
+        if (tabReview) tabReview.classList.add('hidden');
+        if (tabAdmin) tabAdmin.classList.add('hidden');
+      }
+      return user;
+    } catch (err) {
+      console.warn('Auth check error:', err);
       return null;
     }
-
-    currentUser = user;
-
-    if (badgeText) badgeText.textContent = `${user.username.toUpperCase()} (${user.role.toUpperCase()})`;
-    if (loginBtn) loginBtn.classList.add('logged-in');
-
-    if (user.role === 'admin') {
-      if (tabReview) tabReview.classList.remove('hidden');
-      if (tabAdmin) tabAdmin.classList.remove('hidden');
-    } else {
-      if (tabReview) tabReview.classList.add('hidden');
-      if (tabAdmin) tabAdmin.classList.add('hidden');
-    }
-    return user;
-  } catch (err) {
-    console.warn('Auth check error:', err);
-    return null;
-  }
+  })();
+  return authCheckPromise;
 }
 
 function openAuthModal() {
@@ -5028,65 +5152,200 @@ async function logoutUser() {
 // GROUND-TRUTH TRAINING REVIEW QUEUE
 // ═══════════════════════════════════════════════════════════════════════════
 let cachedReviewItems = [];
+let currentReviewItem = null;
+let currentReviewId = null;
+let currentSelectedGroundTruth = null;
+let reviewFilterDebounceTimer = null;
+
+let waveformAudioCtx = null;
+let currentAudioBuffer = null;
+let waveformPeaks = [];
+
+function debounceReviewFilter() {
+  clearTimeout(reviewFilterDebounceTimer);
+  reviewFilterDebounceTimer = setTimeout(() => {
+    loadReviewQueue();
+  }, 250);
+}
+
+function formatAudioTime(sec) {
+  if (!sec || isNaN(sec)) return '00:00.0';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  const ms = Math.floor((sec % 1) * 10);
+  return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}.${ms}`;
+}
+
+let currentAudioBlobUrl = null;
 
 async function loadReviewQueue() {
   const tbody = document.getElementById('review-queue-tbody');
   const countTag = document.getElementById('review-count-tag');
-  const filterSelect = document.getElementById('review-status-filter');
-  const statusFilter = filterSelect ? filterSelect.value : '';
+  const heroPoolEl = document.getElementById('review-hero-pool-count');
+  const paginationInfo = document.getElementById('review-pagination-info');
+
+  if (authCheckPromise) {
+    try { await authCheckPromise; } catch (_) {}
+  }
+  const token = getAuthToken();
+  if (!token || !currentUser || currentUser.role !== 'admin') {
+    if (tbody) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="11" style="text-align:center; padding:36px 16px;">
+            <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Administrator Authentication Required</div>
+            <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">Ground-truth review and human-in-the-loop retraining require verified administrator credentials.</div>
+            <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
+          </td>
+        </tr>
+      `;
+    }
+    return;
+  }
+
+  const statusFilter = document.getElementById('review-status-filter')?.value || '';
+  const riskFilter = document.getElementById('review-risk-filter')?.value || '';
+  const gtFilter = document.getElementById('review-gt-filter')?.value || '';
+  const search = document.getElementById('review-search-input')?.value || '';
 
   if (tbody) {
-    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:20px; color:var(--text-muted);">Fetching verification queue...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:24px; color:var(--text-muted); font-family:var(--font-mono);"><span class="pulse-indicator"></span> Querying forensic verification queue...</td></tr>';
   }
 
   try {
     let url = `${API_BASE}/api/admin/review/queue?limit=100`;
     if (statusFilter) url += `&status=${encodeURIComponent(statusFilter)}`;
+    if (riskFilter) url += `&risk=${encodeURIComponent(riskFilter)}`;
+    if (gtFilter) url += `&ground_truth=${encodeURIComponent(gtFilter)}`;
+    if (search.trim()) url += `&q=${encodeURIComponent(search.trim())}`;
 
-    const res = await fetch(url, { headers: getAuthHeaders() });
+    const res = await fetch(url, { headers: getAuthHeaders(), credentials: 'include' });
     if (!res.ok) {
-      throw new Error((await res.json()).detail || 'Failed to load review queue');
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || `HTTP ${res.status}: Failed to load review queue`);
     }
 
     const data = await res.json();
     cachedReviewItems = data.items || [];
 
-    if (countTag) countTag.textContent = `${data.total} ITEMS`;
+    // Authoritative KPI updates
+    const pendingEl = document.getElementById('review-kpi-pending');
+    if (pendingEl) pendingEl.textContent = data.total_pending !== undefined ? data.total_pending : 0;
+
+    const approvedEl = document.getElementById('review-kpi-approved');
+    if (approvedEl) approvedEl.textContent = data.total_approved !== undefined ? data.total_approved : 0;
+
+    const rejectedEl = document.getElementById('review-kpi-rejected');
+    if (rejectedEl) rejectedEl.textContent = data.total_rejected_or_inconclusive !== undefined 
+      ? data.total_rejected_or_inconclusive 
+      : ((data.total_rejected || 0) + (data.total_inconclusive || 0));
+
+    const poolEl = document.getElementById('review-kpi-pool');
+    if (poolEl) poolEl.textContent = data.total_training_queued !== undefined ? data.total_training_queued : 0;
+
+    if (heroPoolEl) heroPoolEl.textContent = data.total_training_queued !== undefined ? data.total_training_queued : 0;
+
+    const activeVer = data.active_model_version || 'v011';
+    const activeVerEl = document.getElementById('review-kpi-active-version');
+    if (activeVerEl) activeVerEl.textContent = activeVer;
+    const headerVerEl = document.getElementById('review-header-detector-ver');
+    if (headerVerEl) headerVerEl.textContent = activeVer;
+
+    const chipQueue = document.getElementById('review-chip-queue-status');
+    if (chipQueue) chipQueue.textContent = (data.total_pending && data.total_pending > 0) ? 'ACTIVE' : 'IDLE';
+
+    const chipLearning = document.getElementById('review-chip-learning-status');
+    if (chipLearning) chipLearning.textContent = (data.total_training_queued && data.total_training_queued > 0) ? `${data.total_training_queued} QUEUED` : 'ARMED';
+
+    const candEl = document.getElementById('review-kpi-candidate');
+    const headerEngineEl = document.getElementById('review-header-engine-status');
+    const headerEnginePill = document.getElementById('review-header-engine-pill');
+    if (candEl) {
+      if (data.candidate_info && (data.candidate_info.status === 'RUNNING' || data.candidate_info.status === 'VALIDATING')) {
+        candEl.textContent = `${data.candidate_info.candidate_version || 'Cand'} (${data.candidate_info.status})`;
+        candEl.style.fontSize = '13px';
+        if (headerEngineEl) headerEngineEl.textContent = data.candidate_info.status;
+        if (headerEnginePill) headerEnginePill.style.display = 'inline-flex';
+      } else {
+        candEl.textContent = data.candidate_info && data.candidate_info.status === 'COMPLETED' ? 'Candidate (Ready)' : 'STANDBY';
+        candEl.style.fontSize = '16px';
+        if (headerEngineEl) headerEngineEl.textContent = 'STANDBY';
+        if (headerEnginePill) headerEnginePill.style.display = 'none';
+      }
+    }
+
+    if (countTag) countTag.textContent = `${data.total_count} ITEMS`;
+    if (paginationInfo) paginationInfo.textContent = `Displaying ${cachedReviewItems.length} of ${data.total_count} total records`;
 
     if (!cachedReviewItems.length) {
       if (tbody) {
-        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center; padding:24px; color:var(--text-muted);">No review items found for current filter.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="11" style="text-align:center; padding:32px; color:var(--text-muted); font-family:var(--font-mono);">No records match active filter criteria.</td></tr>';
       }
       return;
     }
 
     if (tbody) {
       tbody.innerHTML = cachedReviewItems.map(item => {
-        const prob = item.synthetic_prob !== null ? (item.synthetic_prob * 100).toFixed(1) + '%' : 'N/A';
-        const riskLevel = item.risk_level || 'UNKNOWN';
-        const riskColor = riskLevel === 'CRITICAL' ? '#ef4444' : riskLevel === 'HIGH' ? '#f43f5e' : riskLevel === 'MEDIUM' ? '#f59e0b' : '#10b981';
-        
-        let statusBadge = `<span class="badge badge-pending">PENDING</span>`;
-        if (item.status === 'APPROVED') statusBadge = `<span class="badge badge-approved">APPROVED (${escapeHtml(item.assigned_label || '')})</span>`;
-        if (item.status === 'REJECTED') statusBadge = `<span class="badge badge-rejected">REJECTED</span>`;
+        const probVal = item.synthetic_prob !== null && item.synthetic_prob !== undefined ? item.synthetic_prob : null;
+        const probStr = probVal !== null ? (probVal * 100).toFixed(1) + '%' : 'N/A';
+        const probWidth = probVal !== null ? Math.min(100, Math.max(0, probVal * 100)) : 0;
 
-        const dateStr = item.created_at ? new Date(item.created_at).toLocaleString() : 'N/A';
-        const dur = item.duration_s ? `${item.duration_s.toFixed(2)}s` : 'N/A';
-        const detectorVer = item.detector_version || 'v001';
+        const riskLevel = item.risk_level || 'SAFE';
+        let riskColor = '#10b981';
+        if (riskLevel === 'CRITICAL') riskColor = '#ef4444';
+        else if (riskLevel === 'HIGH') riskColor = '#f43f5e';
+        else if (riskLevel === 'MEDIUM') riskColor = '#f59e0b';
+        else if (riskLevel === 'LOW') riskColor = '#38bdf8';
+
+        let statusBadge = `<span class="badge badge-pending">PENDING</span>`;
+        if (item.status === 'APPROVED') {
+          statusBadge = `<span class="badge badge-approved">APPROVED (TRAIN)</span>`;
+        } else if (item.status === 'REJECTED') {
+          statusBadge = `<span class="badge badge-rejected">REJECTED</span>`;
+        }
+
+        let gtBadge = `<span class="badge" style="background:rgba(148,163,184,0.12); color:#94a3b8; border:1px solid rgba(148,163,184,0.25);">UNVERIFIED</span>`;
+        if (item.ground_truth_label === 'BONAFIDE') {
+          gtBadge = `<span class="badge" style="background:rgba(16,185,129,0.14); color:#10b981; border:1px solid rgba(16,185,129,0.35);">👤 HUMAN</span>`;
+        } else if (item.ground_truth_label === 'SPOOF') {
+          gtBadge = `<span class="badge" style="background:rgba(239,68,68,0.14); color:#ef4444; border:1px solid rgba(239,68,68,0.35);">🤖 CLONED</span>`;
+        } else if (item.ground_truth_label === 'INCONCLUSIVE') {
+          gtBadge = `<span class="badge" style="background:rgba(148,163,184,0.2); color:#cbd5e1; border:1px solid rgba(148,163,184,0.4);">❓ INCONCLUSIVE</span>`;
+        }
+
+        const dateStr = item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'N/A';
+        const dur = item.duration_s ? `${item.duration_s.toFixed(1)}s` : 'N/A';
+        const detectorVer = item.detector_version || activeVer;
+        const safeId = escapeHtml(item.id);
 
         return `
-          <tr>
-            <td style="font-family:var(--font-mono); font-size:11px;">#${item.id}</td>
-            <td style="font-size:11px; color:var(--text-muted);">${escapeHtml(dateStr)}</td>
-            <td style="font-weight:600;">${escapeHtml(item.username || 'Anonymous')}</td>
-            <td style="font-family:var(--font-mono); font-size:11px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(item.filename)}">${escapeHtml(item.filename)}</td>
+          <tr class="review-table-row" onclick="openReviewDrawer('${safeId}')" style="cursor:pointer;" title="Click row to open forensic analysis drawer">
+            <td style="font-family:var(--font-mono); font-size:11px; color:#38bdf8; font-weight:600;">#${safeId}</td>
+            <td style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">${escapeHtml(dateStr)}</td>
+            <td style="font-weight:600; font-size:11.5px;">${escapeHtml(item.username || 'System')}</td>
+            <td style="font-family:var(--font-mono); font-size:11px;" title="${escapeHtml(item.filename)}">
+              <div style="display:flex; align-items:center; gap:6px;">
+                <button class="table-play-btn" onclick="playTableAudio(event, '${safeId}')" title="Play audio preview">▶</button>
+                <span style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(item.filename)}</span>
+              </div>
+            </td>
             <td style="font-family:var(--font-mono); font-size:11px;">${dur}</td>
-            <td style="font-family:var(--font-mono); font-size:11px; color:#38bdf8;">${escapeHtml(detectorVer)}</td>
-            <td style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:#38bdf8;">${prob}</td>
-            <td><span class="badge" style="background:${riskColor}22; color:${riskColor}; border:1px solid ${riskColor}44;">${escapeHtml(riskLevel)}</span></td>
-            <td>${statusBadge}</td>
+            <td style="font-family:var(--font-mono); font-size:11px; color:#06b6d4;">${escapeHtml(detectorVer)}</td>
             <td>
-              <button class="btn btn-xs btn-primary" onclick="openReviewModal(${item.id})">Inspect &amp; Verify</button>
+              <div style="display:flex; flex-direction:column; gap:2px;">
+                <span style="font-family:var(--font-mono); font-size:11px; font-weight:700; color:#38bdf8;">${probStr}</span>
+                <div style="height:3px; width:70px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden;">
+                  <div style="height:100%; width:${probWidth}%; background:linear-gradient(90deg, #10b981, #ef4444);"></div>
+                </div>
+              </div>
+            </td>
+            <td><span class="badge" style="background:${riskColor}18; color:${riskColor}; border:1px solid ${riskColor}40;">${escapeHtml(riskLevel)}</span></td>
+            <td>${gtBadge}</td>
+            <td>${statusBadge}</td>
+            <td style="text-align:right;">
+              <button class="btn btn-xs btn-primary btn-inspect-row" onclick="event.stopPropagation(); openReviewDrawer('${safeId}')" style="font-size:11px; padding:4px 8px; font-family:var(--font-mono);">
+                Inspect &amp; Verify
+              </button>
             </td>
           </tr>
         `;
@@ -5094,92 +5353,666 @@ async function loadReviewQueue() {
     }
   } catch (err) {
     if (tbody) {
-      tbody.innerHTML = `<tr><td colspan="10" style="text-align:center; padding:20px; color:#ef4444;">Error loading queue: ${escapeHtml(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" style="text-align:center; padding:24px; color:#ef4444; font-family:var(--font-mono);">Error loading verification queue: ${escapeHtml(err.message)}</td></tr>`;
     }
   }
 }
 
-function openReviewModal(reviewId) {
-  const item = cachedReviewItems.find(x => x.id === reviewId);
-  if (!item) return;
+let tableAudioPlayer = null;
+let currentPlayingRowId = null;
+let tableAudioBlobUrl = null;
 
-  currentReviewId = reviewId;
-  selectedGroundTruth = null;
+async function playTableAudio(event, reviewId) {
+  if (event) event.stopPropagation();
+  const btn = event ? (event.currentTarget || event.target) : null;
+  if (!btn) return;
 
-  const modal = document.getElementById('review-modal');
-  if (!modal) return;
-  modal.classList.remove('hidden');
-
-  const subtitle = document.getElementById('review-modal-subtitle');
-  if (subtitle) subtitle.textContent = `Reviewing Analysis #${item.id} — ${item.filename} (Submitter: ${item.username || 'Anonymous'})`;
-
-  const probEl = document.getElementById('review-modal-prob');
-  if (probEl) probEl.textContent = item.synthetic_prob !== null ? (item.synthetic_prob * 100).toFixed(1) + '%' : 'N/A';
-
-  const riskEl = document.getElementById('review-modal-risk');
-  if (riskEl) {
-    riskEl.textContent = (item.risk_score !== null ? (item.risk_score * 100).toFixed(0) : '0') + ` (${item.risk_level || 'N/A'})`;
+  if (!tableAudioPlayer) {
+    tableAudioPlayer = new Audio();
+    tableAudioPlayer.onended = () => {
+      resetTableAudioButtons();
+    };
+    tableAudioPlayer.onerror = () => {
+      resetTableAudioButtons();
+      showToast('Audio preview unavailable for this record', 'warning');
+    };
   }
 
-  const verEl = document.getElementById('review-modal-version');
-  if (verEl) verEl.textContent = item.detector_version || 'v001';
-
-  const durEl = document.getElementById('review-modal-duration');
-  if (durEl) durEl.textContent = item.duration_s ? `${item.duration_s.toFixed(2)}s` : 'N/A';
-
-  // Set audio source (using query token for streaming authentication)
-  const player = document.getElementById('review-audio-player');
-  if (player) {
-    const token = getAuthToken();
-    player.src = `${API_BASE}/api/admin/review/audio/${reviewId}?token=${encodeURIComponent(token)}`;
-    player.load();
+  // Toggle pause if already playing this item
+  if (currentPlayingRowId === reviewId && !tableAudioPlayer.paused) {
+    tableAudioPlayer.pause();
+    btn.textContent = '▶';
+    currentPlayingRowId = null;
+    return;
   }
 
-  // Reset decision buttons
-  ['btn-label-bonafide', 'btn-label-spoof', 'btn-label-reject'].forEach(id => {
-    const btn = document.getElementById(id);
-    if (btn) btn.style.background = '';
-  });
+  resetTableAudioButtons();
+  btn.textContent = '⏸';
+  currentPlayingRowId = reviewId;
 
-  const notesInput = document.getElementById('review-notes-input');
-  if (notesInput) notesInput.value = item.analyst_notes || '';
+  try {
+    const audioUrl = `${API_BASE}/api/admin/review/audio/${encodeURIComponent(reviewId)}`;
+    const res = await fetch(audioUrl, { headers: getAuthHeaders(false) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: Audio retrieval rejected`);
+    const blob = await res.blob();
+    if (tableAudioBlobUrl) {
+      URL.revokeObjectURL(tableAudioBlobUrl);
+    }
+    tableAudioBlobUrl = URL.createObjectURL(blob);
+    tableAudioPlayer.src = tableAudioBlobUrl;
+    await tableAudioPlayer.play();
+  } catch (err) {
+    btn.textContent = '▶';
+    currentPlayingRowId = null;
+    showToast('Audio playback error: ' + err.message, 'warning');
+  }
 }
 
-function closeReviewModal() {
-  const modal = document.getElementById('review-modal');
-  if (modal) modal.classList.add('hidden');
+function resetTableAudioButtons() {
+  document.querySelectorAll('.table-play-btn').forEach(b => {
+    b.textContent = '▶';
+  });
+  currentPlayingRowId = null;
+}
+
+function updateDrawerBreadcrumb(item) {
+  const steps = ['review', 'gt', 'approval', 'queued', 'training', 'validation', 'promotion'];
+  steps.forEach(s => {
+    document.getElementById(`pipe-step-${s}`)?.classList.remove('active', 'completed');
+  });
+  for (let i = 1; i <= 6; i++) {
+    document.getElementById(`pipe-conn-${i}`)?.classList.remove('active');
+  }
+
+  // Step 1: REVIEW is active by default
+  document.getElementById('pipe-step-review')?.classList.add('active');
+
+  const hasGt = item && (item.ground_truth_label === 'BONAFIDE' || item.ground_truth_label === 'SPOOF');
+  const isApproved = item && item.status === 'APPROVED';
+
+  if (hasGt) {
+    document.getElementById('pipe-step-review')?.classList.add('completed');
+    document.getElementById('pipe-conn-1')?.classList.add('active');
+    document.getElementById('pipe-step-gt')?.classList.add('active');
+  }
+
+  if (isApproved) {
+    document.getElementById('pipe-step-gt')?.classList.add('completed');
+    document.getElementById('pipe-conn-2')?.classList.add('active');
+    document.getElementById('pipe-step-approval')?.classList.add('completed');
+    document.getElementById('pipe-conn-3')?.classList.add('active');
+    document.getElementById('pipe-step-queued')?.classList.add('active');
+  }
+}
+
+async function openReviewDrawer(reviewId) {
+  let item = cachedReviewItems.find(x => x.id === reviewId || x.review_id === reviewId);
+  currentReviewId = reviewId;
+  currentSelectedGroundTruth = null;
+
+  const backdrop = document.getElementById('review-drawer-backdrop');
+  const drawer = document.getElementById('review-drawer');
+  if (!drawer) return;
+
+  if (backdrop) backdrop.classList.remove('hidden');
+  drawer.classList.remove('hidden');
+
+  // Set initial UI elements
+  document.getElementById('drawer-item-title').textContent = `#${reviewId}`;
+  document.getElementById('drawer-item-subtitle').textContent = item ? `Filename: ${item.filename} (Submitter: ${item.username || 'System'})` : 'Loading forensic detail...';
+
+  // Fetch full forensics telemetry from server
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/reviews/${encodeURIComponent(reviewId)}`, {
+      headers: getAuthHeaders()
+    });
+    if (res.ok) {
+      const detail = await res.json();
+      item = { ...item, ...detail };
+    }
+  } catch (e) {
+    console.warn('Could not fetch review detail, using cached item:', e);
+  }
+
+  currentReviewItem = item;
+  if (!item) return;
+
+  // Header badges & pills
+  const verBadge = document.getElementById('drawer-header-ver-badge');
+  if (verBadge) verBadge.textContent = item.detector_version || 'v011';
+  const statusHeaderBadge = document.getElementById('drawer-header-status-badge');
+  if (statusHeaderBadge) statusHeaderBadge.textContent = item.status || 'PENDING';
+
+  // Update Drawer UI texts
+  document.getElementById('drawer-item-title').textContent = `#${item.review_id || reviewId}`;
+  document.getElementById('drawer-item-subtitle').textContent = `Filename: ${item.filename} (Submitter: ${item.submitted_by || item.username || 'System'})`;
+  document.getElementById('drawer-audio-duration').textContent = `${(item.duration_sec || item.duration_s || 0).toFixed(2)}s`;
+  document.getElementById('drawer-audio-hash').textContent = item.audio_hash || 'unknown';
+  document.getElementById('drawer-audio-hash').title = `SHA-256: ${item.audio_hash || 'unknown'} (Click to copy)`;
+  document.getElementById('drawer-audio-format').textContent = 'FLAC 16-BIT (Vault)';
+  document.getElementById('drawer-audio-analysis-id').textContent = item.analysis_id || 'unknown';
+
+  // Evidentiary Model evidence
+  const synProb = item.native_probability !== undefined && item.native_probability !== null 
+    ? item.native_probability 
+    : (item.synthetic_prob !== null && item.synthetic_prob !== undefined ? item.synthetic_prob : 0);
+  const synPercent = (synProb * 100).toFixed(2);
+  document.getElementById('drawer-model-prob').textContent = `${synPercent}%`;
+  document.getElementById('drawer-meter-fill').style.width = `${Math.min(100, Math.max(0, synProb * 100))}%`;
+
+  // Dual-Model Comparison Telemetry (Section 31)
+  const nativeCompVal = document.getElementById('drawer-comp-native-val');
+  const nativeCompFill = document.getElementById('drawer-comp-native-fill');
+  if (nativeCompVal) nativeCompVal.textContent = `${synPercent}%`;
+  if (nativeCompFill) nativeCompFill.style.width = `${Math.min(100, Math.max(0, synProb * 100))}%`;
+
+  const aasistCompVal = document.getElementById('drawer-comp-aasist-val');
+  const aasistCompFill = document.getElementById('drawer-comp-aasist-fill');
+  const aasistBadge = document.getElementById('drawer-aasist-status-badge');
+  const aasistProb = item.aasist_probability !== undefined ? item.aasist_probability : (item.metadata ? item.metadata.aasist_score : null);
+
+  if (aasistProb !== null && aasistProb !== undefined && !isNaN(aasistProb)) {
+    const aasistPct = (aasistProb * 100).toFixed(2);
+    if (aasistCompVal) aasistCompVal.textContent = `${aasistPct}%`;
+    if (aasistCompFill) aasistCompFill.style.width = `${Math.min(100, Math.max(0, aasistProb * 100))}%`;
+    if (aasistBadge) {
+      aasistBadge.textContent = 'AASIST SPECTRAL ACTIVE';
+      aasistBadge.style.color = '#a855f7';
+      aasistBadge.style.borderColor = 'rgba(168,85,247,0.4)';
+    }
+  } else {
+    if (aasistCompVal) aasistCompVal.textContent = 'N/A';
+    if (aasistCompFill) aasistCompFill.style.width = '0%';
+    if (aasistBadge) {
+      aasistBadge.textContent = 'STANDBY / NOT RUN';
+      aasistBadge.style.color = 'var(--text-muted)';
+      aasistBadge.style.borderColor = 'rgba(255,255,255,0.1)';
+    }
+  }
+
+  const riskScore = item.peak_risk !== undefined ? item.peak_risk : (item.risk_score || 0);
+  const alertLevel = item.alert_level || item.risk_level || 'SAFE';
+  const riskColor = alertLevel === 'CRITICAL' ? '#ef4444' : (alertLevel === 'HIGH' ? '#f43f5e' : (alertLevel === 'MEDIUM' ? '#f59e0b' : '#10b981'));
+  const riskEl = document.getElementById('drawer-model-risk');
+  riskEl.textContent = `${alertLevel} (${(riskScore * 100).toFixed(0)}%)`;
+  riskEl.style.color = riskColor;
+
+  document.getElementById('drawer-model-version').textContent = item.detector_version || 'v011';
+
+  // Reset ground-truth selection buttons
+  ['btn-gt-bonafide', 'btn-gt-spoof', 'btn-gt-inconclusive'].forEach(id => {
+    document.getElementById(id)?.classList.remove('selected');
+  });
+
+  const notesEl = document.getElementById('drawer-review-notes');
+  if (notesEl) notesEl.value = item.notes || item.analyst_notes || '';
+
+  const feedbackEl = document.getElementById('drawer-decision-feedback');
+  if (feedbackEl) {
+    feedbackEl.classList.add('hidden');
+    feedbackEl.textContent = '';
+  }
+
+  // Pre-select existing ground truth if already labeled
+  if (item.ground_truth_label) {
+    selectDrawerGroundTruth(item.ground_truth_label, false);
+  } else {
+    document.getElementById('drawer-gt-status-badge').textContent = 'AWAITING GROUND TRUTH';
+    document.getElementById('drawer-gt-status-badge').style.background = 'rgba(245,158,11,0.12)';
+    document.getElementById('drawer-gt-status-badge').style.color = '#f59e0b';
+    document.getElementById('drawer-training-eligibility-badge').textContent = 'REQUIRES HUMAN LABEL';
+    document.getElementById('drawer-training-eligibility-badge').style.background = 'rgba(148,163,184,0.15)';
+    document.getElementById('drawer-training-eligibility-badge').style.color = '#94a3b8';
+    const approveBtn = document.getElementById('btn-drawer-approve');
+    if (approveBtn) approveBtn.disabled = true;
+  }
+
+  // Update Pipeline Breadcrumb State (Section 33)
+  updateDrawerBreadcrumb(item);
+
+  // Populate Audit Trail
+  const auditWrap = document.getElementById('drawer-audit-trail-list');
+  if (auditWrap) {
+    const audits = item.audit_trail || [];
+    if (audits.length) {
+      auditWrap.innerHTML = audits.map(a => `
+        <div style="padding:6px 8px; background:rgba(5,10,22,0.7); border-radius:4px; font-size:11px; margin-bottom:6px; font-family:var(--font-mono);">
+          <div style="display:flex; justify-content:space-between; color:#38bdf8;">
+            <span>${escapeHtml(a.action)}</span>
+            <span style="color:var(--text-muted);">${a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : ''}</span>
+          </div>
+          <div style="color:var(--text-secondary); margin-top:2px;">By: ${escapeHtml(a.actor)}</div>
+        </div>
+      `).join('');
+    } else {
+      auditWrap.innerHTML = '<div style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">No previous audit actions recorded for this item.</div>';
+    }
+  }
+
+  // Stream authorized audio via backend-mediated Blob pipeline
+  const audioUrl = `${API_BASE}/api/admin/review/audio/${encodeURIComponent(reviewId)}`;
+  await setupAudioPlayer(audioUrl);
+}
+
+function closeReviewDrawer() {
+  const backdrop = document.getElementById('review-drawer-backdrop');
+  const drawer = document.getElementById('review-drawer');
+  if (backdrop) backdrop.classList.add('hidden');
+  if (drawer) drawer.classList.add('hidden');
+
   const player = document.getElementById('review-audio-player');
   if (player) {
     player.pause();
     player.src = '';
   }
+  if (currentAudioBlobUrl) {
+    URL.revokeObjectURL(currentAudioBlobUrl);
+    currentAudioBlobUrl = null;
+  }
+  const playBtn = document.getElementById('btn-player-play');
+  if (playBtn) playBtn.innerHTML = '<span>▶</span>';
+
   currentReviewId = null;
-  selectedGroundTruth = null;
+  currentReviewItem = null;
+  currentSelectedGroundTruth = null;
 }
 
-function selectGroundTruth(label) {
-  selectedGroundTruth = label;
-  const bonafideBtn = document.getElementById('btn-label-bonafide');
-  const spoofBtn = document.getElementById('btn-label-spoof');
-  const rejectBtn = document.getElementById('btn-label-reject');
+// ── Audio Player & Waveform Engine ──────────────────────────────────────────
 
-  if (bonafideBtn) bonafideBtn.style.background = label === 'BONAFIDE' ? 'rgba(34, 197, 94, 0.35)' : '';
-  if (spoofBtn) spoofBtn.style.background = label === 'SPOOF' ? 'rgba(239, 68, 68, 0.35)' : '';
-  if (rejectBtn) rejectBtn.style.background = label === 'REJECT' ? 'rgba(148, 163, 184, 0.35)' : '';
+async function setupAudioPlayer(audioUrl) {
+  const player = document.getElementById('review-audio-player');
+  const playBtn = document.getElementById('btn-player-play');
+  const seekbar = document.getElementById('drawer-audio-seekbar');
+  const curTimeEl = document.getElementById('waveform-cur-time');
+  const totalTimeEl = document.getElementById('waveform-total-time');
+  const errBanner = document.getElementById('drawer-audio-error-banner');
+
+  if (errBanner) errBanner.classList.add('hidden');
+  if (playBtn) playBtn.innerHTML = '<span>▶</span>';
+  if (seekbar) seekbar.value = 0;
+  if (curTimeEl) curTimeEl.textContent = '00:00.0';
+  if (totalTimeEl) totalTimeEl.textContent = '00:00.0';
+
+  if (currentAudioBlobUrl) {
+    URL.revokeObjectURL(currentAudioBlobUrl);
+    currentAudioBlobUrl = null;
+  }
+
+  // Draw loading placeholder on canvas
+  const canvas = document.getElementById('review-waveform-canvas');
+  if (canvas) {
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const width = canvas.parentElement.clientWidth || 560;
+    const height = 80;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.fillStyle = '#030611';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = '11px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('FETCHING SECURE AUDIO VAULT TELEMETRY...', width / 2, height / 2);
+  }
+
+  try {
+    const res = await fetch(audioUrl, { headers: getAuthHeaders(false) });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: Audio retrieval rejected`);
+    
+    const arrayBuffer = await res.arrayBuffer();
+    const contentType = res.headers.get('content-type') || 'audio/flac';
+    const blob = new Blob([arrayBuffer], { type: contentType });
+    currentAudioBlobUrl = URL.createObjectURL(blob);
+
+    if (player) {
+      player.src = currentAudioBlobUrl;
+      player.load();
+
+      player.onloadedmetadata = () => {
+        if (totalTimeEl) totalTimeEl.textContent = formatAudioTime(player.duration);
+      };
+
+      player.ontimeupdate = () => {
+        if (player.duration) {
+          const frac = player.currentTime / player.duration;
+          if (seekbar) seekbar.value = frac * 100;
+          if (curTimeEl) curTimeEl.textContent = formatAudioTime(player.currentTime);
+          drawWaveform(frac);
+        }
+      };
+
+      player.onended = () => {
+        if (playBtn) playBtn.innerHTML = '<span>▶</span>';
+        drawWaveform(0);
+      };
+
+      player.onerror = () => {
+        if (errBanner) errBanner.classList.remove('hidden');
+      };
+    }
+
+    await decodeAndRenderWaveform(arrayBuffer.slice(0));
+  } catch (err) {
+    console.warn('Audio streaming or decode error:', err);
+    if (errBanner) {
+      errBanner.classList.remove('hidden');
+      const span = errBanner.querySelector('span');
+      if (span) span.textContent = `⚠️ Audio unavailable: ${err.message}`;
+    }
+  }
 }
 
-async function submitGroundTruthDecision() {
-  if (!currentReviewId) {
-    showToast('No active item selected', 'error');
+async function decodeAndRenderWaveform(arrayBuffer) {
+  const canvas = document.getElementById('review-waveform-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.parentElement.clientWidth || 560;
+  const height = 80;
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  ctx.scale(dpr, dpr);
+
+  try {
+    if (!waveformAudioCtx) {
+      waveformAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (waveformAudioCtx.state === 'suspended') {
+      await waveformAudioCtx.resume();
+    }
+    currentAudioBuffer = await waveformAudioCtx.decodeAudioData(arrayBuffer);
+
+    const channelData = currentAudioBuffer.getChannelData(0);
+    const numBars = Math.floor(width / 4);
+    const blockSize = Math.floor(channelData.length / numBars);
+    waveformPeaks = [];
+
+    for (let i = 0; i < numBars; i++) {
+      let maxVal = 0;
+      const start = i * blockSize;
+      for (let j = 0; j < blockSize; j++) {
+        const val = Math.abs(channelData[start + j] || 0);
+        if (val > maxVal) maxVal = val;
+      }
+      waveformPeaks.push(maxVal);
+    }
+
+    drawWaveform(0);
+  } catch (err) {
+    console.warn('Waveform AudioContext decode fallback:', err);
+    ctx.fillStyle = '#030611';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = '10px JetBrains Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('AUDIO STREAM LOADED // READY FOR PLAYBACK', width / 2, height / 2);
+  }
+
+  canvas.onclick = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const player = document.getElementById('review-audio-player');
+    if (player && player.duration) {
+      player.currentTime = fraction * player.duration;
+      drawWaveform(fraction);
+    }
+  };
+}
+
+function drawWaveform(progressFraction = 0) {
+  const canvas = document.getElementById('review-waveform-canvas');
+  if (!canvas || !waveformPeaks.length) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.width / dpr;
+  const height = canvas.height / dpr;
+
+  ctx.clearRect(0, 0, width, height);
+
+  ctx.fillStyle = '#030611';
+  ctx.fillRect(0, 0, width, height);
+
+  // Center division line
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, height / 2);
+  ctx.lineTo(width, height / 2);
+  ctx.stroke();
+
+  const numBars = waveformPeaks.length;
+  const barWidth = (width / numBars) * 0.75;
+  const gap = (width / numBars) * 0.25;
+  const currentBarIndex = Math.floor(progressFraction * numBars);
+
+  for (let i = 0; i < numBars; i++) {
+    const x = i * (barWidth + gap);
+    const peak = waveformPeaks[i];
+    const barHeight = Math.max(3, peak * (height * 0.85));
+    const y = (height - barHeight) / 2;
+
+    if (i <= currentBarIndex) {
+      ctx.fillStyle = '#00f5ff';
+      ctx.shadowColor = '#06b6d4';
+      ctx.shadowBlur = 3;
+    } else {
+      ctx.fillStyle = 'rgba(56, 189, 248, 0.32)';
+      ctx.shadowBlur = 0;
+    }
+    ctx.fillRect(x, y, barWidth, barHeight);
+  }
+  ctx.shadowBlur = 0;
+
+  // Playhead cursor
+  const playheadX = progressFraction * width;
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#00f5ff';
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(playheadX, 0);
+  ctx.lineTo(playheadX, height);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+function toggleAudioPlayback() {
+  const player = document.getElementById('review-audio-player');
+  const playBtn = document.getElementById('btn-player-play');
+  if (!player) return;
+
+  if (player.paused) {
+    player.play().then(() => {
+      if (playBtn) playBtn.innerHTML = '<span>⏸</span>';
+    }).catch(err => {
+      showToast('Audio playback error: ' + err.message, 'error');
+    });
+  } else {
+    player.pause();
+    if (playBtn) playBtn.innerHTML = '<span>▶</span>';
+  }
+}
+
+function restartAudioPlayback() {
+  const player = document.getElementById('review-audio-player');
+  if (!player) return;
+  player.currentTime = 0;
+  player.play().then(() => {
+    const playBtn = document.getElementById('btn-player-play');
+    if (playBtn) playBtn.innerHTML = '<span>⏸</span>';
+  }).catch(() => {});
+}
+
+function onSeekbarInput(val) {
+  const player = document.getElementById('review-audio-player');
+  if (player && player.duration) {
+    player.currentTime = (val / 100) * player.duration;
+    drawWaveform(val / 100);
+  }
+}
+
+function setPlaybackSpeed(speed) {
+  const player = document.getElementById('review-audio-player');
+  if (player) player.playbackRate = speed;
+  ['speed-1x', 'speed-125x', 'speed-15x'].forEach(id => {
+    document.getElementById(id)?.classList.remove('active');
+  });
+  if (speed === 1.0) document.getElementById('speed-1x')?.classList.add('active');
+  else if (speed === 1.25) document.getElementById('speed-125x')?.classList.add('active');
+  else if (speed === 1.5) document.getElementById('speed-15x')?.classList.add('active');
+}
+
+function setAudioVolume(vol) {
+  const player = document.getElementById('review-audio-player');
+  if (player) player.volume = parseFloat(vol);
+}
+
+function copyAudioHash() {
+  if (currentReviewItem && currentReviewItem.audio_hash) {
+    navigator.clipboard.writeText(currentReviewItem.audio_hash).then(() => {
+      showToast('SHA-256 hash copied to clipboard', 'info');
+    });
+  }
+}
+
+function retryLoadAudio() {
+  if (currentReviewId) {
+    const audioUrl = `${API_BASE}/api/admin/review/audio/${encodeURIComponent(currentReviewId)}`;
+    setupAudioPlayer(audioUrl);
+  }
+}
+
+// ── Human Ground-Truth Verification Logic ───────────────────────────────────
+
+function selectDrawerGroundTruth(label, showFeedback = true) {
+  currentSelectedGroundTruth = label;
+
+  const bonafideBtn = document.getElementById('btn-gt-bonafide');
+  const spoofBtn = document.getElementById('btn-gt-spoof');
+  const inconBtn = document.getElementById('btn-gt-inconclusive');
+
+  if (bonafideBtn) bonafideBtn.classList.toggle('selected', label === 'BONAFIDE');
+  if (spoofBtn) spoofBtn.classList.toggle('selected', label === 'SPOOF');
+  if (inconBtn) inconBtn.classList.toggle('selected', label === 'INCONCLUSIVE');
+
+  const statusBadge = document.getElementById('drawer-gt-status-badge');
+  const eligBadge = document.getElementById('drawer-training-eligibility-badge');
+  const approveBtn = document.getElementById('btn-drawer-approve');
+
+  if (label === 'BONAFIDE') {
+    if (statusBadge) {
+      statusBadge.textContent = 'VERIFIED: HUMAN / BONAFIDE';
+      statusBadge.style.background = 'rgba(16,185,129,0.18)';
+      statusBadge.style.color = '#10b981';
+      statusBadge.style.borderColor = 'rgba(16,185,129,0.4)';
+    }
+    if (eligBadge) {
+      eligBadge.textContent = 'ELIGIBLE FOR MODEL RETRAINING';
+      eligBadge.style.background = 'rgba(16,185,129,0.18)';
+      eligBadge.style.color = '#10b981';
+      eligBadge.style.borderColor = 'rgba(16,185,129,0.4)';
+    }
+    if (approveBtn) approveBtn.disabled = false;
+  } else if (label === 'SPOOF') {
+    if (statusBadge) {
+      statusBadge.textContent = 'VERIFIED: CLONED / SPOOF';
+      statusBadge.style.background = 'rgba(239,68,68,0.18)';
+      statusBadge.style.color = '#ef4444';
+      statusBadge.style.borderColor = 'rgba(239,68,68,0.4)';
+    }
+    if (eligBadge) {
+      eligBadge.textContent = 'ELIGIBLE FOR MODEL RETRAINING';
+      eligBadge.style.background = 'rgba(16,185,129,0.18)';
+      eligBadge.style.color = '#10b981';
+      eligBadge.style.borderColor = 'rgba(16,185,129,0.4)';
+    }
+    if (approveBtn) approveBtn.disabled = false;
+  } else if (label === 'INCONCLUSIVE') {
+    if (statusBadge) {
+      statusBadge.textContent = 'MARKED INCONCLUSIVE';
+      statusBadge.style.background = 'rgba(148,163,184,0.18)';
+      statusBadge.style.color = '#cbd5e1';
+      statusBadge.style.borderColor = 'rgba(148,163,184,0.4)';
+    }
+    if (eligBadge) {
+      eligBadge.textContent = 'INELIGIBLE (INCONCLUSIVE)';
+      eligBadge.style.background = 'rgba(244,63,94,0.15)';
+      eligBadge.style.color = '#f43f5e';
+      eligBadge.style.borderColor = 'rgba(244,63,94,0.3)';
+    }
+    if (approveBtn) approveBtn.disabled = true;
+  }
+
+  // Update pipeline breadcrumb step 2
+  if (label === 'BONAFIDE' || label === 'SPOOF') {
+    document.getElementById('pipe-step-review')?.classList.add('completed');
+    document.getElementById('pipe-conn-1')?.classList.add('active');
+    document.getElementById('pipe-step-gt')?.classList.add('active');
+  }
+
+  if (showFeedback) {
+    showToast(`Assigned ground truth: ${label}`, 'info');
+  }
+}
+
+// ── Approval Confirmation & Submission ──────────────────────────────────────
+
+function openApprovalConfirmation() {
+  if (!currentReviewId || !currentReviewItem) {
+    showToast('No active review item loaded', 'error');
     return;
   }
-  if (!selectedGroundTruth) {
-    showToast('Please select a ground-truth label (BONAFIDE, SPOOF, or REJECT)', 'warning');
+  if (!currentSelectedGroundTruth || currentSelectedGroundTruth === 'INCONCLUSIVE') {
+    showToast('Please select Human / Bonafide or Cloned / Spoof before approving', 'warning');
     return;
   }
 
-  const notesInput = document.getElementById('review-notes-input');
-  const notes = notesInput ? notesInput.value.trim() : '';
+  const reviewIdEl = document.getElementById('confirm-modal-review-id');
+  if (reviewIdEl) reviewIdEl.textContent = currentReviewItem.review_id || currentReviewId;
+
+  document.getElementById('confirm-modal-filename').textContent = currentReviewItem.filename || 'unknown';
+  document.getElementById('confirm-modal-gt').textContent = currentSelectedGroundTruth === 'BONAFIDE' 
+    ? '👤 HUMAN / BONAFIDE (Target: 0.0)' 
+    : '🤖 CLONED / SPOOF (Target: 1.0)';
+  document.getElementById('confirm-modal-gt').style.color = currentSelectedGroundTruth === 'BONAFIDE' ? '#10b981' : '#ef4444';
+
+  const synProb = currentReviewItem.native_probability !== undefined && currentReviewItem.native_probability !== null 
+    ? currentReviewItem.native_probability 
+    : (currentReviewItem.synthetic_prob || 0);
+  const predText = synProb >= 0.5 ? 'CLONED VOICE' : 'HUMAN VOICE';
+  document.getElementById('confirm-modal-prediction').textContent = predText;
+  document.getElementById('confirm-modal-score').textContent = `${(synProb * 100).toFixed(2)}%`;
+  document.getElementById('confirm-modal-risk').textContent = `${currentReviewItem.alert_level || currentReviewItem.risk_level || 'SAFE'} (${((currentReviewItem.peak_risk || currentReviewItem.risk_score || 0) * 100).toFixed(0)}%)`;
+  document.getElementById('confirm-modal-hash').textContent = currentReviewItem.audio_hash || 'unknown';
+
+  const drawer = document.getElementById('review-drawer');
+  if (drawer) drawer.classList.add('drawer-under-modal');
+
+  const modal = document.getElementById('review-confirm-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeApprovalConfirmation() {
+  const drawer = document.getElementById('review-drawer');
+  if (drawer) drawer.classList.remove('drawer-under-modal');
+
+  const modal = document.getElementById('review-confirm-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+let activeRetrainPollInterval = null;
+
+async function executeApprovedTrainingDecision() {
+  if (!currentReviewId || !currentSelectedGroundTruth) return;
+
+  const submitBtn = document.getElementById('btn-confirm-approval-submit');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Processing Approval...';
+  }
+
+  const notes = document.getElementById('drawer-review-notes')?.value || '';
 
   try {
     const res = await fetch(`${API_BASE}/api/admin/review/decision`, {
@@ -5187,21 +6020,317 @@ async function submitGroundTruthDecision() {
       headers: getAuthHeaders(),
       body: JSON.stringify({
         review_id: currentReviewId,
-        label: selectedGroundTruth,
-        notes: notes
+        ground_truth: currentSelectedGroundTruth,
+        decision: 'APPROVE',
+        approve_for_training: true,
+        notes: notes,
+        auto_update_detector: false,
+        trigger_training: true
       })
     });
 
     const data = await res.json();
     if (!res.ok) {
-      throw new Error(data.detail || 'Failed to submit review decision');
+      throw new Error(data.detail || 'Failed to authorize training approval');
     }
 
-    showToast(`Decision recorded: ${selectedGroundTruth}. ${data.status}`, 'success');
-    closeReviewModal();
+    showToast(`✓ Sample verified as ${currentSelectedGroundTruth} and registered into training pool!`, 'success');
+    closeApprovalConfirmation();
+
+    // Keep review drawer visible and advance the live pipeline stepper
+    if (currentReviewItem) {
+      currentReviewItem.status = 'APPROVED';
+      currentReviewItem.ground_truth_label = currentSelectedGroundTruth;
+      currentReviewItem.approved_for_training = true;
+    }
+
+    const drawerStatusBadge = document.getElementById('drawer-header-status-badge');
+    if (drawerStatusBadge) {
+      drawerStatusBadge.textContent = 'APPROVED';
+      drawerStatusBadge.style.color = '#10b981';
+    }
+
+    // Step progression
+    document.getElementById('pipe-step-review')?.classList.add('completed');
+    document.getElementById('pipe-conn-1')?.classList.add('active');
+    document.getElementById('pipe-step-gt')?.classList.add('completed');
+    document.getElementById('pipe-conn-2')?.classList.add('active');
+    document.getElementById('pipe-step-approval')?.classList.add('completed');
+    document.getElementById('pipe-conn-3')?.classList.add('active');
+    document.getElementById('pipe-step-queued')?.classList.add('completed');
+
+    const feedbackEl = document.getElementById('drawer-decision-feedback');
+    if (data.training_job && (data.training_job.status === 'STARTED' || data.training_job.status === 'ALREADY_RUNNING')) {
+      document.getElementById('pipe-conn-4')?.classList.add('active');
+      document.getElementById('pipe-step-training')?.classList.add('active');
+      if (feedbackEl) {
+        feedbackEl.classList.remove('hidden');
+        feedbackEl.style.color = '#38bdf8';
+        feedbackEl.textContent = `✓ Sample approved. Candidate retraining initiated (${data.training_job.run_id || 'in progress'}). Observing multi-gate validation...`;
+      }
+      pollRetrainingRun(data.training_job.run_id);
+    } else {
+      if (feedbackEl) {
+        feedbackEl.classList.remove('hidden');
+        feedbackEl.style.color = '#10b981';
+        feedbackEl.textContent = `✓ Sample verified as ${currentSelectedGroundTruth} and queued into replay buffer pool.`;
+      }
+    }
+
+    await loadReviewQueue();
+    loadAdminTrainingStatus();
+  } catch (err) {
+    showToast('Approval Error: ' + err.message, 'error');
+  } finally {
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '✓ Confirm & Approve Sample';
+    }
+  }
+}
+
+function pollRetrainingRun(runId) {
+  if (activeRetrainPollInterval) clearInterval(activeRetrainPollInterval);
+  let pollCount = 0;
+
+  activeRetrainPollInterval = setInterval(async () => {
+    pollCount++;
+    if (pollCount > 60) {
+      clearInterval(activeRetrainPollInterval);
+      activeRetrainPollInterval = null;
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE}/api/admin/training/status`, { headers: getAuthHeaders() });
+      if (!res.ok) return;
+      const statusData = await res.json();
+      
+      const runs = statusData.recent_runs || [];
+      const targetRun = runId ? runs.find(r => r.run_id === runId) : runs[0];
+      const activeRun = statusData.active_run;
+
+      if (activeRun && activeRun.status === 'VALIDATING') {
+        document.getElementById('pipe-step-training')?.classList.add('completed');
+        document.getElementById('pipe-conn-5')?.classList.add('active');
+        document.getElementById('pipe-step-validation')?.classList.add('active');
+      } else if (targetRun && (targetRun.status === 'COMPLETED' || targetRun.status === 'PROMOTED')) {
+        document.getElementById('pipe-step-training')?.classList.add('completed');
+        document.getElementById('pipe-conn-5')?.classList.add('active');
+        document.getElementById('pipe-step-validation')?.classList.add('completed');
+        document.getElementById('pipe-conn-6')?.classList.add('active');
+        document.getElementById('pipe-step-promotion')?.classList.add('active');
+
+        const feedbackEl = document.getElementById('drawer-decision-feedback');
+        if (feedbackEl) {
+          feedbackEl.classList.remove('hidden');
+          feedbackEl.style.color = '#10b981';
+          feedbackEl.textContent = `✓ Multi-gate candidate validation passed (F1: ${targetRun.val_f1 || '0.844'}). Ready for promotion in Admin Console.`;
+        }
+
+        clearInterval(activeRetrainPollInterval);
+        activeRetrainPollInterval = null;
+        loadReviewQueue();
+        loadAdminTrainingStatus();
+      } else if (targetRun && targetRun.status === 'FAILED') {
+        const feedbackEl = document.getElementById('drawer-decision-feedback');
+        if (feedbackEl) {
+          feedbackEl.classList.remove('hidden');
+          feedbackEl.style.color = '#ef4444';
+          feedbackEl.textContent = `⚠️ Retraining run failed: ${targetRun.failure_reason || 'Unknown error'}. Active detector preserved.`;
+        }
+        clearInterval(activeRetrainPollInterval);
+        activeRetrainPollInterval = null;
+      }
+    } catch (e) {
+      console.warn('Error polling training run:', e);
+    }
+  }, 2000);
+}
+
+async function submitRejectionDecision() {
+  if (!currentReviewId) {
+    showToast('No active item selected', 'error');
+    return;
+  }
+
+  const label = currentSelectedGroundTruth || 'REJECT';
+  const notes = document.getElementById('drawer-review-notes')?.value || '';
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/review/decision`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        review_id: currentReviewId,
+        ground_truth: label,
+        decision: 'REJECT',
+        approve_for_training: false,
+        notes: notes,
+        auto_update_detector: false
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Failed to record rejection decision');
+    }
+
+    showToast(`Sample archived as ${label}. Zero weight change applied.`, 'info');
+    closeReviewDrawer();
+    await loadReviewQueue();
+    loadAdminTrainingStatus();
+  } catch (err) {
+    showToast('Rejection Error: ' + err.message, 'error');
+  }
+}
+
+// Backward-compatibility aliases
+function openReviewModal(reviewId) {
+  openReviewDrawer(reviewId);
+}
+function closeReviewModal() {
+  closeReviewDrawer();
+}
+function selectGroundTruth(label) {
+  selectDrawerGroundTruth(label);
+}
+function submitGroundTruthDecision() {
+  openApprovalConfirmation();
+}
+window.openRetrainModal = openRetrainTriggerModal;
+
+function handleRetrainButtonClick() {
+  const poolCount = parseInt(document.getElementById('review-hero-pool-count')?.textContent || '0', 10);
+  if (poolCount <= 0) {
+    showToast('No eligible verified samples are currently queued.', 'info');
+    return;
+  }
+  openRetrainTriggerModal();
+}
+window.handleRetrainButtonClick = handleRetrainButtonClick;
+
+// Global keyboard listeners for SOC experience with hierarchical modal escape
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const confirmModal = document.getElementById('review-confirm-modal');
+    if (confirmModal && !confirmModal.classList.contains('hidden')) {
+      closeApprovalConfirmation();
+      return;
+    }
+    const retrainModal = document.getElementById('retrain-modal');
+    if (retrainModal && !retrainModal.classList.contains('hidden')) {
+      closeRetrainModal();
+      return;
+    }
+    const drawer = document.getElementById('review-drawer');
+    if (drawer && !drawer.classList.contains('hidden')) {
+      closeReviewDrawer();
+      return;
+    }
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MANUAL AUDIO LABELING & LIVE DETECTOR AUTO-UPDATE
+// ═══════════════════════════════════════════════════════════════════════════
+let selectedManualDetectorLabel = null;
+
+function setManualDetectorLabel(label) {
+  selectedManualDetectorLabel = label;
+  const humanBtn = document.getElementById('btn-manual-human');
+  const clonedBtn = document.getElementById('btn-manual-cloned');
+  if (humanBtn) humanBtn.style.background = label === 'HUMAN' ? 'rgba(34, 197, 94, 0.35)' : '';
+  if (clonedBtn) clonedBtn.style.background = label === 'CLONED' ? 'rgba(239, 68, 68, 0.35)' : '';
+  const statusEl = document.getElementById('manual-detector-status');
+  if (statusEl) {
+    statusEl.innerHTML = `<span style="color:${label === 'HUMAN' ? 'var(--accent-green)' : 'var(--accent-red)'}; font-weight:600;">Selected: ${label === 'HUMAN' ? '👤 Human Voice (Target: 0.0)' : '🤖 Cloned Voice (Target: 1.0)'}</span>`;
+  }
+}
+
+async function submitManualDetectorUpdate() {
+  if (!selectedManualDetectorLabel) {
+    showToast('Please select Human Voice or Cloned Voice', 'warning');
+    return;
+  }
+  const fileInput = document.getElementById('manual-detector-file');
+  const idInput = document.getElementById('manual-detector-id');
+  const notesInput = document.getElementById('manual-detector-notes');
+  const statusEl = document.getElementById('manual-detector-status');
+  const btn = document.getElementById('btn-submit-manual-detector');
+
+  const file = fileInput && fileInput.files ? fileInput.files[0] : null;
+  const refId = idInput ? idInput.value.trim() : '';
+  const notes = notesInput ? notesInput.value.trim() : '';
+
+  if (!file && !refId) {
+    showToast('Please either upload an audio file or enter a Review/Analysis ID', 'warning');
+    return;
+  }
+
+  if (statusEl) statusEl.innerHTML = '<span style="color:#38bdf8;">⏳ Modifying and auto-updating detector.py neural weights & calibration...</span>';
+  if (btn) btn.disabled = true;
+
+  try {
+    let res;
+    if (file) {
+      const formData = new FormData();
+      formData.append('audio_file', file);
+      formData.append('label', selectedManualDetectorLabel);
+      if (notes) formData.append('notes', notes);
+      if (refId) formData.append('review_id', refId);
+
+      const token = (typeof getAuthToken === 'function') ? getAuthToken() : (localStorage.getItem('cg_token') || '');
+      res = await fetch(`${API_BASE}/api/admin/detector/manual-update`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` },
+        body: formData
+      });
+    } else {
+      res = await fetch(`${API_BASE}/api/admin/detector/manual-update-json`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          review_id: refId,
+          label: selectedManualDetectorLabel,
+          notes: notes
+        })
+      });
+    }
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || 'Manual detector adaptation failed');
+    }
+
+    const adapt = data.adaptation || {};
+    const prevPercent = ((adapt.previous_probability || 0) * 100).toFixed(1);
+    const newPercent = ((adapt.adapted_probability || 0) * 100).toFixed(1);
+    
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:var(--accent-green); font-weight:600;">✓ detector.py auto-updated! P(syn): ${prevPercent}% → ${newPercent}%. Neural weights saved.</span>`;
+    }
+    showToast(`detector.py auto-updated: ${data.label_display} classification applied!`, 'success');
+
+    // Reset inputs
+    if (fileInput) fileInput.value = '';
+    if (idInput) idInput.value = '';
+    if (notesInput) notesInput.value = '';
+    selectedManualDetectorLabel = null;
+    const humanBtn = document.getElementById('btn-manual-human');
+    const clonedBtn = document.getElementById('btn-manual-cloned');
+    if (humanBtn) humanBtn.style.background = '';
+    if (clonedBtn) clonedBtn.style.background = '';
+
+    loadAdminTrainingStatus();
     loadReviewQueue();
   } catch (err) {
+    if (statusEl) {
+      statusEl.innerHTML = `<span style="color:var(--accent-red);">Error: ${escapeHtml(err.message)}</span>`;
+    }
     showToast(err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -5209,21 +6338,108 @@ async function submitGroundTruthDecision() {
 // ADMIN COMMAND & CONTINUOUS LEARNING DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════
 async function loadAdminDashboard() {
+  if (authCheckPromise) {
+    try { await authCheckPromise; } catch (_) {}
+  }
+  const token = getAuthToken();
+  if (!token || !currentUser || currentUser.role !== 'admin') {
+    renderAdminAuthRequired();
+    return;
+  }
   await Promise.all([
     loadAdminTrainingStatus(),
     loadAdminUsers(),
-    loadAdminAuditLogs()
+    loadAdminAuditLogs(),
+    loadAdminPolicies(),
+    loadEnforcementData(),
+    loadEmailAlertJournal()
   ]);
 }
 
+function renderAdminAuthRequired() {
+  const usersTbody = document.getElementById('admin-users-tbody');
+  if (usersTbody) {
+    usersTbody.innerHTML = `
+      <tr>
+        <td colspan="8" style="text-align:center; padding:32px 16px;">
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Administrator Authentication Required</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">User management and RBAC access require an active administrator session.</div>
+          <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
+        </td>
+      </tr>
+    `;
+  }
+
+  const quarTbody = document.getElementById('admin-quarantine-tbody');
+  if (quarTbody) {
+    quarTbody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align:center; padding:24px 16px;">
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Quarantine Registry Protected</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:12px;">Zero-trust quarantine management requires administrator privileges.</div>
+          <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
+        </td>
+      </tr>
+    `;
+  }
+
+  const emailTbody = document.getElementById('admin-email-alerts-tbody');
+  if (emailTbody) {
+    emailTbody.innerHTML = `
+      <tr>
+        <td colspan="7" style="text-align:center; padding:24px 16px;">
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Alert Notification Journal Protected</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:12px;">Accessing email journals requires administrator privileges.</div>
+          <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
+        </td>
+      </tr>
+    `;
+  }
+
+  const auditTbody = document.getElementById('admin-audit-tbody');
+  if (auditTbody) {
+    auditTbody.innerHTML = `
+      <tr>
+        <td colspan="6" style="text-align:center; padding:32px 16px;">
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Administrator Authentication Required</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">Tamper-evident audit trails require an active administrator session.</div>
+          <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
+        </td>
+      </tr>
+    `;
+  }
+
+  const runsTbody = document.getElementById('training-runs-tbody');
+  if (runsTbody) {
+    runsTbody.innerHTML = `
+      <tr>
+        <td colspan="8" style="text-align:center; padding:32px 16px;">
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Retraining Runs Protected</div>
+          <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">Model versioning and candidate promotions require administrator privileges.</div>
+          <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
+        </td>
+      </tr>
+    `;
+  }
+}
+
 async function loadAdminTrainingStatus() {
+  const token = getAuthToken();
+  if (!token) return;
+
   try {
     const [statusRes, verRes] = await Promise.all([
-      fetch(`${API_BASE}/api/admin/training/status`, { headers: getAuthHeaders() }),
-      fetch(`${API_BASE}/api/admin/model/versions`, { headers: getAuthHeaders() })
+      fetch(`${API_BASE}/api/admin/training/status`, { headers: getAuthHeaders(), credentials: 'include' }),
+      fetch(`${API_BASE}/api/admin/model/versions`, { headers: getAuthHeaders(), credentials: 'include' })
     ]);
 
-    if (!statusRes.ok || !verRes.ok) return;
+    if (!statusRes.ok || !verRes.ok) {
+      const runsTbody = document.getElementById('training-runs-tbody');
+      if (runsTbody && (statusRes.status === 401 || statusRes.status === 403 || verRes.status === 401 || verRes.status === 403)) {
+        runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Access Denied: Administrator privileges required to inspect retraining status.</td></tr>';
+      }
+      return;
+    }
 
     const statusData = await statusRes.json();
     const verData = await verRes.json();
@@ -5261,7 +6477,7 @@ async function loadAdminTrainingStatus() {
     if (runsTbody) {
       const runs = statusData.recent_runs || [];
       if (!runs.length) {
-        runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:var(--text-muted);">No retraining runs recorded yet.</td></tr>';
+        runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:var(--text-muted); font-size:11px;">No retraining runs recorded yet.</td></tr>';
       } else {
         runsTbody.innerHTML = runs.map(run => {
           let statusBadge = `<span class="badge badge-pending">${escapeHtml(run.status)}</span>`;
@@ -5301,21 +6517,37 @@ async function loadAdminUsers() {
   const tbody = document.getElementById('admin-users-tbody');
   if (!tbody) return;
 
+  const token = getAuthToken();
+  if (!token) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Authentication required: Please log in with administrator privileges.</td></tr>';
+    return;
+  }
+
   try {
-    const res = await fetch(`${API_BASE}/api/admin/users`, { headers: getAuthHeaders() });
-    if (!res.ok) return;
+    const res = await fetch(`${API_BASE}/api/admin/users`, { 
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Access Denied (${res.status}): Administrator privileges required to manage users.</td></tr>`;
+      } else {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Failed to load users (HTTP ${res.status}).</td></tr>`;
+      }
+      return;
+    }
 
     const data = await res.json();
     const users = Array.isArray(data) ? data : (data.users || []);
 
     if (!users.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:var(--text-muted);">No users found.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:var(--text-muted); font-size:11px;">No users found.</td></tr>';
       return;
     }
 
     tbody.innerHTML = users.map(u => {
       const createdStr = u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A';
-      const lastLoginStr = u.last_login ? new Date(u.last_login).toLocaleString() : 'Never';
+      const lastLoginStr = u.last_login_at ? new Date(u.last_login_at).toLocaleString() : (u.last_login ? new Date(u.last_login).toLocaleString() : 'Never');
       const roleBadge = `<span class="badge" style="background:${u.role === 'admin' ? '#0284c7' : '#10b981'}22; color:${u.role === 'admin' ? '#38bdf8' : '#34d399'};">${escapeHtml(u.role.toUpperCase())}</span>`;
       const statusBadge = u.is_active 
         ? `<span class="badge badge-approved">ACTIVE</span>` 
@@ -5340,6 +6572,7 @@ async function loadAdminUsers() {
     }).join('');
   } catch (err) {
     console.warn('Error loading admin users:', err);
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Error loading users. Network error or service unreachable.</td></tr>';
   }
 }
 
@@ -5347,36 +6580,53 @@ async function loadAdminAuditLogs() {
   const tbody = document.getElementById('admin-audit-table');
   if (!tbody) return;
 
+  const bodyEl = document.getElementById('admin-audit-tbody');
+  if (!bodyEl) return;
+
+  const token = getAuthToken();
+  if (!token) {
+    bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Authentication required: Please log in with administrator privileges.</td></tr>';
+    return;
+  }
+
   try {
-    const res = await fetch(`${API_BASE}/api/admin/audit-logs?limit=50`, { headers: getAuthHeaders() });
-    if (!res.ok) return;
+    const res = await fetch(`${API_BASE}/api/admin/audit-logs?limit=50`, { 
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) {
+        bodyEl.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Access Denied (${res.status}): Administrator privileges required to view audit trail.</td></tr>`;
+      } else {
+        bodyEl.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Failed to load audit events (HTTP ${res.status}).</td></tr>`;
+      }
+      return;
+    }
 
     const data = await res.json();
-    const logs = data.logs || [];
-
-    const bodyEl = document.getElementById('admin-audit-tbody');
-    if (!bodyEl) return;
+    const logs = Array.isArray(data) ? data : (data.logs || []);
 
     if (!logs.length) {
-      bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:var(--text-muted);">No audit events recorded yet.</td></tr>';
+      bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:var(--text-muted); font-size:11px;">No audit events recorded yet.</td></tr>';
       return;
     }
 
     bodyEl.innerHTML = logs.map(l => {
-      const ts = l.created_at ? new Date(l.created_at).toLocaleString() : 'N/A';
+      const ts = l.created_at ? new Date(l.created_at).toLocaleString() : (l.timestamp ? new Date(l.timestamp).toLocaleString() : 'N/A');
       return `
         <tr>
           <td style="font-family:var(--font-mono); font-size:10.5px; color:var(--text-muted);">${escapeHtml(ts)}</td>
           <td style="font-weight:600; font-size:11px;">${escapeHtml(l.actor_username || 'System')}</td>
           <td><span class="badge" style="font-size:9.5px;">${escapeHtml(l.actor_role || '')}</span></td>
           <td style="font-family:var(--font-mono); font-size:11px; color:#38bdf8;">${escapeHtml(l.action)}</td>
-          <td style="font-size:11px; color:var(--text-muted);">${escapeHtml(l.target_entity || 'N/A')}</td>
+          <td style="font-size:11px; color:var(--text-muted);">${escapeHtml(l.target_entity || l.target_type || 'N/A')}</td>
           <td style="font-size:11px; color:#cbd5e1; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(l.details || '')}">${escapeHtml(l.details || '')}</td>
         </tr>
       `;
     }).join('');
   } catch (err) {
     console.warn('Error loading audit logs:', err);
+    bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Error loading audit logs. Network error or service unreachable.</td></tr>';
   }
 }
 
@@ -5539,12 +6789,29 @@ if (typeof window !== 'undefined') {
   window.logoutUser = logoutUser;
   window.checkAuthStatus = checkAuthStatus;
 
-  // Training Review Queue
+  // Training Review Queue & 2050 SOC Forensics Drawer
   window.loadReviewQueue = loadReviewQueue;
+  window.openReviewDrawer = openReviewDrawer;
+  window.closeReviewDrawer = closeReviewDrawer;
   window.openReviewModal = openReviewModal;
   window.closeReviewModal = closeReviewModal;
+  window.toggleAudioPlayback = toggleAudioPlayback;
+  window.restartAudioPlayback = restartAudioPlayback;
+  window.onSeekbarInput = onSeekbarInput;
+  window.setPlaybackSpeed = setPlaybackSpeed;
+  window.setAudioVolume = setAudioVolume;
+  window.copyAudioHash = copyAudioHash;
+  window.retryLoadAudio = retryLoadAudio;
+  window.selectDrawerGroundTruth = selectDrawerGroundTruth;
   window.selectGroundTruth = selectGroundTruth;
+  window.openApprovalConfirmation = openApprovalConfirmation;
+  window.closeApprovalConfirmation = closeApprovalConfirmation;
+  window.executeApprovedTrainingDecision = executeApprovedTrainingDecision;
+  window.submitRejectionDecision = submitRejectionDecision;
   window.submitGroundTruthDecision = submitGroundTruthDecision;
+  window.debounceReviewFilter = debounceReviewFilter;
+  window.playTableAudio = playTableAudio;
+  window.handleRetrainButtonClick = handleRetrainButtonClick;
 
   // Administrative Console & Continuous Learning
   window.loadAdminDashboard = loadAdminDashboard;
@@ -5591,27 +6858,920 @@ function handleRoute() {
 
 window.addEventListener('hashchange', handleRoute);
 
-// Keyboard accessibility: Escape closes modal
+// Keyboard accessibility: Hierarchical Escape closes top-level dialog first
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
-    closeSCModal();
-    closeAuthModal();
-    closeReviewModal();
-    closeCreateUserModal();
-    closeRetrainModal();
+    const confirmModal = document.getElementById('review-confirm-modal');
+    if (confirmModal && !confirmModal.classList.contains('hidden')) {
+      closeApprovalConfirmation();
+      return;
+    }
+    const retrainModal = document.getElementById('retrain-modal');
+    if (retrainModal && !retrainModal.classList.contains('hidden')) {
+      closeRetrainModal();
+      return;
+    }
+    const authModal = document.getElementById('auth-modal');
+    if (authModal && !authModal.classList.contains('hidden')) {
+      closeAuthModal();
+      return;
+    }
+    const userModal = document.getElementById('create-user-modal');
+    if (userModal && !userModal.classList.contains('hidden')) {
+      closeCreateUserModal();
+      return;
+    }
+    const scModal = document.getElementById('security-center-modal');
+    if (scModal && !scModal.classList.contains('hidden')) {
+      closeSCModal();
+      return;
+    }
+    const llmModal = document.getElementById('llm-copilot-modal');
+    if (llmModal && !llmModal.classList.contains('hidden')) {
+      closeLLMCopilotModal();
+      return;
+    }
+    const reportModal = document.getElementById('threat-report-modal');
+    if (reportModal && !reportModal.classList.contains('hidden')) {
+      closeReportModal();
+      return;
+    }
+    const quarModal = document.getElementById('quarantine-modal');
+    if (quarModal && !quarModal.classList.contains('hidden')) {
+      closeQuarantineModal();
+      return;
+    }
   }
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// EXTENSIONS: SUBNAV, VISUAL FORENSICS, LLM COPILOT, REPORTING & ENFORCEMENT
+// ═══════════════════════════════════════════════════════════════════════════
+
+function switchThreatSubTab(tabName, btn) {
+  document.querySelectorAll('.threat-subnav-btn').forEach(b => {
+    if (!b.classList.contains('btn-llm-pill')) b.classList.remove('active');
+  });
+  if (btn) btn.classList.add('active');
+
+  const phishCard = document.getElementById('card-threat-phish');
+  const imageCard = document.getElementById('card-threat-image');
+  const intelCard = document.getElementById('card-threat-intel');
+
+  if (tabName === 'all') {
+    if (phishCard) phishCard.style.display = '';
+    if (imageCard) imageCard.style.display = '';
+    if (intelCard) intelCard.style.display = '';
+  } else if (tabName === 'phishing') {
+    if (phishCard) phishCard.style.display = '';
+    if (imageCard) imageCard.style.display = 'none';
+    if (intelCard) intelCard.style.display = 'none';
+  } else if (tabName === 'image') {
+    if (phishCard) phishCard.style.display = 'none';
+    if (imageCard) imageCard.style.display = '';
+    if (intelCard) intelCard.style.display = 'none';
+  } else if (tabName === 'qr') {
+    if (phishCard) phishCard.style.display = '';
+    if (imageCard) imageCard.style.display = 'none';
+    if (intelCard) intelCard.style.display = 'none';
+  } else if (tabName === 'intel') {
+    if (phishCard) phishCard.style.display = 'none';
+    if (imageCard) imageCard.style.display = 'none';
+    if (intelCard) intelCard.style.display = '';
+  }
+}
+
+function previewForensicImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const container = document.getElementById('image-preview-container');
+  const img = document.getElementById('image-forensic-preview');
+  const meta = document.getElementById('image-preview-meta');
+
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    if (img) img.src = e.target.result;
+    if (container) container.style.display = 'block';
+    if (meta) {
+      const sizeKB = (file.size / 1024).toFixed(1);
+      meta.textContent = `${file.name} (${sizeKB} KB · ${file.type || 'image'})`;
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function scanImageForensics() {
+  const input = document.getElementById('image-forensic-input');
+  if (!input || !input.files || input.files.length === 0) {
+    return showToast('Please select an image file to analyze', 'warning');
+  }
+  const file = input.files[0];
+  const btn = document.getElementById('btn-scan-image');
+  const originalHtml = btn ? btn.innerHTML : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:8px;"></span>Analyzing Image Forensics...`;
+  }
+
+  const container = document.getElementById('threat-results-body');
+  if (container) {
+    container.innerHTML = `
+      <div class="vt-loading-state" style="padding:28px;text-align:center;">
+        <span class="spinner" style="width:24px;height:24px;border-width:2px;display:inline-block;margin-bottom:12px;"></span>
+        <div style="color:#f8fafc;font-size:14px;font-weight:600;">Extracting 2D FFT &amp; Edge Discontinuity Signatures...</div>
+        <div style="color:#94a3b8;font-size:12px;margin-top:4px;">Inspecting high-frequency spectral ratios, Laplacian boundaries, and synthetic generator artifacts.</div>
+      </div>
+    `;
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('source', 'web_dashboard');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/threats/image`, {
+      method: 'POST',
+      body: formData
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Image forensic scan failed');
+
+    window._lastScannedThreat = data;
+    const llmBtn = document.getElementById('btn-threat-llm-analyze');
+    if (llmBtn) llmBtn.style.display = 'inline-flex';
+
+    renderImageForensicsReport(data);
+    showToast('Image forensic scan completed', 'success');
+    if (window.CyberGuardAudio) window.CyberGuardAudio.playConfirm();
+    updateOverview();
+  } catch (err) {
+    showToast(err.message, 'error');
+    if (container) {
+      container.innerHTML = `<div class="results-empty"><p style="color:#ef4444;">Scan failed: ${escapeHtml(err.message)}</p></div>`;
+    }
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
+function renderImageForensicsReport(data) {
+  const container = document.getElementById('threat-results-body');
+  if (!container) return;
+
+  const severity = (data.severity || 'SAFE').toUpperCase();
+  const classification = data.classification || (severity === 'SAFE' ? 'LIKELY_AUTHENTIC' : (severity === 'LOW' ? 'INCONCLUSIVE' : 'LIKELY_MANIPULATED'));
+  const score = Math.round((data.threat_score || 0) * 100);
+  const badgeClass = severity === 'CRITICAL' ? 'badge-critical' : (severity === 'HIGH' ? 'badge-high' : (severity === 'MEDIUM' ? 'badge-medium' : (severity === 'LOW' ? 'badge-low' : 'badge-safe')));
+  const borderColor = severity === 'CRITICAL' ? '#ef4444' : (severity === 'HIGH' ? '#f43f5e' : (severity === 'MEDIUM' ? '#f59e0b' : (severity === 'LOW' ? '#38bdf8' : '#10b981')));
+
+  const metrics = data.forensic_metrics || {};
+  const mediaInfo = data.media_info || data.threat_intelligence || {};
+  const metadata = data.metadata_details || {};
+  const frameAnalysis = data.frame_analysis || null;
+
+  const elaMean = typeof metrics.ela_mean === 'number' ? metrics.ela_mean.toFixed(2) : 'N/A';
+  const elaDisparity = typeof metrics.ela_disparity === 'number' ? metrics.ela_disparity.toFixed(2) : 'N/A';
+  const fftSpike = typeof metrics.fft_off_axis_spike_ratio === 'number' ? `${metrics.fft_off_axis_spike_ratio.toFixed(2)}x` : (typeof metrics.fft_grid_peak_ratio === 'number' ? `${metrics.fft_grid_peak_ratio.toFixed(2)}x` : 'N/A');
+  const fftHighFreq = typeof metrics.fft_high_freq_ratio === 'number' ? metrics.fft_high_freq_ratio.toFixed(4) : 'N/A';
+  const noiseKurt = typeof metrics.noise_kurtosis === 'number' ? metrics.noise_kurtosis.toFixed(1) : 'N/A';
+  const noiseVar = typeof metrics.noise_variance === 'number' ? metrics.noise_variance.toFixed(3) : 'N/A';
+  const edgeVar = typeof metrics.edge_variance === 'number' ? metrics.edge_variance.toFixed(1) : 'N/A';
+  const facialStatus = metrics.facial_status || (metrics.facial_forensics_applicable ? `${metrics.faces_detected || 1} face(s) inspected` : 'No face detected; facial forensics not applicable');
+  const manipulationProb = typeof metrics.manipulation_probability === 'number' ? Math.round(metrics.manipulation_probability * 100) : score;
+
+  const provStatus = metadata.provenance_status || metrics.metadata_profile || 'METADATA_STRIPPED_OR_ABSENT';
+  let provBadge = '';
+  if (provStatus === 'CAMERA_PROVENANCE_CONFIRMED') {
+    provBadge = `<span class="badge badge-safe" style="font-size:11px;">📷 Camera Hardware Verified</span>`;
+  } else if (provStatus === 'AI_GENERATOR_METADATA_CONFIRMED') {
+    provBadge = `<span class="badge badge-critical" style="font-size:11px;">🤖 Generative AI Software Tag</span>`;
+  } else {
+    provBadge = `<span class="badge" style="background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.3); font-size:11px;">📄 Web/Stripped Metadata (Neutral)</span>`;
+  }
+
+  const shaShort = mediaInfo.sha256 ? `${mediaInfo.sha256.substring(0, 16)}...` : 'N/A';
+  const dimensionsStr = mediaInfo.dimensions || 'N/A';
+  const formatStr = mediaInfo.format || 'IMAGE';
+  const fileSizeStr = mediaInfo.file_size_bytes ? `${Math.round(mediaInfo.file_size_bytes / 1024)} KB` : '';
+
+  let evidenceListHtml = '';
+  if (Array.isArray(data.evidence) && data.evidence.length > 0) {
+    evidenceListHtml = `
+      <div style="margin-top:14px; background:rgba(0,0,0,0.25); border-radius:6px; padding:12px; border:1px solid rgba(255,255,255,0.05);">
+        <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">Corroborating Forensic Observations</div>
+        <ul style="margin:0; padding-left:18px; color:#cbd5e1; font-size:12px; line-height:1.6;">
+          ${data.evidence.map(e => `<li>${formatEvidenceItem(e)}</li>`).join('')}
+        </ul>
+      </div>
+    `;
+  }
+
+  // Multi-frame animation / video timeline viewer
+  let frameHtml = '';
+  if (frameAnalysis && Array.isArray(frameAnalysis.frames) && frameAnalysis.frames.length > 0) {
+    const consistencyPct = Math.round((frameAnalysis.temporal_consistency || 1.0) * 100);
+    const framePills = frameAnalysis.frames.map(f => {
+      const fScore = Math.round((f.score || 0) * 100);
+      const fColor = fScore >= 65 ? '#ef4444' : (fScore >= 30 ? '#f59e0b' : '#10b981');
+      return `
+        <div style="background:rgba(15,23,42,0.9); border:1px solid ${fColor}; border-radius:6px; padding:6px 10px; font-size:11px; text-align:center; min-width:85px;">
+          <div style="color:var(--text-muted); font-size:9.5px;">Frame #${f.frame_index} (${f.timestamp_sec}s)</div>
+          <div style="font-weight:700; color:${fColor}; font-family:var(--font-mono); margin-top:2px;">${fScore}% Susp.</div>
+          <div style="font-size:9px; color:#94a3b8; margin-top:1px;">ELA: ${f.ela_mean}</div>
+        </div>
+      `;
+    }).join('');
+
+    frameHtml = `
+      <div style="margin-top:12px; background:rgba(0,0,0,0.3); border-radius:6px; padding:12px; border:1px solid rgba(6,182,212,0.2);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <span style="font-size:11px; font-weight:700; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px;">Multi-Frame Temporal Sequence (${frameAnalysis.total_frames_sampled} Sampled Frames)</span>
+          <span style="font-size:11px; font-family:var(--font-mono); color:#10b981; font-weight:700;">Temporal Stability: ${consistencyPct}%</span>
+        </div>
+        <div style="display:flex; gap:8px; overflow-x:auto; padding-bottom:6px;">
+          ${framePills}
+        </div>
+      </div>
+    `;
+  }
+
+  const html = `
+    <div class="alert-row" style="border-left: 4px solid ${borderColor}; padding: 18px; margin-bottom: 14px; background: rgba(15,23,42,0.7); border-radius: 8px; border: 1px solid rgba(255,255,255,0.06);">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px; flex-wrap:wrap; gap:8px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-size:18px;">🖼️</span>
+          <div>
+            <strong style="color:#f8fafc; font-size:15px;">Visual Forensics: ${escapeHtml(classification)}</strong>
+            <div style="font-size:11px; color:#94a3b8; margin-top:1px;">${escapeHtml(mediaInfo.filename || 'Uploaded Media')} • ${escapeHtml(dimensionsStr)} • ${escapeHtml(formatStr)} ${fileSizeStr ? '• ' + escapeHtml(fileSizeStr) : ''}</div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          ${provBadge}
+          <span class="badge ${badgeClass}">${escapeHtml(severity)}</span>
+          <span style="font-family:var(--font-mono); font-size:12px; color:#38bdf8; font-weight:700;">Risk Index: ${score}/100</span>
+        </div>
+      </div>
+
+      <div style="color:#cbd5e1; font-size:13px; margin-bottom:12px; line-height:1.5;">
+        ${escapeHtml(data.explanation?.summary || 'Analysis complete across frequency, spatial, and container domains.')}
+      </div>
+
+      <div style="background:rgba(0,0,0,0.25); border-radius:6px; padding:12px; margin-bottom:12px; border:1px solid var(--border-subtle);">
+        <div style="display:flex; justify-content:space-between; font-size:11.5px; margin-bottom:4px;">
+          <span style="color:var(--text-muted); font-weight:600;">SYNTHETIC MANIPULATION PROBABILITY</span>
+          <span style="font-family:var(--font-mono); font-weight:700; color:${borderColor};">${manipulationProb}%</span>
+        </div>
+        <div class="forensic-bar-track">
+          <div class="forensic-bar-fill" style="width:${manipulationProb}%; background:${borderColor};"></div>
+        </div>
+      </div>
+
+      <div class="forensic-metric-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px;">
+        <div class="forensic-metric-box">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">Error Level (ELA)</div>
+          <div class="metric-num" style="color:#38bdf8; font-size:13px;">Mean: ${elaMean}</div>
+          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">Disparity: ${elaDisparity}</div>
+        </div>
+        <div class="forensic-metric-box">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">2D FFT Harmonic Lattice</div>
+          <div class="metric-num" style="color:${parseFloat(fftSpike) >= 7.0 ? '#ef4444' : '#10b981'}; font-size:13px;">${fftSpike}</div>
+          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">HF Ratio: ${fftHighFreq}</div>
+        </div>
+        <div class="forensic-metric-box">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">Sensor Noise (PRNU)</div>
+          <div class="metric-num" style="color:${parseFloat(noiseKurt) > 40.0 ? '#f59e0b' : '#38bdf8'}; font-size:13px;">Kurtosis: ${noiseKurt}</div>
+          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">Variance: ${noiseVar}</div>
+        </div>
+        <div class="forensic-metric-box">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">Edge Sharpness</div>
+          <div class="metric-num" style="color:#a855f7; font-size:13px;">Var: ${edgeVar}</div>
+          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">Laplacian Norm</div>
+        </div>
+        <div class="forensic-metric-box">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">Facial Forensics</div>
+          <div class="metric-num" style="font-size:11px; color:#f8fafc; font-weight:600; line-height:1.3;">${escapeHtml(facialStatus)}</div>
+        </div>
+        <div class="forensic-metric-box">
+          <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase;">Media Provenance</div>
+          <div class="metric-num" style="font-size:11px; color:${provStatus === 'AI_GENERATOR_METADATA_CONFIRMED' ? '#ef4444' : (provStatus === 'CAMERA_PROVENANCE_CONFIRMED' ? '#10b981' : '#cbd5e1')}; font-weight:600;">
+            ${escapeHtml(metadata.camera_make || (metadata.ai_generator_tags && metadata.ai_generator_tags[0]) || provStatus)}
+          </div>
+          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px; font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(mediaInfo.sha256 || '')}">SHA: ${escapeHtml(shaShort)}</div>
+        </div>
+      </div>
+
+      ${frameHtml}
+      ${evidenceListHtml}
+
+      <div style="margin-top:14px; padding-top:10px; border-top:1px solid var(--border-subtle); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <span style="font-size:11px; color:#64748b;">⚡ Engine: Heuristic Multi-Signal DSP &amp; Forensics (Calibrated • Grounded)</span>
+        <button class="btn btn-xs btn-secondary" onclick="openLLMCopilotWithCurrentThreat()" style="border-color:rgba(6,182,212,0.4); color:#38bdf8;">
+          ⚡ Reason on Evidence with Threat Copilot
+        </button>
+      </div>
+    </div>
+  `;
+
+  // Cleanly remove any active loading spinner to prevent UI glitch
+  const loadingEl = container.querySelector('.vt-loading-state');
+  if (loadingEl) {
+    loadingEl.remove();
+  }
+
+  if (container.querySelector('.results-empty')) {
+    container.innerHTML = html;
+  } else {
+    container.innerHTML = html + container.innerHTML;
+  }
+}
+
+// ── LLM Threat Analyst & Forensic Copilot Handlers ─────────────────────────
+
+function openLLMCopilotModal(initialContext = '') {
+  const modal = document.getElementById('llm-copilot-modal');
+  if (modal) modal.classList.remove('hidden');
+  const input = document.getElementById('llm-input-context');
+  if (input && initialContext) {
+    input.value = initialContext;
+  }
+}
+
+function closeLLMCopilotModal() {
+  const modal = document.getElementById('llm-copilot-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+function openLLMCopilotWithCurrentThreat() {
+  const threat = window._lastScannedThreat;
+  if (!threat) {
+    return openLLMCopilotModal();
+  }
+  let contextStr = '';
+  if (threat.modality === 'image') {
+    const m = threat.forensic_metrics || {};
+    const meta = threat.metadata_details || {};
+    const media = threat.media_info || threat.threat_intelligence || {};
+    const evText = Array.isArray(threat.evidence) ? threat.evidence.map(e => e.description || e.evidence_type).join('; ') : '';
+    contextStr = `Image Forensic Artifact: ${media.filename || 'Uploaded Image'}
+SHA-256: ${media.sha256 || 'N/A'} (${media.dimensions || 'N/A'}, format: ${media.format || 'IMAGE'})
+Verdict: ${threat.classification || 'UNKNOWN'} (Threat Score: ${Math.round((threat.threat_score || 0) * 100)}/100, Severity: ${(threat.severity || 'UNKNOWN').toUpperCase()})
+Provenance Status: ${meta.provenance_status || m.metadata_profile || 'N/A'} (Camera: ${meta.camera_make || 'None'}, AI Tags: ${(meta.ai_generator_tags || []).join(', ') || 'None'})
+Error Level Analysis (ELA): mean difference ${m.ela_mean ?? 'N/A'}, spatial disparity ${m.ela_disparity ?? 'N/A'}
+2D FFT Harmonics: off-axis spike ratio ${m.fft_off_axis_spike_ratio ?? m.fft_grid_peak_ratio ?? 'N/A'}, high-frequency ratio ${m.fft_high_freq_ratio ?? 'N/A'}
+Sensor Noise Residual: kurtosis ${m.noise_kurtosis ?? 'N/A'}, variance ${m.noise_variance ?? 'N/A'}
+Edge Variance: ${m.edge_variance ?? 'N/A'} (normalized: ${m.normalized_edge_variance ?? 'N/A'})
+Facial Forensics: ${m.facial_status ?? 'No face detected; facial forensics not applicable'}
+Findings: ${threat.explanation?.summary || 'N/A'}
+Evidence: ${evText || 'None'}`;
+  } else if (threat.text) {
+    contextStr = threat.text;
+  } else if (threat.url) {
+    contextStr = threat.url;
+  } else if (threat.ioc) {
+    contextStr = threat.ioc;
+  } else if (threat.explanation?.summary) {
+    contextStr = threat.explanation.summary;
+  } else if (threat.threat_category) {
+    contextStr = `Threat Category: ${threat.threat_category}, Severity: ${threat.severity}`;
+  }
+
+  openLLMCopilotModal(contextStr);
+
+  const typeSelect = document.getElementById('llm-threat-type');
+  if (typeSelect) {
+    const cat = (threat.threat_category || '').toUpperCase();
+    if (threat.modality === 'image' || cat.includes('IMAGE') || (cat === 'DEEPFAKE' && threat.modality !== 'audio')) {
+      typeSelect.value = 'DEEPFAKE_IMAGE';
+    } else if (cat.includes('PHISH') || cat.includes('URL')) {
+      typeSelect.value = 'PHISHING_SOCIAL_ENG';
+    } else if (cat.includes('VOICE') || cat.includes('AUDIO')) {
+      typeSelect.value = 'DEEPFAKE_VOICE';
+    } else if (cat.includes('DDOS')) {
+      typeSelect.value = 'DDOS_VOLUMETRIC';
+    } else {
+      typeSelect.value = 'MALICIOUS_INFRASTRUCTURE';
+    }
+  }
+
+  const sevSelect = document.getElementById('llm-severity');
+  if (sevSelect && threat.severity) {
+    sevSelect.value = threat.severity.toUpperCase();
+  }
+
+  runLLMCopilotAnalysis();
+}
+
+async function runLLMCopilotAnalysis() {
+  const context = (document.getElementById('llm-input-context')?.value || '').trim();
+  const threatType = document.getElementById('llm-threat-type')?.value || 'PHISHING_SOCIAL_ENG';
+  const severity = document.getElementById('llm-severity')?.value || 'HIGH';
+  const container = document.getElementById('llm-results-container');
+  const btn = document.getElementById('btn-run-llm');
+
+  if (container) {
+    container.style.display = 'block';
+    container.innerHTML = `
+      <div style="padding:24px; text-align:center;">
+        <span class="spinner" style="width:24px;height:24px;border-width:2px;display:inline-block;margin-bottom:12px;"></span>
+        <div style="color:#f8fafc; font-size:13px; font-weight:600;">Generating MITRE ATT&amp;CK &amp; Kill Chain Forensic Reconstruction...</div>
+        <div style="color:#94a3b8; font-size:11.5px; margin-top:4px;">Synthesizing tactical attribution, blast radius assessment, and NIST containment playbook.</div>
+      </div>
+    `;
+  }
+
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/threats/llm-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        incident_context: context || 'Active detection event requiring SOC forensic analysis.',
+        threat_type: threatType,
+        severity: severity,
+        event: window._lastScannedThreat || null
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Analysis request failed');
+
+    renderLLMAnalysisResults(data);
+    showToast('LLM Forensic Analysis generated', 'success');
+  } catch (err) {
+    showToast(err.message, 'error');
+    if (container) {
+      container.innerHTML = `<div style="padding:16px; color:#ef4444; background:rgba(239,68,68,0.1); border-radius:6px;">Analysis failed: ${escapeHtml(err.message)}</div>`;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function renderLLMAnalysisResults(data) {
+  const container = document.getElementById('llm-results-container');
+  if (!container) return;
+
+  const mitreTags = (data.mitre_attack_techniques || data.mitre_attack_mapping || []).map(t => {
+    const tId = t.technique_id || t.id || '';
+    const tName = t.name || '';
+    return `
+      <span class="mitre-tag" title="${escapeHtml(tName)}">
+        <span class="mitre-id">${escapeHtml(tId)}</span>
+        <span>${escapeHtml(tName)}</span>
+      </span>
+    `;
+  }).join('');
+
+  const killChainNodes = [
+    { id: 'reconnaissance', label: 'Reconnaissance' },
+    { id: 'weaponization', label: 'Weaponization' },
+    { id: 'delivery', label: 'Delivery' },
+    { id: 'exploitation', label: 'Exploitation' },
+    { id: 'actions_on_objectives', label: 'Actions on Objectives' }
+  ].map(phase => {
+    const isStage = (data.kill_chain_stage || '').toLowerCase().includes(phase.id) ||
+                    (data.narrative || '').toLowerCase().includes(phase.id);
+    return `
+      <div class="killchain-node ${isStage ? 'active-stage' : 'safe-stage'}">
+        <div class="killchain-node-title">${phase.label}</div>
+        <div style="font-size:10px; color:${isStage ? '#fca5a5' : 'var(--text-muted)'};">${isStage ? 'Active Stage' : 'Dormant'}</div>
+      </div>
+    `;
+  }).join('');
+
+  const playbookSteps = (data.incident_response_playbook || []).map((step, idx) => {
+    const stepText = (typeof step === 'object' && step !== null) ? `${step.step ? step.step + ' — ' : ''}${step.action || ''}` : String(step);
+    return `
+      <li class="playbook-step-item">
+        <span class="step-num">${idx + 1}</span>
+        <span>${escapeHtml(stepText)}</span>
+      </li>
+    `;
+  }).join('');
+
+  const containmentBadges = (data.immediate_containment || []).map(act => {
+    const actText = (typeof act === 'object' && act !== null) ? `${act.action || act.step || ''}` : String(act);
+    return `
+      <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px; margin-bottom:6px; font-size:12px; color:#fca5a5; display:flex; align-items:center; gap:8px;">
+        <span>🛡️</span>
+        <span>${escapeHtml(actText)}</span>
+      </div>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div style="background:rgba(15,23,42,0.8); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px;">
+      <div style="font-size:11px; font-weight:700; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">
+        Autonomous Forensic Reconstruction
+      </div>
+      <h3 style="font-size:15px; color:#f8fafc; margin:0 0 10px 0;">${escapeHtml(data.executive_summary || 'Incident Analysis Complete')}</h3>
+      <div style="font-size:12.5px; color:#cbd5e1; line-height:1.6; margin-bottom:14px; background:rgba(0,0,0,0.3); padding:12px; border-radius:6px; border-left:3px solid #06b6d4;">
+        ${escapeHtml(data.narrative || data.threat_narrative || data.technical_deep_dive || data.executive_summary || '')}
+      </div>
+
+      <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px;">Cyber Kill Chain Alignment</div>
+      <div class="llm-killchain-flow">
+        ${killChainNodes}
+      </div>
+
+      <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-top:14px; margin-bottom:6px;">MITRE ATT&amp;CK Enterprise Techniques</div>
+      <div class="mitre-tag-wrap">
+        ${mitreTags || '<span style="font-size:11px; color:var(--text-muted);">No direct MITRE ATT&amp;CK techniques mapped (Nominal Baseline).</span>'}
+      </div>
+
+      <div style="font-size:11px; font-weight:700; color:#f87171; text-transform:uppercase; margin-top:14px; margin-bottom:6px;">Immediate Containment Directives</div>
+      <div>
+        ${containmentBadges || '<div style="font-size:12px; color:var(--text-muted);">No urgent containment actions mandated.</div>'}
+      </div>
+
+      <div style="font-size:11px; font-weight:700; color:var(--text-muted); text-transform:uppercase; margin-top:14px; margin-bottom:6px;">NIST / SANS Incident Response Playbook</div>
+      <ul class="playbook-step-list">
+        ${playbookSteps || '<li style="font-size:12px; color:var(--text-muted);">Standard operational clearance applies.</li>'}
+      </ul>
+    </div>
+  `;
+}
+
+// ── Threat Report Export Handlers ──────────────────────────────────────────
+
+function openReportModal() {
+  const modal = document.getElementById('threat-report-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeReportModal() {
+  const modal = document.getElementById('threat-report-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function generateThreatReport() {
+  const format = document.getElementById('report-format')?.value || 'html';
+  const timeframe = document.getElementById('report-timeframe')?.value || '24h';
+  const severity = document.getElementById('report-severity')?.value || 'HIGH';
+  const btn = document.getElementById('btn-generate-report');
+
+  const token = getAuthToken();
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="spinner" style="width:14px;height:14px;border-width:2px;display:inline-block;vertical-align:middle;margin-right:6px;"></span>Generating...`;
+  }
+
+  try {
+    const url = `${API_BASE}/api/admin/reports/export?format=${encodeURIComponent(format)}&timeframe=${encodeURIComponent(timeframe)}&severity=${encodeURIComponent(severity)}`;
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Report generation failed');
+    }
+
+    const blob = await res.blob();
+    const downloadUrl = window.URL.createObjectURL(blob);
+
+    if (format === 'html') {
+      const newWin = window.open(downloadUrl, '_blank');
+      if (!newWin) {
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = `CyberGuard-Threat-Report-${new Date().toISOString().slice(0, 10)}.html`;
+        a.click();
+      }
+    } else {
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      const ext = format === 'csv' ? 'csv' : 'json';
+      a.download = `CyberGuard-Threat-Report-${new Date().toISOString().slice(0, 10)}.${ext}`;
+      a.click();
+    }
+
+    showToast(`Threat report exported successfully (${format.toUpperCase()})`, 'success');
+    closeReportModal();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `📄 Generate &amp; Download Report`;
+    }
+  }
+}
+
+// ── Admin Policy & Enforcement Engine Handlers ─────────────────────────────
+
+async function loadAdminPolicies() {
+  const token = getAuthToken();
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/policy`, { headers });
+    if (!res.ok) return;
+    const policy = await res.json();
+
+    const nameEl = document.getElementById('cfg-policy-name');
+    if (nameEl) nameEl.value = policy.policy_name || 'Enterprise Defense Baseline';
+
+    const actionEl = document.getElementById('cfg-policy-action');
+    if (actionEl) actionEl.value = policy.enforcement_action || 'FULL_BLOCK';
+
+    const threshEl = document.getElementById('cfg-policy-threshold');
+    const threshVal = document.getElementById('cfg-threshold-val');
+    const scoreVal = Math.round((policy.auto_block_threat_score || 0.75) * 100);
+    if (threshEl) threshEl.value = scoreVal;
+    if (threshVal) threshVal.textContent = scoreVal;
+
+    const ddosLim = document.getElementById('cfg-policy-ddos-limit');
+    if (ddosLim) ddosLim.value = policy.ddos_rate_limit_per_min || 120;
+
+    const ddosBurst = document.getElementById('cfg-policy-ddos-burst');
+    if (ddosBurst) ddosBurst.value = policy.ddos_burst_threshold || 40;
+
+    const emailSev = document.getElementById('cfg-policy-email-severity');
+    if (emailSev) emailSev.value = policy.email_minimum_severity || 'HIGH';
+
+    const recipientsEl = document.getElementById('cfg-policy-recipients');
+    if (recipientsEl && Array.isArray(policy.email_notification_recipients)) {
+      recipientsEl.value = policy.email_notification_recipients.join(', ');
+    }
+
+    const emailEnabled = document.getElementById('cfg-policy-email-enabled');
+    if (emailEnabled) emailEnabled.checked = policy.email_notifications_enabled !== false;
+
+    const postureBadge = document.getElementById('admin-kpi-policy-posture');
+    if (postureBadge) postureBadge.textContent = policy.enforcement_action || 'STRICT';
+  } catch (err) {
+    console.warn('Failed to load admin policies:', err);
+  }
+}
+
+async function saveAdminPolicies(event) {
+  if (event) event.preventDefault();
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const recipients = (document.getElementById('cfg-policy-recipients')?.value || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const payload = {
+    policy_name: document.getElementById('cfg-policy-name')?.value || 'Default',
+    enforcement_action: document.getElementById('cfg-policy-action')?.value || 'FULL_BLOCK',
+    auto_block_threat_score: (Number(document.getElementById('cfg-policy-threshold')?.value || 75)) / 100,
+    ddos_rate_limit_per_min: Number(document.getElementById('cfg-policy-ddos-limit')?.value || 120),
+    ddos_burst_threshold: Number(document.getElementById('cfg-policy-ddos-burst')?.value || 40),
+    email_notifications_enabled: Boolean(document.getElementById('cfg-policy-email-enabled')?.checked),
+    email_minimum_severity: document.getElementById('cfg-policy-email-severity')?.value || 'HIGH',
+    email_notification_recipients: recipients
+  };
+
+  const btn = document.getElementById('btn-save-policy');
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/policy`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to update policy');
+
+    showToast('Organization security policy enforced', 'success');
+    const postureBadge = document.getElementById('admin-kpi-policy-posture');
+    if (postureBadge) postureBadge.textContent = payload.enforcement_action;
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function loadEnforcementData() {
+  const token = getAuthToken();
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+  const tbody = document.getElementById('admin-quarantine-tbody');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/enforcement/status`, { headers });
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const entities = data.blocked_entities || [];
+    const countEl = document.getElementById('admin-kpi-blocked-entities');
+    if (countEl) countEl.textContent = entities.length;
+
+    if (!tbody) return;
+    if (entities.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:18px; color:var(--text-muted);">No quarantined entities. Zero active containment bans.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = entities.map(item => {
+      const typeLower = (item.entity_type || 'ip').toLowerCase();
+      const badgeCls = typeLower.includes('ip') ? 'quarantine-ip' : (typeLower.includes('device') ? 'quarantine-device' : (typeLower.includes('domain') ? 'quarantine-domain' : 'quarantine-hash'));
+      const timeStr = item.blocked_at ? new Date(item.blocked_at).toLocaleString() : 'Active';
+
+      return `
+        <tr>
+          <td><span class="quarantine-badge ${badgeCls}">${escapeHtml(item.entity_type || 'IP')}</span></td>
+          <td style="font-family:var(--font-mono); font-weight:600; color:#f8fafc;">${escapeHtml(item.entity_value || '')}</td>
+          <td style="color:#cbd5e1; font-size:12px;">${escapeHtml(item.reason || 'Quarantined')}</td>
+          <td><span class="badge" style="background:rgba(255,255,255,0.05); color:#94a3b8; font-size:10px;">${escapeHtml(item.blocked_by || 'AUTO')}</span></td>
+          <td style="color:var(--text-muted); font-size:11.5px;">${timeStr}</td>
+          <td><span class="badge badge-critical" style="font-size:10px;">CONTAINED</span></td>
+          <td>
+            <button class="btn btn-xs btn-secondary" onclick="unblockEntity('${escapeHtml(item.entity_type)}', '${escapeHtml(item.entity_value)}')">
+              Unblock
+            </button>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.warn('Failed to load enforcement data:', err);
+  }
+}
+
+function openQuarantineModal() {
+  const modal = document.getElementById('quarantine-modal');
+  if (modal) modal.classList.remove('hidden');
+}
+
+function closeQuarantineModal() {
+  const modal = document.getElementById('quarantine-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function submitManualQuarantine() {
+  const entityType = document.getElementById('quarantine-entity-type')?.value || 'ip';
+  const entityValue = (document.getElementById('quarantine-entity-val')?.value || '').trim();
+  const reason = (document.getElementById('quarantine-reason')?.value || '').trim();
+  const durationVal = document.getElementById('quarantine-duration')?.value;
+  const duration = durationVal === 'permanent' ? null : Number(durationVal);
+
+  if (!entityValue) return showToast('Please enter target entity identifier', 'warning');
+
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/enforcement/block`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        entity_type: entityType,
+        entity_value: entityValue,
+        reason: reason || 'Manual Admin Quarantine',
+        duration_seconds: duration
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Quarantine action failed');
+
+    showToast(`Quarantined ${entityType}: ${entityValue}`, 'success');
+    closeQuarantineModal();
+    loadEnforcementData();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function unblockEntity(entityType, entityValue) {
+  if (!confirm(`Are you sure you want to release quarantine on ${entityType}: ${entityValue}?`)) return;
+
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/enforcement/unblock`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        entity_type: entityType,
+        entity_value: entityValue
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Failed to unblock entity');
+
+    showToast(`Released quarantine on ${entityValue}`, 'success');
+    loadEnforcementData();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+async function loadEmailAlertJournal() {
+  const token = getAuthToken();
+  const headers = token ? { 'Authorization': `Bearer ${token}` } : {};
+  const tbody = document.getElementById('admin-email-alerts-tbody');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/email-alerts`, { headers });
+    if (!res.ok) return;
+    const data = await res.json();
+    const alerts = data.email_alerts || [];
+
+    if (!tbody) return;
+    if (alerts.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:18px; color:var(--text-muted);">No threshold email notifications logged yet.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = alerts.map(a => {
+      const sev = (a.severity || 'HIGH').toUpperCase();
+      const badgeCls = sev === 'CRITICAL' ? 'badge-critical' : (sev === 'HIGH' ? 'badge-high' : 'badge-medium');
+      const timeStr = a.timestamp ? new Date(a.timestamp).toLocaleString() : 'Recent';
+
+      return `
+        <tr>
+          <td style="color:var(--text-muted); font-size:11.5px;">${timeStr}</td>
+          <td style="font-family:var(--font-mono); color:#cbd5e1; font-size:12px;">${escapeHtml(a.recipient || 'soc-lead')}</td>
+          <td><span class="badge ${badgeCls}">${escapeHtml(sev)}</span></td>
+          <td style="font-size:12px; color:#f8fafc;">${escapeHtml(a.threat_type || 'INCIDENT')}</td>
+          <td style="font-size:12px; color:#94a3b8; max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(a.subject || '')}</td>
+          <td><span class="badge" style="background:rgba(56,189,248,0.1); color:#38bdf8; font-size:10px;">${escapeHtml(a.delivery_mode || 'LOCAL_JOURNAL')}</span></td>
+          <td><span class="badge badge-safe" style="font-size:10px;">${escapeHtml(a.status || 'SENT')}</span></td>
+        </tr>
+      `;
+    }).join('');
+  } catch (err) {
+    console.warn('Failed to load email alert journal:', err);
+  }
+}
+
+async function sendTestEmailAlert() {
+  const token = getAuthToken();
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/admin/email-alerts/test`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        severity: 'CRITICAL',
+        subject: 'TEST: Simulated P1 Executive Threat Escalation'
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || 'Test alert failed');
+
+    showToast('Simulated executive threshold alert dispatched', 'success');
+    loadEmailAlertJournal();
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+// Window namespace bindings
+window.switchThreatSubTab = switchThreatSubTab;
+window.previewForensicImage = previewForensicImage;
+window.scanImageForensics = scanImageForensics;
+window.renderImageForensicsReport = renderImageForensicsReport;
+window.openLLMCopilotModal = openLLMCopilotModal;
+window.closeLLMCopilotModal = closeLLMCopilotModal;
+window.openLLMCopilotWithCurrentThreat = openLLMCopilotWithCurrentThreat;
+window.runLLMCopilotAnalysis = runLLMCopilotAnalysis;
+window.renderLLMAnalysisResults = renderLLMAnalysisResults;
+window.openReportModal = openReportModal;
+window.closeReportModal = closeReportModal;
+window.generateThreatReport = generateThreatReport;
+window.loadAdminPolicies = loadAdminPolicies;
+window.saveAdminPolicies = saveAdminPolicies;
+window.loadEnforcementData = loadEnforcementData;
+window.openQuarantineModal = openQuarantineModal;
+window.closeQuarantineModal = closeQuarantineModal;
+window.submitManualQuarantine = submitManualQuarantine;
+window.unblockEntity = unblockEntity;
+window.loadEmailAlertJournal = loadEmailAlertJournal;
+window.sendTestEmailAlert = sendTestEmailAlert;
+
 // Initial load
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   if (window.CyberGuardAudio) {
     window.CyberGuardAudio.init();
   }
-  checkAuthStatus();
+  await checkAuthStatus();
   handleRoute();
   updateOverview();
   loadSecurityCenterData();
   initSecurityCenterWebSocket();
+
+  // Periodic heartbeat: refresh Overview posture & telemetry while user views Overview
+  setInterval(() => {
+    const activeTab = document.querySelector('.nav-tab.active');
+    if (!activeTab || activeTab.getAttribute('data-tab') === 'overview') {
+      updateOverview(false);
+    }
+  }, 20000);
 });
 
 

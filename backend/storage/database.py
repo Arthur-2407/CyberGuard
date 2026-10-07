@@ -345,6 +345,55 @@ if _SQLALCHEMY_AVAILABLE:
         timestamp = Column(DateTime, default=_utcnow)
         details_json = Column(Text, nullable=True)
 
+    class EnforcementPolicyModel(Base):
+        """Organization security policies, DDoS limits, auto-blocking, and email notification controls."""
+        __tablename__ = "enforcement_policies"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        org_name = Column(String(128), default="CyberGuard Enterprise SOC", nullable=False)
+        security_level = Column(String(32), default="HIGH", nullable=False)  # LOW, MEDIUM, HIGH, MAXIMUM
+        auto_block_critical_threats = Column(Boolean, default=True, nullable=False)
+        auto_block_threshold = Column(Float, default=0.85, nullable=False)
+        ddos_protection_enabled = Column(Boolean, default=True, nullable=False)
+        ddos_rpm_limit = Column(Integer, default=120, nullable=False)  # requests/min per IP
+        ddos_burst_limit = Column(Integer, default=30, nullable=False)  # 5-sec burst limit
+        failed_login_ban_threshold = Column(Integer, default=5, nullable=False)
+        ban_duration_minutes = Column(Integer, default=60, nullable=False)
+        email_alerts_enabled = Column(Boolean, default=True, nullable=False)
+        alert_email_recipient = Column(String(256), default="security-ops@cyberguard.local", nullable=False)
+        email_alert_threshold = Column(String(16), default="CRITICAL", nullable=False)  # HIGH or CRITICAL
+        updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+        updated_by = Column(String(64), default="SYSTEM")
+
+    class BlockedEntityModel(Base):
+        """Active blocks on abusive IPs, compromised device fingerprints, domains, and malware hashes."""
+        __tablename__ = "blocked_entities"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        entity_type = Column(String(32), nullable=False, index=True)  # IP, DEVICE, DOMAIN, HASH
+        entity_value = Column(String(256), nullable=False, index=True)
+        reason = Column(String(512), nullable=False)
+        severity = Column(String(16), default="CRITICAL")
+        source_incident_id = Column(String(64), nullable=True)
+        blocked_by = Column(String(64), default="SYSTEM_POLICY")
+        blocked_at = Column(DateTime, default=_utcnow)
+        expires_at = Column(DateTime, nullable=True)
+        is_active = Column(Boolean, default=True, index=True)
+
+    class ThreatReportModel(Base):
+        """Persisted executive and technical threat intelligence reports."""
+        __tablename__ = "threat_reports"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        report_id = Column(String(64), unique=True, nullable=False, index=True)
+        title = Column(String(256), nullable=False)
+        report_type = Column(String(32), default="INCIDENT")  # EXECUTIVE, TECHNICAL, COMPREHENSIVE
+        report_format = Column(String(16), default="HTML")     # HTML, JSON, CSV
+        summary_json = Column(Text, nullable=True)
+        report_path = Column(String(512), nullable=True)
+        created_by = Column(String(64), default="SOC Analyst")
+        created_at = Column(DateTime, default=_utcnow)
+
     _engine = None
     _SessionLocal = None
 
@@ -441,6 +490,15 @@ else:
         pass
 
     class AdminAuditLogModel(_StubBase):
+        pass
+
+    class EnforcementPolicyModel(_StubBase):
+        pass
+
+    class BlockedEntityModel(_StubBase):
+        pass
+
+    class ThreatReportModel(_StubBase):
         pass
 
     def init_db(*args, **kwargs):

@@ -12,7 +12,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 @Composable
-fun VoiceGuardCard(
+fun CyberGuardCard(
     modifier: Modifier = Modifier,
     containerColor: Color = ElevatedSurface,
     borderColor: Color = DividerColor,
@@ -47,6 +47,21 @@ fun VoiceGuardCard(
         }
     }
 }
+
+@Composable
+fun VoiceGuardCard(
+    modifier: Modifier = Modifier,
+    containerColor: Color = ElevatedSurface,
+    borderColor: Color = DividerColor,
+    onClick: (() -> Unit)? = null,
+    content: @Composable ColumnScope.() -> Unit
+) = CyberGuardCard(
+    modifier = modifier,
+    containerColor = containerColor,
+    borderColor = borderColor,
+    onClick = onClick,
+    content = content
+)
 
 @Composable
 fun SectionHeader(title: String, modifier: Modifier = Modifier) {

@@ -62,12 +62,12 @@ class VirusTotalProvider:
         now = time.time()
         cached = VirusTotalProvider._cached_status
         cached_st = cached.get("status") if cached else None
-        # Only cache healthy or permanent auth failures for the long TTL; transient errors expire in 10s to allow quick auto-recovery
-        ttl = VirusTotalProvider._CACHE_TTL_SEC if cached_st in ("READY", "AUTHENTICATION_FAILED", "FORBIDDEN") else 10.0
+        # Cache healthy/permanent auth failures for CACHE_TTL_SEC; transient/timeout errors cooldown for 30s
+        ttl = VirusTotalProvider._CACHE_TTL_SEC if cached_st in ("READY", "AUTHENTICATION_FAILED", "FORBIDDEN") else 30.0
         if not force_refresh and cached and (now - VirusTotalProvider._status_cache_time < ttl):
             return dict(cached)
 
-        res = await self._make_request("GET", "/users/current")
+        res = await self._make_request("GET", "/users/current", timeout=min(self.timeout, 4.0))
         st = res.get("status")
 
         if st == "SUCCESS":

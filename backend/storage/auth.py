@@ -179,6 +179,11 @@ class AuthService:
         if not verify_password(password, user.password_hash):
             user.failed_login_count = (user.failed_login_count or 0) + 1
             db.commit()
+            try:
+                from backend.security.enforcement import get_enforcement_engine
+                get_enforcement_engine().record_auth_failure(ip="client", username=user.username)
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid username or password.",
@@ -187,6 +192,11 @@ class AuthService:
         # Reset failed login count and record last login
         user.failed_login_count = 0
         user.last_login_at = _utcnow()
+        try:
+            from backend.security.enforcement import get_enforcement_engine
+            get_enforcement_engine().reset_auth_failures(ip="client")
+        except Exception:
+            pass
 
         # Generate high-entropy token
         raw_token = secrets.token_urlsafe(32)
@@ -267,9 +277,17 @@ def get_token_from_request(
     request: Request,
     auth_header: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[str]:
-    """Extract token from Authorization Bearer header or X-Session-Token or cookie."""
+    """Extract token from Authorization Bearer header, direct Authorization, X-Session-Token, cookie, or query param."""
     if auth_header and auth_header.credentials:
         return auth_header.credentials
+    # Fallback: check raw Authorization header for direct token or lowercase bearer
+    raw_auth = request.headers.get("Authorization") or request.headers.get("authorization")
+    if raw_auth:
+        parts = raw_auth.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            return parts[1]
+        elif len(parts) == 1:
+            return parts[0]
     # Check custom header
     token = request.headers.get("X-Session-Token")
     if token:
@@ -278,7 +296,12 @@ def get_token_from_request(
     cookie_token = request.cookies.get("cyberguard_session")
     if cookie_token:
         return cookie_token
+    # Check query param (needed for HTML5 media elements like <audio src="...?token=...">)
+    query_token = request.query_params.get("token")
+    if query_token:
+        return query_token
     return None
+
 
 
 def get_optional_user(

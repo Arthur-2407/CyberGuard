@@ -14,8 +14,14 @@ Graceful degradation: if transformers is unavailable, returns zero vectors.
 from __future__ import annotations
 
 import logging
+import os
+import warnings
 import numpy as np
 from typing import Optional
+
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+warnings.filterwarnings("ignore", message=".*unauthenticated.*")
+warnings.filterwarnings("ignore", message=".*HF_TOKEN.*")
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +56,10 @@ def _load_wav2vec2(model_name: str = "facebook/wav2vec2-base") -> bool:
         return False
 
     try:
+        import transformers
         from transformers import Wav2Vec2Model, Wav2Vec2Processor
+        transformers.logging.set_verbosity_error()
+
         logger.info(f"Loading Wav2Vec2 model: {model_name} (may download on first run)...")
         _WAV2VEC2_PROCESSOR = Wav2Vec2Processor.from_pretrained(model_name)
         _WAV2VEC2_MODEL = Wav2Vec2Model.from_pretrained(model_name)

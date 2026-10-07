@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import os
+import warnings
 import numpy as np
 from typing import List, Optional
 
@@ -64,10 +65,9 @@ def _load_ecapa(model_name: str = "speechbrain/spkrec-ecapa-voxceleb") -> bool:
         os.makedirs(savedir, exist_ok=True)
 
         logger.info(f"Loading ECAPA-TDNN model: {model_name} (may download on first run)...")
-        # FIX: Removed 'symlink' key from run_opts — SpeechBrain 1.1.1 removed this
-        # kwarg from RunOptions.__init__(), causing a TypeError on every load attempt.
-        # The ECAPA weights already exist locally in backend/models/weights/ecapa_tdnn/
-        # so symlink behaviour is irrelevant.
+        # Suppress benign Windows symlink notice from SpeechBrain Pretrainer
+        warnings.filterwarnings("ignore", message=".*symlink.*Windows.*")
+        warnings.filterwarnings("ignore", message=".*Requested Pretrainer collection using symlinks.*")
         _ECAPA_MODEL = EncoderClassifier.from_hparams(
             source=model_name,
             savedir=savedir,

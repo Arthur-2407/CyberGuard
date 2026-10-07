@@ -15,6 +15,15 @@ from backend.storage.database import (
 logger = logging.getLogger(__name__)
 
 
+def _to_utc_timestamp(dt: Optional[datetime.datetime]) -> Optional[float]:
+    """Converts a SQLite-stored naive UTC datetime to an accurate epoch timestamp."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt.timestamp()
+
+
 class IncidentManager:
     """Correlates ThreatEvents into Incidents and manages security response lifecycle."""
     
@@ -209,45 +218,134 @@ class IncidentManager:
             logger.debug(f"Status change broadcast skipped: {exc}")
 
     def get_dashboard_summary(self) -> Dict[str, Any]:
-        """Generates unified dashboard security posture summary."""
-        # Use a high limit to ensure all incidents are reflected in the summary.
-        # Previously limit=100 caused 4+ incidents to be silently excluded.
-        incidents = self.get_all_incidents(limit=500)
-        
-        open_statuses = {"NEW", "INVESTIGATING", "CONTAINED"}
-        total_events = sum(inc.event_count or len(inc.events) for inc in incidents)
-        
-        open_incidents = []
-        for inc in incidents:
-            st = inc.status.value if hasattr(inc.status, "value") else str(inc.status)
-            if st in open_statuses:
-                open_incidents.append(inc)
-                
-        high_critical = sum(
-            1 for inc in incidents
-            if (inc.risk.value if hasattr(inc.risk, "value") else str(inc.risk)) in ["HIGH", "CRITICAL"]
-        )
-        
-        categories: Dict[str, int] = {}
-        severities: Dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "SAFE": 0}
-        for inc in incidents:
-            cat_val = inc.category.value if hasattr(inc.category, "value") else str(inc.category)
-            categories[cat_val] = categories.get(cat_val, 0) + 1
-            risk_val = (inc.risk.value if hasattr(inc.risk, "value") else str(inc.risk)).upper()
-            if risk_val in severities:
-                severities[risk_val] += 1
-            else:
-                severities["LOW"] += 1
+        """Generates unified dashboard security posture summary accurately aggregated across full database."""
+        session_factory = get_session_factory(self.db_path)
+        with session_factory() as db:
+            from sqlalchemy import func
             
-        return {
-            "total_incidents": len(incidents),
-            "open_incidents": len(open_incidents),
-            "total_events_analyzed": total_events,
-            "high_critical_threats": high_critical,
-            "categories": categories,
-            "severities": severities,
-            "recent_incidents": [self._incident_to_dict(inc) for inc in incidents[:10]],
-        }
+            total_incidents = db.query(func.count(IncidentModel.id)).scalar() or 0
+            open_statuses = ["NEW", "INVESTIGATING", "CONTAINED"]
+            open_incidents = db.query(func.count(IncidentModel.id)).filter(
+                IncidentModel.status.in_(open_statuses)
+            ).scalar() or 0
+            
+            total_events = db.query(func.count(ThreatEventModel.id)).scalar() or 0
+            
+            # Active high/critical threats (open incidents with HIGH or CRITICAL risk)
+            active_high_critical = db.query(func.count(IncidentModel.id)).filter(
+                IncidentModel.status.in_(open_statuses),
+                IncidentModel.risk.in_(["HIGH", "CRITICAL"])
+            ).scalar() or 0
+            
+            high_critical = db.query(func.count(IncidentModel.id)).filter(
+                IncidentModel.risk.in_(["HIGH", "CRITICAL"])
+            ).scalar() or 0
+
+            critical_threats = db.query(func.count(IncidentModel.id)).filter(
+                IncidentModel.risk == "CRITICAL"
+            ).scalar() or 0
+            
+            category_counts = db.query(
+                IncidentModel.category, func.count(IncidentModel.id)
+            ).group_by(IncidentModel.category).all()
+            categories = {cat: count for cat, count in category_counts if cat}
+            
+            risk_counts = db.query(
+                IncidentModel.risk, func.count(IncidentModel.id)
+            ).group_by(IncidentModel.risk).all()
+            severities = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0, "SAFE": 0}
+            for risk, count in risk_counts:
+                r_up = (risk or "").upper()
+                if r_up in severities:
+                    severities[r_up] = count
+                elif r_up:
+                    severities["LOW"] += count
+            
+            recent_models = db.query(IncidentModel).order_by(IncidentModel.last_seen.desc()).limit(10).all()
+            recent_incidents = [self._incident_to_dict(self._model_to_incident(m, db=db)) for m in recent_models]
+            
+            return {
+                "total_incidents": total_incidents,
+                "open_incidents": open_incidents,
+                "total_events_analyzed": total_events,
+                "high_critical_threats": high_critical,
+                "active_high_critical_threats": active_high_critical,
+                "critical_threats": critical_threats,
+                "categories": categories,
+                "severities": severities,
+                "recent_incidents": recent_incidents,
+            }
+
+    def get_activity_timeline(self, range_mode: str = "ALL") -> Dict[str, Any]:
+        """Calculates aggregated chronological time-series buckets for the Threat Activity Timeline."""
+        range_upper = (range_mode or "ALL").upper()
+        now_ts = time.time()
+        session_factory = get_session_factory(self.db_path)
+        with session_factory() as db:
+            from sqlalchemy import func
+            
+            now_dt = datetime.datetime.fromtimestamp(now_ts, datetime.timezone.utc)
+            if range_upper == "1H":
+                start_dt = now_dt - datetime.timedelta(hours=1)
+                num_buckets = 12
+                label_fmt = "%H:%M"
+            elif range_upper == "6H":
+                start_dt = now_dt - datetime.timedelta(hours=6)
+                num_buckets = 12
+                label_fmt = "%H:%M"
+            elif range_upper == "24H":
+                start_dt = now_dt - datetime.timedelta(hours=24)
+                num_buckets = 12
+                label_fmt = "%H:%M"
+            elif range_upper == "7D":
+                start_dt = now_dt - datetime.timedelta(days=7)
+                num_buckets = 7
+                label_fmt = "%a %d"
+            else:  # ALL
+                earliest = db.query(func.min(ThreatEventModel.timestamp)).scalar()
+                if earliest:
+                    start_dt = earliest.replace(tzinfo=datetime.timezone.utc) if earliest.tzinfo is None else earliest
+                else:
+                    start_dt = now_dt - datetime.timedelta(days=14)
+                num_buckets = 14
+                label_fmt = "%b %d"
+
+            start_ts = start_dt.timestamp()
+            span = max(now_ts - start_ts, 60.0)
+            bucket_size = span / num_buckets
+
+            q = db.query(ThreatEventModel.timestamp, ThreatEventModel.severity)
+            if range_upper != "ALL":
+                q = q.filter(ThreatEventModel.timestamp >= start_dt.replace(tzinfo=None))
+            events = q.order_by(ThreatEventModel.timestamp.asc()).all()
+
+            telemetry = [0] * num_buckets
+            threats = [0] * num_buckets
+            labels = []
+
+            for i in range(num_buckets):
+                b_start = start_ts + i * bucket_size
+                b_end = b_start + bucket_size
+                dt = datetime.datetime.fromtimestamp(b_start)
+                labels.append(dt.strftime(label_fmt))
+
+                for ev_time, sev in events:
+                    if not ev_time:
+                        continue
+                    ev_ts = _to_utc_timestamp(ev_time)
+                    if ev_ts is not None and (b_start <= ev_ts < b_end or (i == num_buckets - 1 and b_start <= ev_ts <= b_end + 2.0)):
+                        telemetry[i] += 1
+                        if (sev or "").upper() in ("HIGH", "CRITICAL"):
+                            threats[i] += 1
+
+            return {
+                "range": range_upper,
+                "labels": labels,
+                "telemetry": telemetry,
+                "threats": threats,
+                "total_events": len(events),
+                "total_threats": sum(threats)
+            }
 
     def _save_event_to_db(self, event: ThreatEvent):
         """Persist ThreatEvent and its Evidence to SQLite."""
@@ -339,9 +437,9 @@ class IncidentManager:
         return order.get(val, 0)
         
     def _model_to_incident(self, m: IncidentModel, db=None) -> Incident:
-        first_seen = m.first_seen.timestamp() if (m.first_seen and hasattr(m.first_seen, "timestamp")) else time.time()
-        last_seen = m.last_seen.timestamp() if (m.last_seen and hasattr(m.last_seen, "timestamp")) else time.time()
-        resolved_at = m.resolved_at.timestamp() if (m.resolved_at and hasattr(m.resolved_at, "timestamp")) else None
+        first_seen = _to_utc_timestamp(m.first_seen) or time.time()
+        last_seen = _to_utc_timestamp(m.last_seen) or time.time()
+        resolved_at = _to_utc_timestamp(m.resolved_at)
 
         inc = Incident(
             incident_id=m.incident_id,
@@ -371,7 +469,7 @@ class IncidentManager:
         return inc
 
     def _model_to_threat_event(self, m: ThreatEventModel, db=None) -> ThreatEvent:
-        ts = m.timestamp.timestamp() if (m.timestamp and hasattr(m.timestamp, "timestamp")) else time.time()
+        ts = _to_utc_timestamp(m.timestamp) or time.time()
         
         evidence_list = []
         if db:

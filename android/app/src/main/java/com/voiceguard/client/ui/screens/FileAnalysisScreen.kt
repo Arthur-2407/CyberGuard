@@ -66,7 +66,7 @@ fun FileAnalysisScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(32.dp))
         
         SectionHeader("INPUT SOURCE")
-        VoiceGuardCard {
+        CyberGuardCard {
             if (fileName.isEmpty()) {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -157,7 +157,7 @@ fun FileAnalysisScreen(navController: NavController, viewModel: MainViewModel) {
         
         analysisResult?.let { res ->
             SectionHeader("ANALYSIS RESULTS")
-            VoiceGuardCard {
+            CyberGuardCard {
                 val riskColor = when (res.alertLevel.uppercase()) {
                     "CRITICAL" -> StatusCritical
                     "HIGH" -> StatusWarning

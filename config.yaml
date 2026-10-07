@@ -113,3 +113,18 @@ urlhaus:
   enabled: true
   timeout_sec: 10
   cache_enabled: true
+
+enforcement:
+  enabled: true
+  auto_block_critical: true
+  auto_block_threshold: 0.85
+  ddos_protection: true
+  ddos_rpm_limit: 120
+  ddos_burst_limit: 30
+  ban_duration_minutes: 60
+
+email_alerts:
+  enabled: true
+  recipient: "security-ops@cyberguard.local"
+  threshold: "CRITICAL"
+

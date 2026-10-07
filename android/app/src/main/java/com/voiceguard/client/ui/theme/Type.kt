@@ -6,7 +6,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
-// VoiceGuard 2050+ Typography System
+// CyberGuard Typography System
 
 val Typography = Typography(
     // Hero & Display text

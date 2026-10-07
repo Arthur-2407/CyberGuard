@@ -93,8 +93,6 @@ class WebhookNotifier:
             "Content-Type": "application/json",
             "X-CyberGuard-Signature": signature,
             "X-CyberGuard-Timestamp": now_ts,
-            "X-VoiceGuard-Signature": signature,
-            "X-VoiceGuard-Timestamp": now_ts,
         }
 
         for attempt in range(1, self.retry_attempts + 1):

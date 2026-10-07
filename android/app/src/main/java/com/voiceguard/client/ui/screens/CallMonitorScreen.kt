@@ -77,7 +77,7 @@ fun CallMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(32.dp))
         
         if (!permissionsGranted) {
-            VoiceGuardCard(containerColor = ElevatedSurface) {
+            CyberGuardCard(containerColor = ElevatedSurface) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("PERMISSIONS REQUIRED", style = MaterialTheme.typography.titleMedium, color = StatusWarning)
                     Spacer(modifier = Modifier.height(8.dp))
@@ -96,7 +96,7 @@ fun CallMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         } else {
         
         SectionHeader("SYSTEM STATUS")
-        VoiceGuardCard {
+        CyberGuardCard {
             Column(modifier = Modifier.fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -134,7 +134,7 @@ fun CallMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         
         if (telemetry.diagnosticReason != null) {
             Spacer(modifier = Modifier.height(16.dp))
-            VoiceGuardCard(containerColor = StatusWarning.copy(alpha = 0.1f), borderColor = StatusWarning) {
+            CyberGuardCard(containerColor = StatusWarning.copy(alpha = 0.1f), borderColor = StatusWarning) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text("DIAGNOSTICS", style = MaterialTheme.typography.labelSmall, color = StatusWarning)
                     Spacer(modifier = Modifier.height(4.dp))
@@ -156,7 +156,7 @@ fun CallMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         
         if (telemetry.monitorState == MonitorState.ANALYZING) {
             SectionHeader("LIVE TELEMETRY")
-            VoiceGuardCard {
+            CyberGuardCard {
                 val riskColor = when (telemetry.alertLevel.uppercase()) {
                     "CRITICAL" -> StatusCritical
                     "HIGH" -> StatusWarning
@@ -207,7 +207,7 @@ fun CallMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         
         if (telemetry.alertLevel == "CRITICAL" || telemetry.alertLevel == "HIGH") {
             Spacer(modifier = Modifier.height(24.dp))
-            VoiceGuardCard(containerColor = StatusCritical.copy(alpha = 0.1f), borderColor = StatusCritical) {
+            CyberGuardCard(containerColor = StatusCritical.copy(alpha = 0.1f), borderColor = StatusCritical) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                     Text("⚠ POSSIBLE CLONED VOICE DETECTED", style = MaterialTheme.typography.titleMedium, color = StatusCritical)
                     Spacer(modifier = Modifier.height(8.dp))

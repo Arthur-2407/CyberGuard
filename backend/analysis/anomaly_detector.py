@@ -126,7 +126,7 @@ class AnomalyDetector:
             else:
                 recommended_actions = ["Investigate User Activity", "Rate Limit"]
 
-        return ThreatEvent(
+        event = ThreatEvent(
             source=source,
             source_type="system_log",
             modality="structured_data",
@@ -140,5 +140,40 @@ class AnomalyDetector:
             affected_user=user if user != "unknown" else None,
             detector="LogAnomalyDetector",
             processing_time_ms=(time.time() - start_time) * 1000.0,
-            correlation_id=correlation_id
+            correlation_id=correlation_id,
+            mitre_technique_id="T1110" if threat_category == ThreatCategory.CREDENTIAL_ATTACK else ("T1499.004" if threat_category == ThreatCategory.API_ABUSE else "T1078"),
+            mitre_technique_name="Brute Force" if threat_category == ThreatCategory.CREDENTIAL_ATTACK else "Endpoint Denial of Service",
         )
+
+        # Trigger automatic policy enforcement on anomalous IP
+        if ip_address and ip_address != "unknown" and severity in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+            try:
+                from backend.security.enforcement import get_enforcement_engine
+                engine = get_enforcement_engine()
+                policy = engine.get_policy()
+                if policy.get("auto_block_critical_threats", True):
+                    engine.block_entity(
+                        entity_type="IP",
+                        entity_value=ip_address,
+                        reason=f"Technical Anomaly Defense: {threat_category.value} detected on {user}",
+                        severity=severity.value,
+                        source_incident_id=correlation_id,
+                        duration_minutes=policy.get("ban_duration_minutes", 60),
+                        blocked_by="ANOMALY_SHIELD",
+                    )
+            except Exception:
+                pass
+
+        # Trigger email alert on critical technical threats
+        try:
+            from backend.alerts.email_notifier import get_email_notifier
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(get_email_notifier().notify_threat_event(event))
+            except RuntimeError:
+                pass
+        except Exception:
+            pass
+
+        return event
