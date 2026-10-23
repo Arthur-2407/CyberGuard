@@ -1,0 +1,280 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 680" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="archBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#030712" />
+      <stop offset="50%" stop-color="#060f24" />
+      <stop offset="100%" stop-color="#02050e" />
+    </linearGradient>
+
+    <!-- Layer Gradients -->
+    <linearGradient id="edgeCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#041824" />
+      <stop offset="100%" stop-color="#020c14" />
+    </linearGradient>
+
+    <linearGradient id="shieldCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#180a2a" />
+      <stop offset="100%" stop-color="#0a0314" />
+    </linearGradient>
+
+    <linearGradient id="coreCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#032120" />
+      <stop offset="100%" stop-color="#010f0e" />
+    </linearGradient>
+
+    <linearGradient id="intelCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#240717" />
+      <stop offset="100%" stop-color="#12020a" />
+    </linearGradient>
+
+    <linearGradient id="storageCardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#211807" />
+      <stop offset="100%" stop-color="#100b02" />
+    </linearGradient>
+
+    <!-- Glow Filter -->
+    <filter id="archGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+
+    <!-- Background Grid -->
+    <pattern id="archGrid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#00f0ff" stroke-width="0.4" stroke-opacity="0.05" />
+    </pattern>
+  </defs>
+
+  <style>
+    .mono { font-family: 'JetBrains Mono', 'Courier New', monospace; }
+    .sans { font-family: 'Inter', -apple-system, sans-serif; }
+    
+    @keyframes pulseDash {
+      0% { stroke-dashoffset: 60; }
+      100% { stroke-dashoffset: 0; }
+    }
+    @keyframes glowLed {
+      0%, 100% { opacity: 0.9; }
+      50% { opacity: 0.3; }
+    }
+    .flow-wire {
+      stroke-dasharray: 6 5;
+      animation: pulseDash 1.8s linear infinite;
+    }
+    .flow-wire-fast {
+      stroke-dasharray: 5 4;
+      animation: pulseDash 1.2s linear infinite;
+    }
+    .led-pulse {
+      animation: glowLed 1.6s step-end infinite;
+    }
+  </style>
+
+  <!-- Canvas Background -->
+  <rect width="1000" height="680" rx="14" fill="url(#archBg)" stroke="#00f0ff" stroke-width="1" stroke-opacity="0.3" />
+  <rect width="1000" height="680" fill="url(#archGrid)" />
+
+  <!-- Corner Brackets -->
+  <path d="M 20 40 L 20 20 L 40 20" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+  <path d="M 980 40 L 980 20 L 960 20" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+  <path d="M 20 640 L 20 660 L 40 660" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+  <path d="M 980 640 L 980 660 L 960 660" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+
+  <!-- Main Title Banner -->
+  <g transform="translate(40, 32)">
+    <text x="0" y="0" fill="#00f0ff" font-size="11" font-weight="700" letter-spacing="2" class="mono">CYBERGUARD ARCHITECTURAL GRID</text>
+    <text x="0" y="20" fill="#ffffff" font-size="18" font-weight="900" letter-spacing="1" class="sans">EDGE-TO-CORE QUANTUM TELEMETRY &amp; MULTI-MODAL DEFENSE MATRIX</text>
+  </g>
+  <g transform="translate(850, 36)">
+    <circle cx="0" cy="0" r="4" fill="#00ff88" class="led-pulse" />
+    <text x="10" y="4" fill="#00ff88" font-size="10" font-weight="700" letter-spacing="1.5" class="mono">LIVE BUS ACTIVE</text>
+  </g>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       ROW 1: INGESTION (EDGE) & SECURITY POLICY SHIELD
+       ══════════════════════════════════════════════════════════════ -->
+
+  <!-- [ZONE 1] TACTICAL INGESTION & EDGE LAYER -->
+  <g transform="translate(40, 75)">
+    <rect width="430" height="150" rx="10" fill="url(#edgeCardGrad)" stroke="#00f0ff" stroke-width="1.2" stroke-opacity="0.6" />
+    <text x="20" y="26" fill="#00f0ff" font-size="12" font-weight="700" letter-spacing="1.5" class="mono">◈ TACTICAL INGESTION &amp; EDGE LAYER</text>
+
+    <!-- Sub-node 1: Android Edge Companion Node -->
+    <g transform="translate(18, 42)">
+      <rect width="185" height="42" rx="6" fill="#072233" stroke="#00f0ff" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">Android Edge Client</text>
+      <text x="10" y="32" fill="#38bdf8" font-size="9" class="mono">Kotlin • Jetpack Compose</text>
+    </g>
+
+    <!-- Sub-node 2: Web SOC Console -->
+    <g transform="translate(225, 42)">
+      <rect width="185" height="42" rx="6" fill="#072233" stroke="#00f0ff" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">Web SOC Console</text>
+      <text x="10" y="32" fill="#38bdf8" font-size="9" class="mono">Glassmorphic HUD Matrix</text>
+    </g>
+
+    <!-- Sub-node 3: Real-Time Stream Pipe -->
+    <g transform="translate(18, 94)">
+      <rect width="392" height="40" rx="6" fill="#051724" stroke="#00f0ff" stroke-width="0.8" stroke-dasharray="4 3" />
+      <text x="14" y="18" fill="#00f0ff" font-size="10" font-weight="700" class="mono">⚡ 16kHz PCM WebSockets (/ws/stream) • mDNS ZeroConf</text>
+      <text x="14" y="31" fill="#64748b" font-size="9" class="mono">Zero-Latency Audio Ring-Buffer &amp; Telecom Intercept</text>
+    </g>
+  </g>
+
+  <!-- Flow Link: Ingestion -> Shield -->
+  <line x1="470" y1="150" x2="530" y2="150" stroke="#00f0ff" stroke-width="2.2" class="flow-wire" filter="url(#archGlow)" />
+  <polygon points="530,150 520,145 520,155" fill="#00f0ff" />
+
+  <!-- [ZONE 2] SECURITY POLICY & DDOS SHIELD -->
+  <g transform="translate(530, 75)">
+    <rect width="430" height="150" rx="10" fill="url(#shieldCardGrad)" stroke="#a855f7" stroke-width="1.2" stroke-opacity="0.6" />
+    <text x="20" y="26" fill="#c084fc" font-size="12" font-weight="700" letter-spacing="1.5" class="mono">◈ SECURITY POLICY &amp; DDOS SHIELD</text>
+
+    <!-- Sub-node 1: DDoS Rate Limiter -->
+    <g transform="translate(18, 42)">
+      <rect width="185" height="42" rx="6" fill="#241038" stroke="#a855f7" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">Volumetric DDoS Shield</text>
+      <text x="10" y="32" fill="#d8b4fe" font-size="9" class="mono">Sliding-Window Rate Limiter</text>
+    </g>
+
+    <!-- Sub-node 2: RBAC Enclave -->
+    <g transform="translate(225, 42)">
+      <rect width="185" height="42" rx="6" fill="#241038" stroke="#a855f7" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">RBAC Enclave (JWT)</text>
+      <text x="10" y="32" fill="#d8b4fe" font-size="9" class="mono">Admin • Analyst • Viewer</text>
+    </g>
+
+    <!-- Sub-node 3: Parameter Redactor -->
+    <g transform="translate(18, 94)">
+      <rect width="392" height="40" rx="6" fill="#180b27" stroke="#a855f7" stroke-width="0.8" stroke-dasharray="4 3" />
+      <text x="14" y="18" fill="#c084fc" font-size="10" font-weight="700" class="mono">🛡️ EnforcementMiddleware &amp; Credential Redactor</text>
+      <text x="14" y="31" fill="#94a3b8" font-size="9" class="mono">Microsecond In-Memory Blacklist • Token Stripping</text>
+    </g>
+  </g>
+
+  <!-- Vertical Bus: Shield -> Core & Intelligence -->
+  <path d="M 745 225 L 745 255 L 255 255 L 255 275" fill="none" stroke="#a855f7" stroke-width="2" class="flow-wire" />
+  <polygon points="255,275 250,265 260,265" fill="#a855f7" />
+
+  <path d="M 745 225 L 745 275" fill="none" stroke="#ff0055" stroke-width="2" class="flow-wire" />
+  <polygon points="745,275 740,265 750,265" fill="#ff0055" />
+
+  <!-- ══════════════════════════════════════════════════════════════
+       ROW 2: NEURAL CORE & THREAT INTELLIGENCE GRID
+       ══════════════════════════════════════════════════════════════ -->
+
+  <!-- [ZONE 3] NEURAL DECONVOLUTION CORE -->
+  <g transform="translate(40, 275)">
+    <rect width="430" height="205" rx="10" fill="url(#coreCardGrad)" stroke="#00ff88" stroke-width="1.2" stroke-opacity="0.6" />
+    <text x="20" y="26" fill="#00ff88" font-size="12" font-weight="700" letter-spacing="1.5" class="mono">◈ NEURAL DECONVOLUTION CORE</text>
+
+    <!-- Sub-node 1: WebRTC VAD -->
+    <g transform="translate(18, 42)">
+      <rect width="185" height="42" rx="6" fill="#0a2e26" stroke="#00ff88" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">WebRTC VAD Filter</text>
+      <text x="10" y="32" fill="#4ade80" font-size="9" class="mono">Silence Frame Stripping</text>
+    </g>
+
+    <!-- Sub-node 2: Feature Bank -->
+    <g transform="translate(225, 42)">
+      <rect width="185" height="42" rx="6" fill="#0a2e26" stroke="#00ff88" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">Feature Bank (Multi-D)</text>
+      <text x="10" y="32" fill="#4ade80" font-size="9" class="mono">Wav2Vec2 • Mel-80 • MFCC</text>
+    </g>
+
+    <!-- Sub-node 3: Active Model (CNN-BiLSTM v008) -->
+    <g transform="translate(18, 94)">
+      <rect width="392" height="48" rx="6" fill="#051d19" stroke="#00ff88" stroke-width="1" />
+      <text x="14" y="20" fill="#ffffff" font-size="12" font-weight="800" class="sans">EnsembleDetector (CNN-BiLSTM v008)</text>
+      <text x="14" y="36" fill="#00ff88" font-size="10" font-weight="600" class="mono">8.94M Weights • Residual Gated Fusion (P_syn = 1.000)</text>
+    </g>
+
+    <!-- Sub-node 4: Computer Vision & Quishing -->
+    <g transform="translate(18, 150)">
+      <rect width="392" height="40" rx="6" fill="#082922" stroke="#00ff88" stroke-width="0.8" stroke-dasharray="4 3" />
+      <text x="14" y="17" fill="#86efac" font-size="10" font-weight="700" class="mono">🔬 Computer Vision Engine: 2D FFT • Laplacian Variance</text>
+      <text x="14" y="30" fill="#64748b" font-size="9" class="mono">QR Barcode Decapsulation &amp; Destination Expansion</text>
+    </g>
+  </g>
+
+  <!-- Bi-directional Cross Bus: Core <-> Intel -->
+  <line x1="470" y1="375" x2="530" y2="375" stroke="#00f0ff" stroke-width="2.2" class="flow-wire-fast" filter="url(#archGlow)" />
+  <polygon points="530,375 520,370 520,380" fill="#00f0ff" />
+  <polygon points="470,375 480,370 480,380" fill="#00f0ff" />
+
+  <!-- [ZONE 4] AUTONOMOUS THREAT INTELLIGENCE GRID -->
+  <g transform="translate(530, 275)">
+    <rect width="430" height="205" rx="10" fill="url(#intelCardGrad)" stroke="#ff0055" stroke-width="1.2" stroke-opacity="0.6" />
+    <text x="20" y="26" fill="#ff0055" font-size="12" font-weight="700" letter-spacing="1.5" class="mono">◈ THREAT INTELLIGENCE &amp; AI ANALYST GRID</text>
+
+    <!-- Sub-node 1: VirusTotal v3 Pipeline -->
+    <g transform="translate(18, 42)">
+      <rect width="185" height="42" rx="6" fill="#360a1d" stroke="#ff0055" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">VirusTotal v3 Grid</text>
+      <text x="10" y="32" fill="#fda4af" font-size="9" class="mono">Automated File Hash &amp; URL</text>
+    </g>
+
+    <!-- Sub-node 2: Abuse.ch URLhaus Feed -->
+    <g transform="translate(225, 42)">
+      <rect width="185" height="42" rx="6" fill="#360a1d" stroke="#ff0055" stroke-width="0.8" stroke-opacity="0.7" />
+      <text x="10" y="18" fill="#ffffff" font-size="11" font-weight="700" class="sans">Abuse.ch URLhaus</text>
+      <text x="10" y="32" fill="#fda4af" font-size="9" class="mono">Malware URL Feeds</text>
+    </g>
+
+    <!-- Sub-node 3: Cross-Modal Threat Correlator -->
+    <g transform="translate(18, 94)">
+      <rect width="392" height="44" rx="6" fill="#280716" stroke="#ff0055" stroke-width="1" />
+      <text x="14" y="18" fill="#ffffff" font-size="11" font-weight="800" class="sans">Cross-Modal Threat Correlator</text>
+      <text x="14" y="32" fill="#ff0055" font-size="10" font-weight="600" class="mono">IOC Normalizer • Multimodal Severity Fusion</text>
+    </g>
+
+    <!-- Sub-node 4: AI LLM Threat Analyst -->
+    <g transform="translate(18, 146)">
+      <rect width="392" height="44" rx="6" fill="#1c040f" stroke="#ff0055" stroke-width="0.8" stroke-dasharray="4 3" />
+      <text x="14" y="18" fill="#fda4af" font-size="10" font-weight="700" class="mono">🤖 AI LLM Threat Analyst: MITRE ATT&amp;CK Matrix</text>
+      <text x="14" y="31" fill="#94a3b8" font-size="9" class="mono">Automated Cyber Kill-Chain &amp; Incident Playbooks</text>
+    </g>
+  </g>
+
+  <!-- ══════════════════════════════════════════════════════════════
+       ROW 3: STORAGE ENCLAVE & MODEL GOVERNANCE LOOP
+       ══════════════════════════════════════════════════════════════ -->
+
+  <!-- Feed Down: Core + Intel -> Storage & Governance -->
+  <path d="M 255 480 L 255 505 L 490 505 L 490 525" fill="none" stroke="#00ff88" stroke-width="2" class="flow-wire" />
+  <path d="M 745 480 L 745 505 L 510 505 L 510 525" fill="none" stroke="#ff0055" stroke-width="2" class="flow-wire" />
+  <polygon points="500,525 495,515 505,515" fill="#f59e0b" />
+
+  <!-- [ZONE 5] STORAGE & MODEL GOVERNANCE ENCLAVE -->
+  <g transform="translate(40, 525)">
+    <rect width="920" height="120" rx="10" fill="url(#storageCardGrad)" stroke="#f59e0b" stroke-width="1.2" stroke-opacity="0.6" />
+    <text x="25" y="26" fill="#f59e0b" font-size="12" font-weight="700" letter-spacing="1.5" class="mono">◈ STORAGE &amp; CONTINUOUS MODEL GOVERNANCE ENCLAVE</text>
+
+    <!-- Sub-node 1: Encrypted SQLite Enclave -->
+    <g transform="translate(25, 42)">
+      <rect width="270" height="60" rx="6" fill="#2d1f08" stroke="#f59e0b" stroke-width="0.8" />
+      <text x="14" y="22" fill="#ffffff" font-size="12" font-weight="700" class="sans">Local Encrypted Enclave</text>
+      <text x="14" y="38" fill="#fbbf24" font-size="10" class="mono">Audit Ledger • Incident Triage</text>
+      <text x="14" y="50" fill="#94a3b8" font-size="9" class="mono">Zero Raw Audio Retention Policy</text>
+    </g>
+
+    <!-- Sub-node 2: Model Registry & Hot-Swap -->
+    <g transform="translate(325, 42)">
+      <rect width="270" height="60" rx="6" fill="#2d1f08" stroke="#f59e0b" stroke-width="0.8" />
+      <text x="14" y="22" fill="#ffffff" font-size="12" font-weight="700" class="sans">Model Checkpoint Registry</text>
+      <text x="14" y="38" fill="#fbbf24" font-size="10" class="mono">Checkpoints v001 - v016</text>
+      <text x="14" y="50" fill="#00ff88" font-size="9" font-weight="700" class="mono">Zero-Downtime Hot-Swap &amp; 1-Click Rollback</text>
+    </g>
+
+    <!-- Sub-node 3: SOC Review Queue -->
+    <g transform="translate(625, 42)">
+      <rect width="270" height="60" rx="6" fill="#2d1f08" stroke="#f59e0b" stroke-width="0.8" />
+      <text x="14" y="22" fill="#ffffff" font-size="12" font-weight="700" class="sans">SOC Training Review Queue</text>
+      <text x="14" y="38" fill="#fbbf24" font-size="10" class="mono">Human-in-the-Loop Audio Lab</text>
+      <text x="14" y="50" fill="#94a3b8" font-size="9" class="mono">Validation Gating: Acc &gt;= 85% • EER</text>
+    </g>
+  </g>
+</svg>

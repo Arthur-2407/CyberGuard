@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 260" width="100%" height="100%">
+  <defs>
+    <linearGradient id="clBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#040914" />
+      <stop offset="50%" stop-color="#09152b" />
+      <stop offset="100%" stop-color="#030712" />
+    </linearGradient>
+
+    <linearGradient id="orbitGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f0ff" />
+      <stop offset="50%" stop-color="#a855f7" />
+      <stop offset="100%" stop-color="#00ff88" />
+    </linearGradient>
+
+    <filter id="clGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <style>
+    .mono { font-family: 'JetBrains Mono', 'Courier New', monospace; }
+    .sans { font-family: 'Inter', -apple-system, sans-serif; }
+
+    @keyframes rotateRing {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    @keyframes reverseRotate {
+      0% { transform: rotate(360deg); }
+      100% { transform: rotate(0deg); }
+    }
+    @keyframes pulseNode {
+      0%, 100% { r: 6px; opacity: 0.8; }
+      50% { r: 10px; opacity: 1; filter: drop-shadow(0 0 6px #00f0ff); }
+    }
+    @keyframes dashCycle {
+      0% { stroke-dashoffset: 100; }
+      100% { stroke-dashoffset: 0; }
+    }
+    .ring-orbit {
+      transform-origin: 480px 135px;
+      animation: rotateRing 14s linear infinite;
+    }
+    .ring-counter {
+      transform-origin: 480px 135px;
+      animation: reverseRotate 18s linear infinite;
+    }
+    .flow-orbit {
+      stroke-dasharray: 6 5;
+      animation: dashCycle 2s linear infinite;
+    }
+  </style>
+
+  <!-- Background Base -->
+  <rect width="960" height="260" rx="12" fill="url(#clBg)" stroke="#00f0ff" stroke-width="1" stroke-opacity="0.3" />
+
+  <!-- Corner Tech Borders -->
+  <path d="M 15 35 L 15 15 L 35 15" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+  <path d="M 945 35 L 945 15 L 925 15" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+  <path d="M 15 225 L 15 245 L 35 245" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+  <path d="M 945 225 L 945 245 L 925 245" stroke="#00f0ff" stroke-width="2" fill="none" opacity="0.8" />
+
+  <!-- Section Title -->
+  <text x="35" y="38" fill="#00f0ff" font-size="12" font-weight="700" letter-spacing="2" class="mono">CONTINUOUS LEARNING &amp; MODEL GOVERNANCE LOOP</text>
+  <text x="690" y="38" fill="#00ff88" font-size="11" font-weight="700" letter-spacing="1" class="mono">ZERO-DOWNTIME HOT-SWAP</text>
+
+  <!-- Center Hub Orbital Ring -->
+  <g class="ring-orbit">
+    <circle cx="480" cy="135" r="75" fill="none" stroke="url(#orbitGrad)" stroke-width="2" stroke-dasharray="14 10" opacity="0.7" />
+  </g>
+  <g class="ring-counter">
+    <circle cx="480" cy="135" r="95" fill="none" stroke="#00f0ff" stroke-width="1" stroke-dasharray="4 6" opacity="0.35" />
+  </g>
+
+  <!-- Central Production Model Core -->
+  <circle cx="480" cy="135" r="42" fill="#091b34" stroke="#00f0ff" stroke-width="2" filter="url(#clGlow)" />
+  <text x="480" y="130" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="800" class="sans">PRODUCTION</text>
+  <text x="480" y="146" text-anchor="middle" fill="#00f0ff" font-size="12" font-weight="900" class="mono">detector.pt</text>
+  <text x="480" y="159" text-anchor="middle" fill="#00ff88" font-size="9" font-weight="700" class="mono">ACTIVE v008</text>
+
+  <!-- ── NODE 1 (Left): SOC Review Queue ───────────────────────── -->
+  <g transform="translate(45, 80)">
+    <rect width="195" height="110" rx="8" fill="#091326" stroke="#00f0ff" stroke-width="1" stroke-opacity="0.4" />
+    <text x="14" y="24" fill="#ffffff" font-size="12" font-weight="700" class="sans">1. SOC Review Queue</text>
+    <text x="14" y="40" fill="#64748b" font-size="9" class="mono">Human-in-the-Loop Triage</text>
+    <rect x="14" y="52" width="165" height="22" rx="4" fill="#132442" />
+    <text x="24" y="67" fill="#00f0ff" font-size="9" font-weight="600" class="mono">GROUND TRUTH HARVEST</text>
+    <text x="14" y="96" fill="#94a3b8" font-size="9" class="mono">Cryptographic Audio Hash</text>
+  </g>
+  <line x1="240" y1="135" x2="385" y2="135" stroke="#00f0ff" stroke-width="2" class="flow-orbit" />
+  <polygon points="385,135 375,131 375,139" fill="#00f0ff" />
+
+  <!-- ── NODE 2 (Top Left): Retraining Job ─────────────────────── -->
+  <g transform="translate(245, 45)">
+    <rect width="170" height="42" rx="6" fill="#181335" stroke="#a855f7" stroke-width="1" stroke-opacity="0.6" />
+    <text x="12" y="20" fill="#ffffff" font-size="11" font-weight="700" class="sans">2. Retraining Pipeline</text>
+    <text x="12" y="34" fill="#c084fc" font-size="9" class="mono">RUN_* // Frozen Backbone</text>
+  </g>
+
+  <!-- ── NODE 3 (Top Right): Validation Gate ───────────────────── -->
+  <g transform="translate(545, 45)">
+    <rect width="170" height="42" rx="6" fill="#0a221f" stroke="#00ff88" stroke-width="1" stroke-opacity="0.6" />
+    <text x="12" y="20" fill="#ffffff" font-size="11" font-weight="700" class="sans">3. Validation Gate</text>
+    <text x="12" y="34" fill="#00ff88" font-size="9" class="mono">Accuracy &gt;= 85% • EER Test</text>
+  </g>
+
+  <!-- ── NODE 4 (Right): Atomic Promotion & Rollback ───────────── -->
+  <g transform="translate(720, 80)">
+    <rect width="195" height="110" rx="8" fill="#1e0c1b" stroke="#ff0055" stroke-width="1" stroke-opacity="0.4" />
+    <text x="14" y="24" fill="#ffffff" font-size="12" font-weight="700" class="sans">4. Atomic Promotion</text>
+    <text x="14" y="40" fill="#ff0055" font-size="9" class="mono">Zero-Downtime Hot Swap</text>
+    <rect x="14" y="52" width="165" height="22" rx="4" fill="#36132b" />
+    <text x="24" y="67" fill="#ff0055" font-size="9" font-weight="700" class="mono">1-CLICK ROLLBACK (v001-v016)</text>
+    <text x="14" y="96" fill="#94a3b8" font-size="9" class="mono">Manifest Hash Synchronized</text>
+  </g>
+  <line x1="575" y1="135" x2="720" y2="135" stroke="#00ff88" stroke-width="2" class="flow-orbit" />
+  <polygon points="720,135 710,131 710,139" fill="#00ff88" />
+</svg>
