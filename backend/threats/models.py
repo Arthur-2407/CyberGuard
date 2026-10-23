@@ -74,6 +74,8 @@ class ThreatEvent(BaseModel):
     incident_status: Optional[IncidentStatus] = None
     affected_user: Optional[str] = None
     affected_asset: Optional[str] = None
+    user_id: Optional[int] = None
+    user_email: Optional[str] = None
     detector: str
     detector_version: str = "1.0"
     processing_time_ms: float = 0.0

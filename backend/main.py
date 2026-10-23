@@ -240,42 +240,61 @@ async def lifespan(app: FastAPI):
         from zeroconf.asyncio import AsyncZeroconf
         import socket
         
-        # Determine active local IP
+        # Enumerate all active local non-loopback IPv4 addresses
+        local_ips = []
+        try:
+            _, _, host_ips = socket.gethostbyname_ex(socket.gethostname())
+            for ip in host_ips:
+                if not ip.startswith('127.') and not ip.startswith('169.254.') and ip not in local_ips:
+                    local_ips.append(ip)
+        except Exception:
+            pass
+
+        # Also fallback to default route socket probe
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.connect(('10.255.255.255', 1))
-            local_ip = s.getsockname()[0]
+            sock_ip = s.getsockname()[0]
+            if sock_ip not in local_ips and not sock_ip.startswith('127.'):
+                local_ips.append(sock_ip)
         except Exception:
-            local_ip = '127.0.0.1'
+            pass
         finally:
             s.close()
-            
-        if local_ip != '127.0.0.1' and app_settings.server.host == '0.0.0.0':
+
+        if local_ips and app_settings.server.host == '0.0.0.0':
             desc = {'path': '/health', 'version': '1.0.0', 'app': 'CyberGuard'}
-            info_cyber = ServiceInfo(
-                "_cyberguard._tcp.local.",
-                f"CyberGuard_{local_ip.replace('.', '-')}._cyberguard._tcp.local.",
-                addresses=[socket.inet_aton(local_ip)],
-                port=app_settings.server.port,
-                properties=desc,
-                server=f"cyberguard-{local_ip.replace('.', '-')}.local.",
-            )
-            info_voice = ServiceInfo(
-                "_voiceguard._tcp.local.",
-                f"CyberGuard_{local_ip.replace('.', '-')}._voiceguard._tcp.local.",
-                addresses=[socket.inet_aton(local_ip)],
-                port=app_settings.server.port,
-                properties=desc,
-                server=f"cyberguard-{local_ip.replace('.', '-')}.local.",
-            )
-            zeroconf_instance = AsyncZeroconf(interfaces=[local_ip])
-            try:
-                await zeroconf_instance.async_register_service(info_cyber)
-                await zeroconf_instance.async_register_service(info_voice)
-                logger.info(f"Zeroconf mDNS service registered (_cyberguard & _voiceguard) on {local_ip}:{app_settings.server.port}")
+            zeroconf_instance = AsyncZeroconf()
+            registered_count = 0
+            for ip in local_ips:
+                try:
+                    safe_ip = ip.replace('.', '-')
+                    info_cyber = ServiceInfo(
+                        "_cyberguard._tcp.local.",
+                        f"CyberGuard_{safe_ip}._cyberguard._tcp.local.",
+                        addresses=[socket.inet_aton(ip)],
+                        port=app_settings.server.port,
+                        properties=desc,
+                        server=f"cyberguard-{safe_ip}.local.",
+                    )
+                    info_voice = ServiceInfo(
+                        "_voiceguard._tcp.local.",
+                        f"CyberGuard_{safe_ip}._voiceguard._tcp.local.",
+                        addresses=[socket.inet_aton(ip)],
+                        port=app_settings.server.port,
+                        properties=desc,
+                        server=f"cyberguard-{safe_ip}.local.",
+                    )
+                    await zeroconf_instance.async_register_service(info_cyber)
+                    await zeroconf_instance.async_register_service(info_voice)
+                    registered_count += 1
+                except Exception as reg_err:
+                    logger.warning(f"Zeroconf registration notice for interface {ip}: {reg_err}")
+
+            if registered_count > 0:
+                logger.info(f"Zeroconf mDNS registered across {registered_count} interfaces ({', '.join(local_ips)}) on port {app_settings.server.port}")
                 zeroconf_status = "READY"
-            except Exception as reg_exc:
-                logger.warning(f"Zeroconf service registration notice: {reg_exc}")
+            else:
                 zeroconf_status = "DEGRADED"
         else:
             logger.info("Zeroconf skipped: Server not bound to 0.0.0.0 or LAN IP unavailable.")
@@ -287,37 +306,20 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Zeroconf service initialization notice: {exc}")
         zeroconf_status = "FAILED"
 
-    # 7. Auto-start & link Threat Intelligence Pipeline (VirusTotal + URLhaus)
-    from backend.threats.virustotal import init_virustotal_pipeline
-    from backend.threats.urlhaus import init_urlhaus_pipeline
+    # 7. Threat Intelligence Pipeline Setup (VirusTotal + URLhaus)
+    # Providers are configured in memory without making outbound API requests on startup or reload.
+    # Outbound queries are exclusively initiated when interacting within the Phishing & URL tab.
+    from backend.threats.virustotal import get_virustotal_provider
+    from backend.threats.urlhaus import get_urlhaus_provider
 
-    async def _auto_start_threat_intel_pipeline():
-        try:
-            logger.info("Auto-linking Threat Intelligence Pipeline (VirusTotal & URLhaus)...")
-            vt_res, uh_res = await asyncio.gather(
-                init_virustotal_pipeline(app_settings),
-                init_urlhaus_pipeline(app_settings),
-                return_exceptions=True,
-            )
-            vt_st = vt_res.get("status", "UNAVAILABLE") if isinstance(vt_res, dict) else "ERROR"
-            uh_st = uh_res.get("status", "UNAVAILABLE") if isinstance(uh_res, dict) else "ERROR"
-            logger.info(f"✓ Threat Intelligence Pipeline connected & operational: VirusTotal={vt_st}, URLhaus={uh_st}")
+    vt_prov = get_virustotal_provider(app_settings)
+    uh_prov = get_urlhaus_provider(app_settings)
+    vt_is_ready = vt_prov.is_configured
+    uh_is_ready = uh_prov.is_configured
 
-            ws = _APP_STATE.get("ws_notifier")
-            if ws and hasattr(ws, "broadcast_raw"):
-                await ws.broadcast_raw({
-                    "type": "pipeline_status",
-                    "virustotal": vt_res if isinstance(vt_res, dict) else {"status": "ERROR"},
-                    "urlhaus": uh_res if isinstance(uh_res, dict) else {"status": "ERROR"},
-                })
-        except Exception as exc:
-            logger.warning(f"Threat Intelligence Pipeline auto-start notice: {exc}")
-
-    # Launch non-blocking background connection task on server startup
-    asyncio.create_task(_auto_start_threat_intel_pipeline())
-
-    vt_summary = "READY (auto-linked)" if (app_settings.virustotal.enabled and app_settings.virustotal.api_key) else "DISABLED"
-    uh_summary = "READY (auto-linked)" if (app_settings.urlhaus.enabled and app_settings.urlhaus.auth_key) else "DISABLED"
+    vt_summary = "READY (configured)" if vt_is_ready else "DISABLED"
+    uh_summary = "READY (configured)" if uh_is_ready else "DISABLED"
+    logger.info(f"Threat Intelligence Subsystem initialized: VirusTotal={vt_summary}, URLhaus={uh_summary}")
 
     # Capability Report
     pytorch_status = "UNAVAILABLE"
@@ -400,6 +402,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=app_settings.server.cors_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -465,6 +468,7 @@ async def favicon():
 
 
 @app.get("/health", tags=["Health"])
+@app.get("/api/health", tags=["Health"])
 async def health_check():
     return {
         "status": "ok",

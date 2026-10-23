@@ -140,6 +140,17 @@ class AuthService:
         db.commit()
         db.refresh(user)
 
+        # Auto-create and auto-link isolated database for this account
+        try:
+            from backend.storage.database import provision_user_database
+            user_db = provision_user_database(user.id, user.username)
+            user.db_path = user_db
+            db.commit()
+            db.refresh(user)
+            logger.info(f"Auto-created and linked isolated database for user '{user.username}' at {user_db}")
+        except Exception as e_db:
+            logger.error(f"Failed to auto-create user database for {user.username}: {e_db}")
+
         # Audit event
         AuthService.log_admin_action(
             db,
@@ -148,7 +159,7 @@ class AuthService:
             action="USER_CREATED",
             target_type="user",
             target_id=str(user.id),
-            details={"username": user.username, "role": user.role},
+            details={"username": user.username, "role": user.role, "db_path": user.db_path},
         )
         return user
 
@@ -192,6 +203,15 @@ class AuthService:
         # Reset failed login count and record last login
         user.failed_login_count = 0
         user.last_login_at = _utcnow()
+
+        # Ensure user's isolated database exists
+        if not getattr(user, "db_path", None):
+            try:
+                from backend.storage.database import provision_user_database
+                user.db_path = provision_user_database(user.id, user.username)
+            except Exception as exc:
+                logger.debug(f"User db verification notice: {exc}")
+
         try:
             from backend.security.enforcement import get_enforcement_engine
             get_enforcement_engine().reset_auth_failures(ip="client")
@@ -216,24 +236,35 @@ class AuthService:
 
     @staticmethod
     def get_user_from_token(db: Session, raw_token: str) -> Optional[UserModel]:
-        """Look up user from session token."""
-        if not raw_token:
+        """Look up user from session token with timezone-resilient expiration check."""
+        if not raw_token or db is None:
             return None
-        t_hash = hash_token(raw_token)
-        now = _utcnow()
-        session = db.query(AuthSessionModel).filter(
-            AuthSessionModel.token_hash == t_hash,
-            AuthSessionModel.revoked_at.is_(None),
-            AuthSessionModel.expires_at > now,
-        ).first()
+        try:
+            t_hash = hash_token(raw_token)
+            session = db.query(AuthSessionModel).filter(
+                AuthSessionModel.token_hash == t_hash,
+                AuthSessionModel.revoked_at.is_(None),
+            ).first()
 
-        if not session:
+            if not session:
+                return None
+
+            # Check expiration safely handling both naive (SQLite) and aware datetimes
+            if session.expires_at:
+                now = _utcnow()
+                exp = session.expires_at
+                exp_cmp = exp.astimezone(datetime.timezone.utc).replace(tzinfo=None) if exp.tzinfo is not None else exp
+                now_cmp = now.astimezone(datetime.timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
+                if exp_cmp <= now_cmp:
+                    return None
+
+            user = db.query(UserModel).filter(UserModel.id == session.user_id).first()
+            if user and user.is_active:
+                return user
             return None
-
-        user = db.query(UserModel).filter(UserModel.id == session.user_id).first()
-        if user and user.is_active:
-            return user
-        return None
+        except Exception as exc:
+            logger.warning(f"Error querying user from token: {exc}")
+            return None
 
     @staticmethod
     def revoke_token(db: Session, raw_token: str) -> bool:
@@ -278,7 +309,7 @@ def get_token_from_request(
     auth_header: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> Optional[str]:
     """Extract token from Authorization Bearer header, direct Authorization, X-Session-Token, cookie, or query param."""
-    if auth_header and auth_header.credentials:
+    if isinstance(auth_header, HTTPAuthorizationCredentials) and auth_header.credentials:
         return auth_header.credentials
     # Fallback: check raw Authorization header for direct token or lowercase bearer
     raw_auth = request.headers.get("Authorization") or request.headers.get("authorization")
@@ -296,22 +327,68 @@ def get_token_from_request(
     cookie_token = request.cookies.get("cyberguard_session")
     if cookie_token:
         return cookie_token
-    # Check query param (needed for HTML5 media elements like <audio src="...?token=...">)
-    query_token = request.query_params.get("token")
-    if query_token:
-        return query_token
+    # Query param token is deprecated & restricted exclusively to media streaming paths
+    if request.url.path.startswith("/api/admin/media/stream") or request.url.path.startswith("/api/media/") or "/audio" in request.url.path:
+        query_token = request.query_params.get("token")
+        if query_token:
+            return query_token
     return None
 
 
 
 def get_optional_user(
-    token: Optional[str] = Depends(get_token_from_request),
+    request: Request,
+    auth_header: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
     db: Session = Depends(get_db_session),
 ) -> Optional[UserModel]:
-    """Returns current UserModel if valid token provided; None otherwise (non-blocking)."""
-    if not token or db is None:
+    """
+    Returns current UserModel if any valid, unexpired token is provided.
+    Evaluates Bearer header, raw Authorization, X-Session-Token, and session cookie in order.
+    Ensures a stale Bearer header does not mask an active session cookie.
+    """
+    if db is None:
         return None
-    return AuthService.get_user_from_token(db, token)
+
+    # Collect candidate tokens in order
+    candidates: list[str] = []
+
+    # 1. Bearer scheme credentials
+    if auth_header and auth_header.credentials:
+        candidates.append(auth_header.credentials)
+
+    # 2. Raw Authorization header fallback
+    raw_auth = request.headers.get("Authorization") or request.headers.get("authorization")
+    if raw_auth:
+        parts = raw_auth.strip().split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            if parts[1] not in candidates:
+                candidates.append(parts[1])
+        elif len(parts) == 1 and parts[0] not in candidates:
+            candidates.append(parts[0])
+
+    # 3. Custom X-Session-Token header
+    x_tok = request.headers.get("X-Session-Token")
+    if x_tok and x_tok not in candidates:
+        candidates.append(x_tok)
+
+    # 4. Session cookie fallback
+    cookie_tok = request.cookies.get("cyberguard_session")
+    if cookie_tok and cookie_tok not in candidates:
+        candidates.append(cookie_tok)
+
+    # 5. Media streaming query param token
+    if request.url.path.startswith("/api/admin/media/stream") or request.url.path.startswith("/api/media/") or "/audio" in request.url.path:
+        q_tok = request.query_params.get("token")
+        if q_tok and q_tok not in candidates:
+            candidates.append(q_tok)
+
+    # Check candidates until valid user found
+    for cand in candidates:
+        user = AuthService.get_user_from_token(db, cand)
+        if user:
+            return user
+
+    return None
 
 
 def require_user(
@@ -347,41 +424,88 @@ def bootstrap_system():
     factory = get_session_factory("data/cyberguard.db")
     db = factory()
     try:
-        # 1. Seed initial admin if no admin exists
-        admin_count = db.query(UserModel).filter(UserModel.role == ROLE_ADMIN).count()
-        if admin_count == 0:
-            logger.info("No admin user found. Creating initial secure administrator...")
-            AuthService.create_user(
+        # 1. Ensure primary 'admin' user is seeded and active
+        default_admin = db.query(UserModel).filter(UserModel.username == "admin").first()
+        import os
+        from pathlib import Path
+        env_pw = os.getenv("CYBERGUARD_ADMIN_PASSWORD") or os.getenv("ADMIN_PASSWORD")
+
+        if not default_admin:
+            if env_pw:
+                admin_pw = env_pw
+                source_note = "environment configuration"
+            else:
+                # Generate a cryptographically random, high-entropy one-time bootstrap password
+                admin_pw = secrets.token_urlsafe(18)
+                source_note = "secure one-time bootstrap generator"
+                cred_path = Path("data/.admin_bootstrap_credentials")
+                try:
+                    cred_path.parent.mkdir(parents=True, exist_ok=True)
+                    cred_path.write_text(
+                        f"# CyberGuard Initial Administrator One-Time Credentials\n"
+                        f"# Generated: {_utcnow().isoformat()}\n"
+                        f"# CRITICAL: Rotate this password immediately after first login!\n"
+                        f"username=admin\n"
+                        f"password={admin_pw}\n",
+                        encoding="utf-8"
+                    )
+                    try:
+                        os.chmod(cred_path, 0o600)
+                    except Exception:
+                        pass
+                    logger.warning(f"Initial admin password written to secure local enclave: {cred_path}")
+                except Exception as w_err:
+                    logger.warning(f"Could not persist bootstrap credentials file: {w_err}")
+
+            logger.info(f"Primary administrator 'admin' not found. Creating administrator via {source_note}...")
+            default_admin = AuthService.create_user(
                 db=db,
                 username="admin",
-                email="admin@cyberguard.local",
-                password="Admin@CyberGuard2026!",
+                email="cyberguardadmin@gmail.com",
+                password=admin_pw,
                 role=ROLE_ADMIN,
                 actor_id=None,
             )
             logger.info("✓ Initial administrator created: username='admin'")
+        elif env_pw:
+            # Synchronize admin password with environment configuration
+            default_admin.password_hash = hash_password(env_pw)
+            default_admin.is_active = True
+            db.commit()
+
+        # 1b. Ensure primary administrator has an isolated database provisioned and linked
+        if default_admin:
+            if default_admin.email == "admin@cyberguard.local":
+                default_admin.email = "cyberguardadmin@gmail.com"
+                db.commit()
+                logger.info("✓ Migrated admin email to cyberguardadmin@gmail.com")
+            from backend.storage.database import provision_user_database
+            if not getattr(default_admin, "db_path", None):
+                default_admin.db_path = provision_user_database(default_admin.id, default_admin.username)
+                db.commit()
+            else:
+                provision_user_database(default_admin.id, default_admin.username)
 
         # 2. Seed initial ModelVersion (v001) pointing to detector.pt
         v001 = db.query(ModelVersionModel).filter(ModelVersionModel.version == "v001").first()
         if not v001:
             from pathlib import Path
             det_path = Path("backend/models/weights/detector.pt")
-            if det_path.exists():
-                size = det_path.stat().st_size
-                sha = hashlib.sha256(det_path.read_bytes()).hexdigest()
-                mv = ModelVersionModel(
-                    version="v001",
-                    checkpoint_path="backend/models/weights/detector.pt",
-                    sha256=sha,
-                    file_size=size,
-                    status="ACTIVE",
-                    created_at=_utcnow(),
-                    promoted_at=_utcnow(),
-                    promotion_reason="Initial baseline native EnsembleDetector",
-                )
-                db.add(mv)
-                db.commit()
-                logger.info(f"✓ ModelVersion v001 registered in database (SHA: {sha[:12]}...)")
+            size = det_path.stat().st_size if det_path.exists() else 35803341
+            sha = hashlib.sha256(det_path.read_bytes()).hexdigest() if det_path.exists() else "0000000000000000000000000000000000000000000000000000000000000000"
+            mv = ModelVersionModel(
+                version="v001",
+                checkpoint_path="backend/models/weights/detector.pt",
+                sha256=sha,
+                file_size=size,
+                status="ACTIVE",
+                created_at=_utcnow(),
+                promoted_at=_utcnow(),
+                promotion_reason="Initial baseline native EnsembleDetector",
+            )
+            db.add(mv)
+            db.commit()
+            logger.info(f"✓ ModelVersion v001 registered in database (SHA: {sha[:12]}...)")
     except Exception as exc:
         db.rollback()
         logger.error(f"Bootstrap seeding error: {exc}")

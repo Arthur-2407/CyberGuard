@@ -15,8 +15,11 @@ import tempfile
 import uuid
 from typing import List, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
+
+from backend.storage.auth import require_user, require_admin
+from backend.storage.database import UserModel
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +49,7 @@ async def enroll_speaker(
     speaker_id: Optional[str] = Form(None),
     organization: Optional[str] = Form(None),
     role: Optional[str] = Form(None),
+    current_user: UserModel = Depends(require_user),
 ):
     """
     Enroll a speaker by uploading 1–N audio reference files.
@@ -130,10 +134,11 @@ async def enroll_speaker(
     # Average embeddings into profile
     avg_embedding = average_embeddings(embeddings)
 
-    # Store in registry
-    registry = SpeakerRegistry(
-        db_path=str(app_settings.abs_path(app_settings.storage.db_path))
-    )
+    from backend.storage.database import get_user_db_path
+    user_db_path = getattr(current_user, "db_path", None) or get_user_db_path(current_user.id, current_user.username)
+
+    # Store in user's isolated registry
+    registry = SpeakerRegistry(db_path=user_db_path)
     final_speaker_id = registry.enroll_speaker(
         name=name,
         embedding=avg_embedding,
@@ -156,26 +161,27 @@ async def enroll_speaker(
 
 
 @router.get("", response_model=List[SpeakerInfo])
-async def list_speakers():
-    """List all enrolled speaker profiles (metadata only)."""
-    from backend.main import app_settings
+async def list_speakers(current_user: UserModel = Depends(require_user)):
+    """List enrolled speaker profiles for the authenticated user."""
+    from backend.storage.database import get_user_db_path
     from backend.storage.speaker_registry import SpeakerRegistry
 
-    registry = SpeakerRegistry(
-        db_path=str(app_settings.abs_path(app_settings.storage.db_path))
-    )
+    user_db_path = getattr(current_user, "db_path", None) or get_user_db_path(current_user.id, current_user.username)
+    registry = SpeakerRegistry(db_path=user_db_path)
     return registry.list_speakers()
 
 
 @router.delete("/{speaker_id}")
-async def delete_speaker(speaker_id: str):
-    """Delete a speaker profile (GDPR/PDP compliance)."""
-    from backend.main import app_settings
+async def delete_speaker(
+    speaker_id: str,
+    current_user: UserModel = Depends(require_user),
+):
+    """Delete an enrolled speaker profile from the authenticated user's isolated database."""
+    from backend.storage.database import get_user_db_path
     from backend.storage.speaker_registry import SpeakerRegistry
 
-    registry = SpeakerRegistry(
-        db_path=str(app_settings.abs_path(app_settings.storage.db_path))
-    )
+    user_db_path = getattr(current_user, "db_path", None) or get_user_db_path(current_user.id, current_user.username)
+    registry = SpeakerRegistry(db_path=user_db_path)
     deleted = registry.delete_speaker(speaker_id)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Speaker '{speaker_id}' not found.")

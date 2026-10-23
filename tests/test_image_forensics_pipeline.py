@@ -87,6 +87,24 @@ class TestImageForensicsPipeline:
         assert event.metadata_details["provenance_status"] == "AI_GENERATOR_METADATA_CONFIRMED"
         assert "stable diffusion" in event.metadata_details["ai_generator_tags"]
 
+    def test_content_based_synthetic_image_detection(self, coordinator):
+        # Generate an AI-style smooth image with no camera noise or EXIF metadata
+        np.random.seed(42)
+        base = np.zeros((300, 400), dtype=np.float32)
+        for i in range(1, 6):
+            base += (1.0 / i) * np.sin(0.02 * i * np.arange(400) + 0.015 * i * np.arange(300)[:, None])
+        base = ((base - base.min()) / (base.max() - base.min()) * 180 + 40)
+        ai_arr = np.clip(base, 0, 255).astype(np.uint8)
+        img = Image.fromarray(ai_arr, mode="L").convert("RGB")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=92)
+
+        event = coordinator.analyze(buf.getvalue(), "ai_no_metadata.jpg")
+        assert event.classification == "LIKELY_MANIPULATED"
+        assert event.threat_score >= 0.65
+        assert event.forensic_metrics["manipulation_probability"] >= 0.65
+        assert any(e.evidence_type in ("synthetic_noise_flattening", "spectral_high_freq_attenuation") for e in event.evidence)
+
     def test_animated_gif_multi_frame_extraction(self, coordinator):
         frames = [Image.fromarray(np.random.randint(60, 190, (80, 100, 3), dtype=np.uint8)) for _ in range(5)]
         buf = io.BytesIO()
@@ -132,3 +150,74 @@ class TestImageForensicsPipeline:
         assert any("Media Quarantine" in s for s in step_names)
         assert any("Provenance" in s for s in step_names)
         assert "host quarantine" not in str(playbook).lower()
+
+    def test_ai_generated_image_with_diffusion_noise_kurtosis(self, coordinator):
+        """Verify that AI-generated images with high noise kurtosis and low HF energy are detected (user scenario)."""
+        np.random.seed(1234)
+        base = np.zeros((200, 200, 3), dtype=np.float32) + 140.0
+        # Add non-Gaussian heavy-tailed residual characteristic of latent diffusion steps
+        t_noise = np.random.standard_t(df=2.0, size=(200, 200, 3)) * 3.0
+        ai_img = Image.fromarray(np.clip(base + t_noise, 0, 255).astype(np.uint8), mode="RGB")
+        buf = io.BytesIO()
+        ai_img.save(buf, format="PNG")
+
+        event = coordinator.analyze(buf.getvalue(), "ai_diffusion_avatar.png")
+        assert event.threat_score >= 0.50
+        assert event.severity in (RiskLevel.MEDIUM, RiskLevel.HIGH, RiskLevel.CRITICAL)
+        assert any(e.evidence_type in ("synthetic_noise_kurtosis_anomaly", "synthetic_noise_flattening") for e in event.evidence)
+
+    def test_camera_exif_grounding_preserves_safe(self, coordinator):
+        """Verify that photos with verified optical camera EXIF are grounded as authentic."""
+        raw_bytes = _generate_synthetic_photo(300, 300)
+        img = Image.open(io.BytesIO(raw_bytes))
+        exif = img.getexif()
+        exif[0x010f] = "Canon"
+        exif[0x0110] = "EOS R5"
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=95, exif=exif)
+
+        event = coordinator.analyze(buf.getvalue(), "canon_eos.jpg")
+        assert event.classification == "LIKELY_AUTHENTIC"
+        assert event.severity == RiskLevel.SAFE
+        assert event.threat_score == 0.0
+        assert event.metadata_details["provenance_status"] == "CAMERA_PROVENANCE_CONFIRMED"
+
+    def test_high_res_smartphone_photo_with_sharp_edges_is_authentic(self, coordinator):
+        """Verify that high-resolution smartphone photos (e.g., 1344x2980 Xiaomi) with sharp edges remain SAFE."""
+        np.random.seed(42)
+        H, W = 1490, 672  # Scaled simulation of 1344x2980 aspect ratio
+        scene = np.zeros((H, W), dtype=np.float32)
+        scene[200:1000, 100:300] = 220.0  # Sharp building edge
+        scene[300:900, 150:250] = 50.0
+        noise = np.random.normal(0, 2.5, (H, W))
+        photo_arr = np.clip(scene + noise, 0, 255).astype(np.uint8)
+        img = Image.fromarray(photo_arr, mode="L").convert("RGB")
+        exif = img.getexif()
+        exif[0x010f] = "Xiaomi"
+        exif[0x0110] = "REDMI Note 15 5G"
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90, exif=exif)
+
+        event = coordinator.analyze(buf.getvalue(), "IMG_20261008_190422.jpg")
+        assert event.classification == "LIKELY_AUTHENTIC"
+        assert event.severity == RiskLevel.SAFE
+        assert event.threat_score < 0.35
+        assert event.metadata_details["provenance_status"] == "CAMERA_PROVENANCE_CONFIRMED"
+        assert event.forensic_metrics["noise_kurtosis"] < 25.0
+        assert event.forensic_metrics["noise_status"] == "NOMINAL"
+        assert "thresholds" in event.forensic_metrics
+
+    def test_configurable_thresholds_honored(self):
+        """Verify that DeepfakeCoordinator honors custom ImageForensicsConfig without hardcoded behavior."""
+        from backend.config import Settings, ImageForensicsConfig
+        custom_cfg = Settings(
+            image_forensics=ImageForensicsConfig(
+                threshold_manipulated=0.50,
+                threshold_inconclusive=0.20,
+                noise_kurtosis_critical=50.0,
+            )
+        )
+        custom_coord = DeepfakeCoordinator(config=custom_cfg)
+        assert custom_coord.image_config.threshold_manipulated == 0.50
+        assert custom_coord.image_config.threshold_inconclusive == 0.20
+        assert custom_coord.image_config.noise_kurtosis_critical == 50.0

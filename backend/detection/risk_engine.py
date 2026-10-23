@@ -50,10 +50,11 @@ class RiskEngineConfig:
     window_size: int = 5
     detection_weight: float = 0.70
     consistency_weight: float = 0.30
-    threshold_low: float = 0.35
-    threshold_medium: float = 0.60
-    threshold_high: float = 0.80
-    threshold_critical: float = 0.95   # New: CRITICAL alert level threshold
+    threshold_low: float = 0.25
+    threshold_medium: float = 0.50
+    threshold_high: float = 0.70
+    threshold_critical: float = 0.85
+
     temporal_smoothing: bool = True
     smoothing_alpha: float = 0.3
     alert_cooldown_sec: float = 15.0
@@ -107,12 +108,12 @@ class RiskEngine:
         weights /= weights.sum()
         rolling_risk = float(np.dot(scores_list, weights))
         
-        # Exponential smoothing (Hysteresis)
+        # Exponential smoothing (Hysteresis): fast attack escalation, controlled decay
         if self.config.temporal_smoothing:
             if not self._history:
                 self._last_smoothed_risk = rolling_risk
             else:
-                alpha = self.config.smoothing_alpha
+                alpha = 0.85 if rolling_risk > self._last_smoothed_risk else self.config.smoothing_alpha
                 self._last_smoothed_risk = alpha * rolling_risk + (1 - alpha) * self._last_smoothed_risk
             rolling_risk = self._last_smoothed_risk
 
@@ -137,9 +138,10 @@ class RiskEngine:
         # Alert level
         alert_level = self._classify_risk(combined_risk)
 
-        # Track peak and alert count
-        if combined_risk > self._peak_risk:
-            self._peak_risk = combined_risk
+        # Track peak risk across chunks (captures peak synthetic evidence)
+        effective_risk = max(combined_risk, detection_score) if speaker_similarity is None else combined_risk
+        if effective_risk > self._peak_risk:
+            self._peak_risk = float(effective_risk)
 
         snapshot = RiskSnapshot(
             chunk_id=chunk_id,

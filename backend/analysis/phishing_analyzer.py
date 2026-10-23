@@ -1,6 +1,6 @@
 import time
 import re
-from typing import List
+from typing import List, Optional, Any
 
 from backend.threats.models import (
     ThreatEvent, Evidence, Explanation, ThreatCategory, RiskLevel
@@ -49,10 +49,23 @@ class PhishingAnalyzer:
             "security breach detected", "unauthorized access reported"
         ]
 
-    def analyze(self, text: str, source: str = "text_submission", correlation_id: str = None) -> ThreatEvent:
+    def analyze(self, text: str, source: str = "text_submission", correlation_id: str = None, user: Optional[Any] = None) -> ThreatEvent:
         start_time = time.time()
         evidences: List[Evidence] = []
         risk_score = 0.0
+        
+        u_id = None
+        u_email = None
+        u_name = None
+        if user:
+            if isinstance(user, dict):
+                u_id = user.get("id")
+                u_email = user.get("email")
+                u_name = user.get("username")
+            else:
+                u_id = getattr(user, "id", None)
+                u_email = getattr(user, "email", None)
+                u_name = getattr(user, "username", None)
         
         text_lower = text.lower()
         
@@ -92,18 +105,40 @@ class PhishingAnalyzer:
             ))
             risk_score += 0.3
             
-        # Rule 4: Suspicious Links
-        # Just check for existence of http links in text, actual link analysis is done by url_analyzer
-        urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text_lower)
-        if urls:
-            evidences.append(Evidence(
-                evidence_type="embedded_links",
-                description="Text contains embedded links. These should be analyzed separately.",
-                value=f"Found {len(urls)} links",
-                severity_contribution=0.1,
-                source="phishing_analyzer"
-            ))
-            risk_score += 0.1
+        # Rule 4: Suspicious Links & Embedded URL Purpose Forensics
+        raw_urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
+        if raw_urls:
+            import hashlib
+            for u in raw_urls:
+                u_clean = u.strip()
+                u_hash = hashlib.sha256(u_clean.encode("utf-8")).hexdigest()
+                u_lower = u_clean.lower()
+                
+                # Determine what the link is for based on URL heuristics & semantics
+                if any(k in u_lower for k in ["login", "signin", "auth", "account", "verify", "secure", "bank", "password", "credential", "portal"]):
+                    purpose = "Credential Harvesting / Banking Imposter Phishing Portal"
+                    purpose_contrib = 0.35
+                elif any(k in u_lower for k in [".apk", ".exe", ".bin", "payload", ".zip", "install", "download", "dropper"]):
+                    purpose = "Malicious Payload / Dropper Download Link"
+                    purpose_contrib = 0.40
+                elif any(k in u_lower for k in ["pay", "invoice", "transfer", "crypto", "bitcoin", "refund", "remittance"]):
+                    purpose = "Financial Fraud & Wire Redirection Portal"
+                    purpose_contrib = 0.35
+                elif any(k in u_lower for k in ["track", "parcel", "delivery", "fedex", "dhl", "usps", "ups"]):
+                    purpose = "Package Delivery Tracking Smishing Lure"
+                    purpose_contrib = 0.30
+                else:
+                    purpose = "External Redirection / Unverified Domain"
+                    purpose_contrib = 0.15
+
+                evidences.append(Evidence(
+                    evidence_type="embedded_url_intel",
+                    description=f"Attached URL detected. Hash: {u_hash}. Purpose: {purpose}",
+                    value=f"{u_clean} [SHA256: {u_hash}]",
+                    severity_contribution=purpose_contrib,
+                    source="phishing_analyzer"
+                ))
+                risk_score += purpose_contrib
 
         # Rule 5: Authority & Executive Impersonation
         found_authority = [kw for kw in self.authority_impersonation_keywords if kw in text_lower]
@@ -195,6 +230,9 @@ class PhishingAnalyzer:
             evidence=evidences,
             explanation=explanation,
             recommended_actions=actions,
+            affected_user=u_name,
+            user_id=u_id,
+            user_email=u_email,
             detector="PhishingHeuristicAnalyzer",
             processing_time_ms=(time.time() - start_time) * 1000.0,
             correlation_id=correlation_id,
@@ -210,15 +248,16 @@ class PhishingAnalyzer:
             pass
 
         # Trigger threshold email alert if critical
-        try:
-            from backend.alerts.email_notifier import get_email_notifier
-            import asyncio
+        if event.severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) and event.threat_category != ThreatCategory.SAFE:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(get_email_notifier().notify_threat_event(event))
-            except RuntimeError:
+                from backend.alerts.email_notifier import get_email_notifier
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(get_email_notifier().notify_threat_event(event))
+                except RuntimeError:
+                    pass
+            except Exception:
                 pass
-        except Exception:
-            pass
 
         return event

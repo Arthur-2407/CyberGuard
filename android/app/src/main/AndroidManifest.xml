@@ -1,30 +1,66 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.voiceguard.client">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Permissions for local network discovery and API access -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Microphone permission for Live Monitor -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     
     <!-- Call Monitor Permissions -->
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_CALL_LOG" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Real-Time SMS Monitoring Permissions -->
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.READ_SMS" />
+    <!-- On-the-spot Sideload & Malware Threat Interception Permissions -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <!-- Minimum necessary package-visibility queries (Android 11+) -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <package android:name="com.android.vending" />
+        <package android:name="com.google.android.feedback" />
+        <package android:name="com.phonepe.appstore" />
+        <package android:name="com.indus.appstore" />
+        <package android:name="com.bbk.appstore" />
+        <package android:name="com.vivo.appstore" />
+        <package android:name="com.vivo.easyshare" />
+        <package android:name="com.xiaomi.mipicks" />
+        <package android:name="com.miui.packageinstaller" />
+        <package android:name="com.xiaomi.market" />
+        <package android:name="com.sec.android.app.samsungapps" />
+        <package android:name="com.oppo.market" />
+        <package android:name="com.heytap.market" />
+        <package android:name="com.coloros.phonemanager" />
+        <package android:name="com.huawei.appmarket" />
+        <package android:name="com.amazon.venezia" />
+    </queries>
 
     <application
         android:name=".CyberGuardApplication"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.CyberGuardClient"
-        android:usesCleartextTraffic="true">
-        <!-- usesCleartextTraffic="true" is required because the backend runs on HTTP over LAN (e.g. 192.168.x.x:3000) -->
+        android:networkSecurityConfig="@xml/network_security_config">
+        <!-- Secure TLS enforced by default; localhost & dev emulator scoped in network_security_config.xml -->
         
         <activity
             android:name=".MainActivity"
@@ -35,10 +71,69 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 50th-Century On-The-Spot Sideload & Malware Threat Interception Window -->
+        <activity
+            android:name=".ui.ThreatInterceptActivity"
+            android:exported="true"
+            android:theme="@style/Theme.CyberGuardClient.Transparent"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
         
         <service
             android:name=".service.CallMonitorService"
             android:foregroundServiceType="microphone"
             android:exported="false" />
+
+        <!-- Official Android Telecommunications CallScreeningService -->
+        <service
+            android:name=".telecom.CyberGuardCallScreeningService"
+            android:permission="android.permission.BIND_CALL_SCREENING_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".service.CallStateReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PHONE_STATE" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Real-Time SMS Threat Broadcast Receiver -->
+        <receiver
+            android:name=".service.SmsMonitorReceiver"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Package Watchdog: App Installs, Updates, Removals -->
+        <receiver
+            android:name=".service.PackageChangeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.PACKAGE_ADDED" />
+                <action android:name="android.intent.action.PACKAGE_REMOVED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+                <data android:scheme="package" />
+            </intent-filter>
+        </receiver>
+        <!-- FileProvider for secure package installation and forensic artifact sharing -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

@@ -1,12 +1,14 @@
 import httpx
 import logging
 import asyncio
+import copy
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from urllib.parse import urlparse
 import base64
 
 from backend.config import get_settings
+from backend.threats.enclave import ThreatIntelEnclave, PHISHING_AND_URL_SCOPE
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +21,27 @@ class VirusTotalProvider:
     """
     Provider for VirusTotal Threat Intelligence API (v3).
     Handles API interactions, authentication, rate limits, timeouts, and report normalization.
+    Integrates with ThreatIntelEnclave to restrict execution exclusively to the Phishing & URL tab
+    and caches full reports to conserve API tokens and prevent quota exhaustion.
     """
     _cached_status: Optional[Dict[str, Any]] = None
     _status_cache_time: float = 0.0
     _CACHE_TTL_SEC: float = 300.0
+
+    # In-memory report cache: cache_key -> (timestamp, normalized_report)
+    _REPORT_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+    # In-flight request deduplication map: cache_key -> asyncio.Future
+    _IN_FLIGHT_REQUESTS: Dict[str, asyncio.Future] = {}
+
+    @classmethod
+    def clear_report_cache(cls):
+        """Clear cached reports and active in-flight request records."""
+        cls._REPORT_CACHE.clear()
+        cls._IN_FLIGHT_REQUESTS.clear()
+
+    @classmethod
+    def get_cached_report_count(cls) -> int:
+        return len(cls._REPORT_CACHE)
 
     def __init__(self, config=None):
         self.config = config or get_settings()
@@ -132,6 +151,22 @@ class VirusTotalProvider:
     async def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         if not self.is_configured:
             return {"status": "NOT_CONFIGURED"}
+
+        # Enforce boundary isolation to Phishing & URL tab to conserve API tokens
+        enclave = ThreatIntelEnclave.get_instance()
+        if getattr(self.vt_config, "isolated_enclave_only", True) and not enclave.is_scope_authorized():
+            logger.info(
+                f"provider=virustotal status=ISOLATED_ENCLAVE_RESTRICTED method={method} "
+                f"endpoint={endpoint} reason=NOT_IN_PHISHING_TAB"
+            )
+            enclave.record_token_saved(1, "enclave_blocked")
+            return {
+                "status": "ISOLATED_ENCLAVE_RESTRICTED",
+                "provider": "VirusTotal",
+                "message": "VirusTotal intelligence is restricted exclusively to the Phishing & URL tab to conserve API tokens.",
+                "enclave_isolated": True,
+                "tokens_saved": 1,
+            }
 
         url = f"{self.base_url}{endpoint}"
         headers = self._get_headers()
@@ -366,26 +401,114 @@ class VirusTotalProvider:
                 "message": f"Normalization failed: {str(e)}",
             }
 
-    async def get_file_report(self, file_hash: str) -> Dict[str, Any]:
+    async def _get_cached_or_fetch_report(
+        self,
+        indicator: str,
+        indicator_type: str,
+        fetch_coro,
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Execute report lookup with multi-tier token saving:
+        1. Boundary check: restrict execution exclusively to Phishing & URL tab.
+        2. In-memory report cache check: returns instant response with zero token usage.
+        3. Request deduplication: coalesces concurrent lookups for identical indicator.
+        4. Fresh API request and cache update on valid completed/not_found responses.
+        """
+        if not self.is_configured:
+            return self._normalize_report({"status": "NOT_CONFIGURED"}, indicator=indicator, indicator_type=indicator_type)
+
+        enclave = ThreatIntelEnclave.get_instance()
+        if getattr(self.vt_config, "isolated_enclave_only", True) and not enclave.is_scope_authorized():
+            logger.info(
+                f"provider=virustotal status=ISOLATED_ENCLAVE_RESTRICTED indicator={indicator} "
+                f"reason=NOT_IN_PHISHING_TAB active_scope={enclave.get_active_scope()}"
+            )
+            enclave.record_token_saved(1, "enclave_blocked")
+            return {
+                "status": "ISOLATED_ENCLAVE_RESTRICTED",
+                "provider": "VirusTotal",
+                "indicator": indicator,
+                "indicator_type": indicator_type,
+                "message": "VirusTotal intelligence is restricted exclusively to the Phishing & URL tab to conserve API tokens.",
+                "enclave_isolated": True,
+                "tokens_saved": 1,
+            }
+
+        cache_key = f"vt:{indicator_type}:{str(indicator).strip().lower()}"
+
+        # Tier 2: Check cache
+        if not force_refresh and self.vt_config.cache_enabled and cache_key in VirusTotalProvider._REPORT_CACHE:
+            cached_time, cached_rep = VirusTotalProvider._REPORT_CACHE[cache_key]
+            ttl = getattr(self.vt_config, "cache_ttl_sec", 86400.0)
+            if time.time() - cached_time < ttl:
+                logger.info(f"provider=virustotal cache=HIT key={cache_key} tokens_saved=1")
+                enclave.record_token_saved(1, "cache_hit")
+                res = copy.deepcopy(cached_rep)
+                res["cached"] = True
+                res["cached_at"] = cached_time
+                res["tokens_saved"] = 1
+                return res
+
+        # Tier 3: Deduplication of concurrent in-flight requests
+        if not force_refresh and cache_key in VirusTotalProvider._IN_FLIGHT_REQUESTS:
+            logger.info(f"provider=virustotal dedup=COALESCED key={cache_key} tokens_saved=1")
+            enclave.record_token_saved(1, "dedup")
+            fut = VirusTotalProvider._IN_FLIGHT_REQUESTS[cache_key]
+            res = await fut
+            out = copy.deepcopy(res)
+            out["deduplicated"] = True
+            return out
+
+        # Tier 4: Dispatch fresh outbound API request
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        VirusTotalProvider._IN_FLIGHT_REQUESTS[cache_key] = fut
+        enclave.record_request_dispatched()
+        enclave.record_cache_miss()
+
+        try:
+            report = await fetch_coro()
+            if isinstance(report, dict) and report.get("status") in ("COMPLETED", "NOT_FOUND"):
+                VirusTotalProvider._REPORT_CACHE[cache_key] = (time.time(), copy.deepcopy(report))
+            if not fut.done():
+                fut.set_result(copy.deepcopy(report))
+            return report
+        except Exception as e:
+            if not fut.done():
+                fut.set_result({"status": "FAILED", "provider": "VirusTotal", "message": str(e)})
+            raise
+        finally:
+            VirusTotalProvider._IN_FLIGHT_REQUESTS.pop(cache_key, None)
+
+    async def get_file_report(self, file_hash: str, force_refresh: bool = False) -> Dict[str, Any]:
         """Retrieve a file report using its hash (SHA-256, SHA-1, or MD5)."""
-        res = await self._make_request("GET", f"/files/{file_hash}")
-        return self._normalize_report(res, indicator=file_hash, indicator_type="hash")
+        async def _fetch():
+            res = await self._make_request("GET", f"/files/{file_hash}")
+            return self._normalize_report(res, indicator=file_hash, indicator_type="hash")
+        return await self._get_cached_or_fetch_report(file_hash, "hash", _fetch, force_refresh=force_refresh)
 
-    async def get_url_report(self, url: str) -> Dict[str, Any]:
+    async def get_url_report(self, url: str, force_refresh: bool = False) -> Dict[str, Any]:
         """Retrieve a URL report."""
-        url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
-        res = await self._make_request("GET", f"/urls/{url_id}")
-        return self._normalize_report(res, indicator=url, indicator_type="url")
+        async def _fetch():
+            url_id = base64.urlsafe_b64encode(url.encode()).decode().strip("=")
+            res = await self._make_request("GET", f"/urls/{url_id}")
+            return self._normalize_report(res, indicator=url, indicator_type="url")
+        return await self._get_cached_or_fetch_report(url, "url", _fetch, force_refresh=force_refresh)
 
-    async def get_domain_report(self, domain: str) -> Dict[str, Any]:
+    async def get_domain_report(self, domain: str, force_refresh: bool = False) -> Dict[str, Any]:
         """Retrieve a domain report."""
-        res = await self._make_request("GET", f"/domains/{domain}")
-        return self._normalize_report(res, indicator=domain, indicator_type="domain")
+        async def _fetch():
+            res = await self._make_request("GET", f"/domains/{domain}")
+            return self._normalize_report(res, indicator=domain, indicator_type="domain")
+        return await self._get_cached_or_fetch_report(domain, "domain", _fetch, force_refresh=force_refresh)
 
-    async def get_ip_report(self, ip: str) -> Dict[str, Any]:
+    async def get_ip_report(self, ip: str, force_refresh: bool = False) -> Dict[str, Any]:
         """Retrieve an IP address report."""
-        res = await self._make_request("GET", f"/ip_addresses/{ip}")
-        return self._normalize_report(res, indicator=ip, indicator_type="ip")
+        async def _fetch():
+            res = await self._make_request("GET", f"/ip_addresses/{ip}")
+            return self._normalize_report(res, indicator=ip, indicator_type="ip")
+        return await self._get_cached_or_fetch_report(ip, "ip", _fetch, force_refresh=force_refresh)
 
     async def scan_url(self, url: str) -> Dict[str, Any]:
         """Submit a URL for scanning. Returns an analysis ID which can be polled."""

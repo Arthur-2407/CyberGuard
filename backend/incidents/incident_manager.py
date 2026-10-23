@@ -24,6 +24,48 @@ def _to_utc_timestamp(dt: Optional[datetime.datetime]) -> Optional[float]:
     return dt.timestamp()
 
 
+_user_incident_managers: Dict[str, "IncidentManager"] = {}
+
+
+def get_incident_manager_for_user(user: Any = None) -> "IncidentManager":
+    """
+    Retrieve or create the IncidentManager bound to the user's isolated database.
+    Guarantees user A data never leaks or collides with user B or admin.
+    """
+    from pathlib import Path
+    from backend.config import get_settings
+    from backend.storage.database import get_user_db_path, init_user_db
+
+    u_id = None
+    u_name = None
+    u_db_path = None
+
+    if user:
+        if isinstance(user, dict):
+            u_id = user.get("id")
+            u_name = user.get("username")
+            u_db_path = user.get("db_path")
+        else:
+            u_id = getattr(user, "id", None)
+            u_name = getattr(user, "username", None)
+            u_db_path = getattr(user, "db_path", None)
+
+    if u_id:
+        db_path = u_db_path or get_user_db_path(u_id, u_name)
+        resolved = str(Path(db_path).resolve())
+    else:
+        db_path = ":memory:"
+        resolved = ":memory:"
+
+    if resolved not in _user_incident_managers:
+        init_user_db(db_path)
+        _user_incident_managers[resolved] = IncidentManager(
+            config=get_settings(),
+            db_path=db_path,
+        )
+    return _user_incident_managers[resolved]
+
+
 class IncidentManager:
     """Correlates ThreatEvents into Incidents and manages security response lifecycle."""
     
@@ -172,6 +214,28 @@ class IncidentManager:
                 self._broadcast_status_change(incident_id, new_status, notes)
                 return True
         return False
+
+    def emergency_contain_active_incidents(self, notes: str = None) -> int:
+        """Emergency contains all open (NEW, INVESTIGATING) incidents with CRITICAL or HIGH risk."""
+        contained_count = 0
+        session_factory = get_session_factory(self.db_path)
+        with session_factory() as db:
+            models = db.query(IncidentModel).filter(
+                IncidentModel.status.in_(["NEW", "INVESTIGATING"]),
+                IncidentModel.risk.in_(["CRITICAL", "HIGH"])
+            ).all()
+            for m in models:
+                m.status = IncidentStatus.CONTAINED.value
+                if notes:
+                    m.analyst_notes = (m.analyst_notes or "") + f" | {notes}"
+                contained_count += 1
+                if m.incident_id in self._active_incidents:
+                    self._active_incidents[m.incident_id].status = IncidentStatus.CONTAINED
+                    if notes:
+                        self._active_incidents[m.incident_id].analyst_notes = (self._active_incidents[m.incident_id].analyst_notes or "") + f" | {notes}"
+                self._broadcast_status_change(m.incident_id, IncidentStatus.CONTAINED, notes)
+            db.commit()
+        return contained_count
 
     def _broadcast_incident_event(self, incident: Incident, action: str = "updated"):
         try:

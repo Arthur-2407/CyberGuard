@@ -86,10 +86,10 @@ _RECOMMENDATIONS = {
     AlertLevel.CRITICAL: AlertRecommendation(
         alert_level=AlertLevel.CRITICAL,
         risk_score=0.0,
-        title="🔴 CRITICAL — Confirmed Voice Cloning Attack",
+        title="🔴 CRITICAL — Critical Synthetic-Speech Risk Detected (Verification Recommended)",
         message=(
-            "Maximum confidence of AI-synthesised or cloned voice. "
-            "Active social engineering attack in progress."
+            "High-probability detection of AI-synthesized or cloned voice patterns. "
+            "Immediate secondary verification and security escalation recommended."
         ),
         actions=[
             "TERMINATE the call immediately",
@@ -113,10 +113,10 @@ class ThresholdEngine:
 
     def __init__(
         self,
-        threshold_low: float = 0.35,
-        threshold_medium: float = 0.60,
-        threshold_high: float = 0.80,
-        threshold_critical: float = 0.95,
+        threshold_low: float = 0.25,
+        threshold_medium: float = 0.50,
+        threshold_high: float = 0.70,
+        threshold_critical: float = 0.85,
     ):
         self.threshold_low = threshold_low
         self.threshold_medium = threshold_medium

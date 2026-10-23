@@ -138,6 +138,8 @@ class AnomalyDetector:
             explanation=explanation,
             recommended_actions=recommended_actions,
             affected_user=user if user != "unknown" else None,
+            user_id=event_data.get("user_id"),
+            user_email=event_data.get("user_email"),
             detector="LogAnomalyDetector",
             processing_time_ms=(time.time() - start_time) * 1000.0,
             correlation_id=correlation_id,
@@ -164,16 +166,17 @@ class AnomalyDetector:
             except Exception:
                 pass
 
-        # Trigger email alert on critical technical threats
-        try:
-            from backend.alerts.email_notifier import get_email_notifier
-            import asyncio
+        # Trigger email alert on high/critical technical threats
+        if event.severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) and event.threat_category != ThreatCategory.SAFE:
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(get_email_notifier().notify_threat_event(event))
-            except RuntimeError:
+                from backend.alerts.email_notifier import get_email_notifier
+                import asyncio
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(get_email_notifier().notify_threat_event(event))
+                except RuntimeError:
+                    pass
+            except Exception:
                 pass
-        except Exception:
-            pass
 
         return event

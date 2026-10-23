@@ -102,6 +102,30 @@ class CachedASVspoofDataset(Dataset):
                         elif label == 1.0 and len(spoof_records) < spoof_limit:
                             spoof_records.append((audio_id, audio_path, label))
 
+        # Ingest user verified samples from database to preserve local voice discrimination
+        try:
+            from backend.storage.database import get_session_factory, TrainingSampleModel
+            db = get_session_factory("data/cyberguard.db")()
+            db_samples = db.query(TrainingSampleModel).all()
+            for s in db_samples:
+                cand_paths = [
+                    PROJECT_ROOT / s.dataset_path if s.dataset_path else None,
+                    Path(s.dataset_path) if s.dataset_path else None,
+                    PROJECT_ROOT / "data" / "audio_vault" / f"{s.audio_hash}.flac" if s.audio_hash else None,
+                ]
+                res_p = next((c for c in cand_paths if c and c.exists()), None)
+                if res_p:
+                    is_spoof = str(s.ground_truth or "").strip().upper() in ("SPOOF", "CLONED", "SYNTHETIC", "FAKE", "AI", "DEEPFAKE", "1", "1.0")
+                    lbl = 1.0 if is_spoof else 0.0
+                    for rep in range(3):
+                        if lbl == 1.0:
+                            spoof_records.append((f"{s.sample_id}_{rep}", res_p, lbl))
+                        else:
+                            bonafide_records.append((f"{s.sample_id}_{rep}", res_p, lbl))
+            db.close()
+        except Exception as db_err:
+            logger.debug(f"User sample ingestion notice: {db_err}")
+
         self.samples = bonafide_records + spoof_records
         random.seed(42)
         random.shuffle(self.samples)
@@ -294,9 +318,16 @@ def main():
             fused_vec = fused_vec.to(device)
             targets = targets.to(device)
 
+            # 50% feature dropout on high-dimensional embeddings region (Wav2Vec2 + ECAPA: 207+)
+            # to ensure fused_detector classifies accurately using pure acoustic prosodic features
+            if random.random() < 0.5 and fused_vec.shape[-1] >= 207:
+                fused_vec = fused_vec.clone()
+                fused_vec[:, 207:] = 0.0
+
             optimizer.zero_grad()
-            logits = model(mel_seq, fused_vec)
-            loss = criterion(logits, targets)
+            loss, _ = model.compute_multi_task_loss(
+                mel_seq, fused_vec, targets, criterion, seq_weight=0.40, fused_weight=0.40, ens_weight=0.20
+            )
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()

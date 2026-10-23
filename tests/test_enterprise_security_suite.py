@@ -77,7 +77,7 @@ def test_organization_policy_lifecycle(client, admin_headers):
         "ddos_burst_threshold": 45,
         "email_notifications_enabled": True,
         "email_minimum_severity": "HIGH",
-        "email_notification_recipients": ["soc-audit@cyberguard.local"]
+        "email_notification_recipients": ["admin-soc@cyberguard.defense"]
     }
     post_resp = client.post("/api/admin/policy", json=update_data, headers=admin_headers)
     assert post_resp.status_code == 200

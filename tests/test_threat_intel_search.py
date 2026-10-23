@@ -846,13 +846,30 @@ async def test_config_status_includes_threat_intel_pipeline():
     mock_vt = {"provider": "VirusTotal", "status": "READY"}
     mock_uh = {"provider": "URLhaus", "status": "READY"}
 
-    with patch("backend.threats.virustotal.VirusTotalProvider.check_status", AsyncMock(return_value=mock_vt)):
-        with patch("backend.threats.urlhaus.URLhausProvider.check_status", AsyncMock(return_value=mock_uh)):
-            resp = client.get("/api/config/status")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["virustotal_status"] == "READY"
-            assert data["urlhaus_status"] == "READY"
-            assert data["threat_intel_active"] is True
+    from backend.threats.virustotal import get_virustotal_provider
+    from backend.threats.urlhaus import get_urlhaus_provider
+    vt = get_virustotal_provider()
+    uh = get_urlhaus_provider()
+    old_vt = getattr(vt, "_cached_status", None) if vt else None
+    old_uh = getattr(uh, "_cached_status", None) if uh else None
+    if vt:
+        vt._cached_status = mock_vt
+    if uh:
+        uh._cached_status = mock_uh
+
+    try:
+        with patch("backend.threats.virustotal.VirusTotalProvider.check_status", AsyncMock(return_value=mock_vt)):
+            with patch("backend.threats.urlhaus.URLhausProvider.check_status", AsyncMock(return_value=mock_uh)):
+                resp = client.get("/api/config/status")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["virustotal_status"] == "READY"
+                assert data["urlhaus_status"] == "READY"
+                assert data["threat_intel_active"] is True
+    finally:
+        if vt:
+            vt._cached_status = old_vt
+        if uh:
+            uh._cached_status = old_uh
 
 

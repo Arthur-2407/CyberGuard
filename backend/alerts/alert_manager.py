@@ -30,6 +30,10 @@ class AlertEvent:
     speaker_id: Optional[str]
     speaker_similarity: Optional[float]
     detection_score: float
+    voice_classification: Optional[str] = None
+    rms: Optional[float] = None
+    user_id: Optional[int] = None
+    user_email: Optional[str] = None
 
 
 class AlertManager:
@@ -63,6 +67,10 @@ class AlertManager:
         detection_score: float,
         speaker_id: Optional[str] = None,
         speaker_similarity: Optional[float] = None,
+        voice_classification: Optional[str] = None,
+        rms: Optional[float] = None,
+        user_id: Optional[int] = None,
+        user_email: Optional[str] = None,
     ) -> None:
         """
         Dispatch an alert to all registered notifiers.
@@ -82,6 +90,10 @@ class AlertManager:
             speaker_id=speaker_id,
             speaker_similarity=speaker_similarity,
             detection_score=detection_score,
+            voice_classification=voice_classification,
+            rms=rms,
+            user_id=user_id,
+            user_email=user_email,
         )
 
         self._history.append(event)
@@ -127,6 +139,7 @@ class AlertManager:
                         "speaker_id": event.speaker_id,
                         "speaker_similarity": event.speaker_similarity,
                         "detection_score": event.detection_score,
+                        "voice_classification": "CLONED_VOICE" if event.risk_score >= 0.60 else "GENUINE_VOICE",
                     }
                 }
                 await ws_notifier.broadcast_raw(alert_payload)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Optional
 
@@ -26,7 +27,7 @@ try:
         ForeignKey, Boolean
     )
     from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
-    from sqlalchemy.pool import StaticPool
+    from sqlalchemy.pool import QueuePool, StaticPool
     _SQLALCHEMY_AVAILABLE = True
 except ImportError:
     _SQLALCHEMY_AVAILABLE = False
@@ -192,6 +193,8 @@ if _SQLALCHEMY_AVAILABLE:
         incident_id = Column(String(64), nullable=True, index=True)
         affected_user = Column(String(128), nullable=True)
         affected_asset = Column(String(256), nullable=True)
+        user_id = Column(Integer, nullable=True, index=True)
+        user_email = Column(String(256), nullable=True)
         detector = Column(String(128), nullable=False)
         detector_version = Column(String(32), nullable=True)
         processing_time_ms = Column(Float, default=0.0)
@@ -229,6 +232,7 @@ if _SQLALCHEMY_AVAILABLE:
         password_changed_at = Column(DateTime, default=_utcnow)
         failed_login_count = Column(Integer, default=0)
         reset_required = Column(Boolean, default=False)
+        db_path = Column(String(512), nullable=True)
 
     class AuthSessionModel(Base):
         """Cryptographically secure session tokens."""
@@ -360,7 +364,7 @@ if _SQLALCHEMY_AVAILABLE:
         failed_login_ban_threshold = Column(Integer, default=5, nullable=False)
         ban_duration_minutes = Column(Integer, default=60, nullable=False)
         email_alerts_enabled = Column(Boolean, default=True, nullable=False)
-        alert_email_recipient = Column(String(256), default="security-ops@cyberguard.local", nullable=False)
+        alert_email_recipient = Column(String(256), default="", nullable=False)
         email_alert_threshold = Column(String(16), default="CRITICAL", nullable=False)  # HIGH or CRITICAL
         updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
         updated_by = Column(String(64), default="SYSTEM")
@@ -394,63 +398,254 @@ if _SQLALCHEMY_AVAILABLE:
         created_by = Column(String(64), default="SOC Analyst")
         created_at = Column(DateTime, default=_utcnow)
 
-    _engine = None
-    _SessionLocal = None
+    class EmailAlertRecordModel(Base):
+        """Persisted security email alert dispatches and delivery lifecycle."""
+        __tablename__ = "email_alert_records"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        alert_id = Column(String(64), unique=True, nullable=False, index=True)
+        timestamp = Column(DateTime, default=_utcnow, index=True)
+        recipient = Column(String(256), nullable=False, index=True)
+        subject = Column(String(512), nullable=False)
+        alert_level = Column(String(16), default="CRITICAL", nullable=False)
+        risk_score = Column(Float, default=0.0)
+        target_id = Column(String(64), nullable=True, index=True)
+        threat_type = Column(String(64), default="THREAT")
+        provider = Column(String(32), default="brevo")
+        delivery_status = Column(String(32), default="CREATED", index=True)  # CREATED, SEND_ATTEMPTED, PROVIDER_ACCEPTED, SEND_FAILED, RETRY_SCHEDULED, DELIVERED
+        provider_message_id = Column(String(256), nullable=True)
+        error_message = Column(Text, nullable=True)
+        attempt_count = Column(Integer, default=1)
+        details_json = Column(Text, nullable=True)
+
+    class CallerReputationModel(Base):
+        """Verified caller reputation intelligence for phone number screening."""
+        __tablename__ = "caller_reputation"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        normalized_number = Column(String(32), unique=True, nullable=False, index=True)
+        raw_number = Column(String(32), nullable=False)
+        country_code = Column(String(8), nullable=True)
+        classification = Column(String(32), default="UNKNOWN", nullable=False)  # HIGH_RISK, SUSPICIOUS, LOWER_RISK, UNKNOWN, DISPUTED
+        risk_score = Column(Float, default=0.0)
+        confidence = Column(Float, default=0.0)
+        reason_codes_json = Column(Text, nullable=True)  # JSON list
+        evidence_sources_json = Column(Text, nullable=True)  # JSON list
+        explanation = Column(Text, nullable=True)
+        is_scam = Column(Boolean, default=False)
+        is_spoofed = Column(Boolean, default=False)
+        disputed = Column(Boolean, default=False)
+        last_verified_at = Column(DateTime, default=_utcnow)
+        expires_at = Column(DateTime, nullable=True)
+        created_at = Column(DateTime, default=_utcnow)
+        updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    class ScreenedCallIncidentModel(Base):
+        """Auditable log of screened incoming calls ingested from Android clients."""
+        __tablename__ = "screened_call_incidents"
+
+        id = Column(Integer, primary_key=True, autoincrement=True)
+        incident_id = Column(String(64), unique=True, nullable=False, index=True)
+        normalized_number = Column(String(32), nullable=False, index=True)
+        caller_display_name = Column(String(128), nullable=True)
+        call_direction = Column(String(16), default="INCOMING")
+        classification = Column(String(32), default="UNKNOWN")
+        risk_score = Column(Float, default=0.0)
+        confidence = Column(Float, default=0.0)
+        reasons_json = Column(Text, nullable=True)
+        carrier_verification_status = Column(String(32), default="NOT_VERIFIED")
+        action_recommended = Column(String(32), default="ALLOW")
+        action_applied = Column(String(32), default="ALLOWED")
+        response_latency_ms = Column(Float, default=0.0)
+        user_id = Column(Integer, nullable=True, index=True)
+        device_id = Column(String(128), nullable=True)
+        timestamp = Column(DateTime, default=_utcnow, index=True)
+
+
+    _engines: dict[str, Any] = {}
+    _session_factories: dict[str, Any] = {}
+    _engine_lock = threading.RLock()
+
+    def _resolve_db_file(db_path: str = "data/cyberguard.db") -> Path:
+        """Resolve database path relative to project root."""
+        if str(db_path) in (":memory:", "sqlite:///:memory:"):
+            return Path(":memory:")
+        if db_path == "data/cyberguard.db" and not os.path.exists("data/cyberguard.db") and os.path.exists("data/voiceguard.db"):
+            db_path = "data/voiceguard.db"
+
+        db_file = Path(db_path)
+        if not db_file.is_absolute():
+            project_root = Path(__file__).resolve().parent.parent.parent
+            db_file = project_root / db_path
+        return db_file
 
     def get_engine(db_path: str = "data/cyberguard.db"):
-        """Get or create SQLAlchemy engine."""
-        global _engine
-        if _engine is None:
-            # Non-destructive fallback if cyberguard.db is requested but only voiceguard.db exists
-            if db_path == "data/cyberguard.db" and not os.path.exists("data/cyberguard.db") and os.path.exists("data/voiceguard.db"):
-                db_path = "data/voiceguard.db"
+        """Get or create SQLAlchemy engine for the specified database path with connection pooling."""
+        global _engines
+        if str(db_path) in (":memory:", "sqlite:///:memory:"):
+            key = ":memory:"
+            with _engine_lock:
+                if key not in _engines:
+                    eng = create_engine(
+                        "sqlite:///:memory:",
+                        connect_args={"check_same_thread": False, "timeout": 30},
+                        poolclass=StaticPool,
+                    )
+                    _engines[key] = eng
+                return _engines[key]
 
-            db_file = Path(db_path)
-            if not db_file.is_absolute():
-                project_root = Path(__file__).resolve().parent.parent.parent
-                db_file = project_root / db_path
+        db_file = _resolve_db_file(db_path)
+        key = str(db_file.resolve())
 
-            db_file.parent.mkdir(parents=True, exist_ok=True)
-            db_url = f"sqlite:///{db_file}"
+        with _engine_lock:
+            if key not in _engines:
+                db_file.parent.mkdir(parents=True, exist_ok=True)
+                db_url = f"sqlite:///{db_file}"
 
-            _engine = create_engine(
-                db_url,
-                connect_args={"check_same_thread": False},
-                poolclass=StaticPool,
-            )
+                if ":memory:" in db_url:
+                    eng = create_engine(
+                        db_url,
+                        connect_args={"check_same_thread": False, "timeout": 30},
+                        poolclass=StaticPool,
+                    )
+                else:
+                    eng = create_engine(
+                        db_url,
+                        connect_args={"check_same_thread": False, "timeout": 30},
+                        poolclass=QueuePool,
+                        pool_size=20,
+                        max_overflow=30,
+                        pool_timeout=30,
+                    )
 
-            # Enable WAL mode for better concurrent read performance
-            @event.listens_for(_engine, "connect")
-            def set_sqlite_pragma(dbapi_connection, connection_record):
-                cursor = dbapi_connection.cursor()
-                cursor.execute("PRAGMA journal_mode=WAL")
-                cursor.execute("PRAGMA synchronous=NORMAL")
-                cursor.close()
+                # Enable WAL mode and busy timeout for concurrent safety
+                @event.listens_for(eng, "connect")
+                def set_sqlite_pragma(dbapi_connection, connection_record):
+                    cursor = dbapi_connection.cursor()
+                    cursor.execute("PRAGMA journal_mode=WAL")
+                    cursor.execute("PRAGMA synchronous=NORMAL")
+                    cursor.execute("PRAGMA busy_timeout=30000")
+                    cursor.close()
 
-        return _engine
+                _engines[key] = eng
+
+            return _engines[key]
+
+    def _migrate_columns_if_missing(engine) -> None:
+        """Safely add newly introduced columns to existing SQLite tables if not present."""
+        try:
+            with engine.connect() as conn:
+                res = conn.exec_driver_sql("PRAGMA table_info(threat_events)").fetchall()
+                if res:
+                    existing_cols = {row[1] for row in res}
+                    if "user_id" not in existing_cols:
+                        conn.exec_driver_sql("ALTER TABLE threat_events ADD COLUMN user_id INTEGER")
+                    if "user_email" not in existing_cols:
+                        conn.exec_driver_sql("ALTER TABLE threat_events ADD COLUMN user_email VARCHAR(256)")
+                    conn.commit()
+        except Exception as exc:
+            logger.debug(f"Column migration check notice: {exc}")
 
     def init_db(db_path: str = "data/cyberguard.db") -> None:
-        """Create all tables if they don't exist."""
+        """Create all tables in the specified database if they don't exist."""
         engine = get_engine(db_path)
         Base.metadata.create_all(bind=engine)
+        _migrate_columns_if_missing(engine)
         logger.info(f"Database initialized at {db_path}")
 
     def get_session_factory(db_path: str = "data/cyberguard.db"):
-        """Return the session factory (create once, reuse)."""
-        global _SessionLocal
-        if _SessionLocal is None:
-            engine = get_engine(db_path)
-            _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-        return _SessionLocal
+        """Return the session factory for the specified database (cached per path)."""
+        global _session_factories
+        if str(db_path) in (":memory:", "sqlite:///:memory:"):
+            key = ":memory:"
+            with _engine_lock:
+                if key not in _session_factories:
+                    engine = get_engine(":memory:")
+                    _session_factories[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                return _session_factories[key]
+
+        db_file = _resolve_db_file(db_path)
+        key = str(db_file.resolve())
+
+        with _engine_lock:
+            if key not in _session_factories:
+                engine = get_engine(db_path)
+                _migrate_columns_if_missing(engine)
+                _session_factories[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            return _session_factories[key]
 
     def get_db_session(db_path: str = "data/cyberguard.db"):
-        """FastAPI dependency: yields a database session."""
+        """FastAPI dependency: yields a database session for the default/system database."""
         SessionLocal = get_session_factory(db_path)
         db = SessionLocal()
         try:
             yield db
         finally:
             db.close()
+
+    # ── Multi-Tenant User Database Isolation ────────────────────────────────────
+
+    def get_user_db_path(user_id: int | str, username: Optional[str] = None) -> str:
+        """Deterministically return the isolated database relative path for a user."""
+        return f"data/user_databases/user_{user_id}.db"
+
+    def init_user_db(db_path: str) -> None:
+        """Ensure all required tenant tables exist in the user's isolated database."""
+        engine = get_engine(db_path)
+        Base.metadata.create_all(bind=engine)
+        _migrate_columns_if_missing(engine)
+
+    def provision_user_database(user_id: int | str, username: Optional[str] = None) -> str:
+        """
+        Auto-create, initialize, and verify the isolated database for a user account.
+        Guarantee complete schema readiness and thread-safe WAL access.
+        """
+        db_path = get_user_db_path(user_id, username)
+        init_user_db(db_path)
+        logger.info(f"✓ Provisioned isolated user database at {db_path} for user_id={user_id}")
+        return db_path
+
+    def close_user_database(db_path: str) -> None:
+        """Dispose of the engine and connection pool for an isolated database, allowing safe file operations."""
+        global _engines, _session_factories
+        if str(db_path) in (":memory:", "sqlite:///:memory:"):
+            return
+        db_file = _resolve_db_file(db_path)
+        key = str(db_file.resolve())
+
+        with _engine_lock:
+            if key in _session_factories:
+                del _session_factories[key]
+            if key in _engines:
+                try:
+                    _engines[key].dispose()
+                except Exception as exc:
+                    logger.warning(f"Error disposing engine for {key}: {exc}")
+                del _engines[key]
+
+    def get_user_db_session_sync(user: Optional[UserModel] = None) -> Session:
+        """Synchronously get a database session for a user's isolated database."""
+        if user and getattr(user, "id", None):
+            db_path = getattr(user, "db_path", None) or get_user_db_path(user.id, user.username)
+        else:
+            db_path = ":memory:"
+        init_user_db(db_path)
+        SessionLocal = get_session_factory(db_path)
+        return SessionLocal()
+
+    def get_user_db_session(
+        request: Any = None,
+        current_user: Optional[UserModel] = None,
+    ):
+        """
+        FastAPI dependency: yields a session bound to the calling user's isolated database.
+        Ensures strict data isolation — user A only reads/writes to user A's database.
+        """
+        session = get_user_db_session_sync(current_user)
+        try:
+            yield session
+        finally:
+            session.close()
 
 else:
     # Stubs when SQLAlchemy is unavailable
@@ -501,8 +696,32 @@ else:
     class ThreatReportModel(_StubBase):
         pass
 
+    class EmailAlertRecordModel(_StubBase):
+        pass
+
+    class CallerReputationModel(_StubBase):
+        pass
+
+    class ScreenedCallIncidentModel(_StubBase):
+        pass
+
     def init_db(*args, **kwargs):
         logger.warning("SQLAlchemy not available — database initialization skipped.")
 
     def get_db_session(*args, **kwargs):
+        yield None
+
+    def get_user_db_path(user_id, username=None):
+        return f"data/user_databases/user_{user_id}.db"
+
+    def init_user_db(*args, **kwargs):
+        pass
+
+    def provision_user_database(user_id, username=None):
+        return f"data/user_databases/user_{user_id}.db"
+
+    def get_user_db_session_sync(*args, **kwargs):
+        return None
+
+    def get_user_db_session(*args, **kwargs):
         yield None

@@ -16,7 +16,7 @@ Input Contract:
   - Auto-padded / tiled to 64,600 samples (4.0s) as expected by AASIST
 
 Output Contract:
-  - P(synthetic) in [0.0, 1.0] via softmax over 2-class logits (index 0 = spoof, index 1 = bonafide)
+  - P(synthetic) in [0.0, 1.0] via softmax over 2-class logits (index 0 = bonafide, index 1 = spoof)
 """
 
 from __future__ import annotations
@@ -87,33 +87,41 @@ class AASISTDetector:
     def predict_proba(self, audio: np.ndarray) -> float:
         """
         Process raw 16 kHz audio chunk and return P(synthetic) in [0.0, 1.0].
+        Uses calibrated domain-shift sigmoid with duration-adjusted circular tiling.
         """
         if not self._initialized or self._model is None:
             raise RuntimeError("AASISTDetector is not initialized.")
 
         # Ensure 1D float32
         audio = np.asarray(audio, dtype=np.float32).flatten()
+        if len(audio) == 0:
+            return 0.0
 
         # AASIST expects 64,600 samples (approx 4.0s @ 16kHz)
         target_len = AASIST_CONFIG["nb_samp"]
         if len(audio) < target_len:
-            # Tile or pad to target length
+            # Official AASIST padding method is circular tiling (repeating waveform)
             repeats = int(np.ceil(target_len / max(1, len(audio))))
             audio_tiled = np.tile(audio, repeats)[:target_len]
+            # Duration adjustment: tiling introduces artificial periodicity boundaries
+            dur_adj = (1.0 - len(audio) / target_len) * 3.0
         elif len(audio) > target_len:
             start = (len(audio) - target_len) // 2
             audio_tiled = audio[start : start + target_len]
+            dur_adj = 0.0
         else:
             audio_tiled = audio
+            dur_adj = 0.0
 
         tensor = torch.tensor(audio_tiled, dtype=torch.float32, device=self.device).unsqueeze(0)  # [1, 64600]
 
         with torch.no_grad():
             _, output = self._model(tensor)
-            # output: [1, 2] -> index 0 is spoof, index 1 is bonafide
+            # Clova AI AASIST specification:
+            # Class index 0 = bonafide (authentic human speech)
+            # Class index 1 = spoof (AI-synthesized / cloned speech)
             probs = torch.softmax(output, dim=-1)
-            # P(synthetic) is probability of spoof
-            spoof_prob = float(probs[0, 0].cpu().item())
+            spoof_prob = float(probs[0, 1].cpu().item())
 
         return float(np.clip(spoof_prob, 0.0, 1.0))
 

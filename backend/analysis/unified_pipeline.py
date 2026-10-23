@@ -32,6 +32,7 @@ from backend.threats.models import (
 )
 from backend.threats.ioc_classifier import IOCClassifier
 from backend.threats.virustotal import get_virustotal_provider
+from backend.threats.enclave import ThreatIntelEnclave, PHISHING_AND_URL_SCOPE
 from backend.analysis.phishing_analyzer import PhishingAnalyzer
 from backend.analysis.url_analyzer import URLAnalyzer
 from backend.analysis.qr_analyzer import QRAnalyzer
@@ -73,6 +74,7 @@ class UnifiedThreatPipeline:
         speaker_id: Optional[str] = None,
         source: str = "unified_pipeline",
         correlation_id: Optional[str] = None,
+        user: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         Analyze any provided artifact or indicator across all applicable pipelines.
@@ -83,6 +85,19 @@ class UnifiedThreatPipeline:
         """
         start_time = time.time()
         correlation_id = correlation_id or str(uuid.uuid4())[:12]
+
+        u_id = None
+        u_email = None
+        u_name = None
+        if user:
+            if isinstance(user, dict):
+                u_id = user.get("id")
+                u_email = user.get("email")
+                u_name = user.get("username")
+            else:
+                u_id = getattr(user, "id", None)
+                u_email = getattr(user, "email", None)
+                u_name = getattr(user, "username", None)
 
         executed_stages: List[Dict[str, Any]] = []
         evidences: List[Evidence] = []
@@ -123,45 +138,70 @@ class UnifiedThreatPipeline:
             fn_lower = filename.lower()
             file_hash = hashlib.sha256(file_bytes).hexdigest()
 
-            # Hash Reputation Check via VirusTotal
-            _log_stage("VirusTotal Hash Intelligence", "RUNNING", f"SHA-256: {file_hash[:12]}...")
-            vt_provider = get_virustotal_provider(self.config)
-            if vt_provider.is_configured:
-                try:
-                    vt_file_rep = await asyncio.wait_for(
-                        vt_provider.get_file_report(file_hash),
-                        timeout=min(self.config.virustotal.timeout_sec, 6.0)
-                    )
-                    if vt_file_rep.get("status") == "COMPLETED":
-                        mal = vt_file_rep.get("malicious_count", 0)
-                        susp = vt_file_rep.get("suspicious_count", 0)
-                        tot = vt_file_rep.get("total_engines", 0)
-                        if mal > 0 or susp > 0:
-                            vtrisk = min(1.0, (mal * 0.1) + (susp * 0.05))
-                            evidences.append(Evidence(
-                                evidence_type="vt_malware_hash_reputation",
-                                description=f"VirusTotal File Intelligence: {mal} malicious, {susp} suspicious out of {tot} security engines.",
-                                value=vt_file_rep.get("permalink", file_hash),
-                                severity_contribution=vtrisk,
-                                source="VirusTotal"
-                            ))
-                            threat_intel_payload = vt_file_rep
-                            if mal >= 3:
-                                highest_risk = RiskLevel.CRITICAL
-                                primary_category = ThreatCategory.MALWARE_INDICATOR
-                                classification = "MALICIOUS"
-                                mitre_id = "T1204"
-                                mitre_name = "User Execution: Malicious File"
-                            elif mal >= 1:
-                                if self._risk_rank(RiskLevel.HIGH) > self._risk_rank(highest_risk):
-                                    highest_risk = RiskLevel.HIGH
+            # Hash Reputation Check via VirusTotal — isolated exclusively to Phishing & URL tab
+            enclave = ThreatIntelEnclave.get_instance()
+            is_enclave_auth = (source in ("phishing_and_url", "threat_workspace")) or (
+                source not in ("voice_analysis", "audio_file", "stream", "speaker_enrollment")
+                and enclave.is_scope_authorized()
+            )
+            if not is_enclave_auth:
+                _log_stage("VirusTotal Hash Intelligence", "SKIPPED", "Isolated to Phishing & URL tab (tokens preserved)")
+                enclave.record_token_saved(1, "enclave_blocked")
+            else:
+                _log_stage("VirusTotal Hash Intelligence", "RUNNING", f"SHA-256: {file_hash[:12]}...")
+                vt_provider = get_virustotal_provider(self.config)
+                if vt_provider.is_configured:
+                    try:
+                        vt_file_rep = await asyncio.wait_for(
+                            vt_provider.get_file_report(file_hash),
+                            timeout=min(self.config.virustotal.timeout_sec, 6.0)
+                        )
+                        if vt_file_rep.get("status") == "COMPLETED":
+                            mal = vt_file_rep.get("malicious_count", 0)
+                            susp = vt_file_rep.get("suspicious_count", 0)
+                            tot = vt_file_rep.get("total_engines", 0)
+                            if mal > 0 or susp > 0:
+                                vtrisk = min(1.0, (mal * 0.1) + (susp * 0.05))
+                                evidences.append(Evidence(
+                                    evidence_type="vt_malware_hash_reputation",
+                                    description=f"VirusTotal File Intelligence: {mal} malicious, {susp} suspicious out of {tot} security engines.",
+                                    value=vt_file_rep.get("permalink", file_hash),
+                                    severity_contribution=vtrisk,
+                                    source="VirusTotal"
+                                ))
+                                threat_intel_payload = vt_file_rep
+                                if mal >= 3:
+                                    highest_risk = RiskLevel.CRITICAL
                                     primary_category = ThreatCategory.MALWARE_INDICATOR
                                     classification = "MALICIOUS"
-                    _log_stage("VirusTotal Hash Intelligence", "COMPLETED", f"Status: {vt_file_rep.get('status')}")
-                except Exception as e:
-                    _log_stage("VirusTotal Hash Intelligence", "SKIPPED", str(e))
-            else:
-                _log_stage("VirusTotal Hash Intelligence", "NOT_CONFIGURED", "API Key not configured")
+                                    mitre_id = "T1204"
+                                    mitre_name = "User Execution: Malicious File"
+                                elif mal >= 1:
+                                    if self._risk_rank(RiskLevel.HIGH) > self._risk_rank(highest_risk):
+                                        highest_risk = RiskLevel.HIGH
+                                        primary_category = ThreatCategory.MALWARE_INDICATOR
+                                        classification = "MALICIOUS"
+                        _log_stage("VirusTotal Hash Intelligence", "COMPLETED", f"Status: {vt_file_rep.get('status')}")
+                    except Exception as e:
+                        _log_stage("VirusTotal Hash Intelligence", "SKIPPED", str(e))
+                else:
+                    _log_stage("VirusTotal Hash Intelligence", "NOT_CONFIGURED", "API Key not configured")
+
+                # Augment with DuckDuckGo Live OSINT for cryptographic hash
+                try:
+                    from backend.threats.live_intel_scraper import get_live_intel_scraper
+                    scraper = get_live_intel_scraper()
+                    osint_hits = scraper.search_duckduckgo_osint(f"{file_hash} malware analysis", max_results=2)
+                    if osint_hits:
+                        evidences.append(Evidence(
+                            evidence_type="live_hash_osint",
+                            description=f"Live Web OSINT: Found {len(osint_hits)} threat intelligence mentions for file hash {file_hash[:12]}...",
+                            value=file_hash,
+                            severity_contribution=0.3,
+                            source="DuckDuckGoOSINT"
+                        ))
+                except Exception as os_err:
+                    logger.debug(f"File hash OSINT notice: {os_err}")
 
             # Route by media type
             if fn_lower.endswith((".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".webm")):
@@ -379,6 +419,9 @@ class UnifiedThreatPipeline:
             evidence=evidences,
             explanation=explanation,
             recommended_actions=actions,
+            affected_user=u_name or speaker_id,
+            user_id=u_id,
+            user_email=u_email,
             detector="CyberGuard UnifiedThreatPipeline",
             detector_version="2.0",
             processing_time_ms=total_time_ms,
@@ -418,9 +461,19 @@ class UnifiedThreatPipeline:
                     alert_level=highest_risk,
                     recommendation=rec,
                     detection_score=0.9,
+                    user_id=u_id,
+                    user_email=u_email,
                 ))
             except Exception as alert_err:
                 logger.warning(f"Alert dispatch warning: {alert_err}")
+
+        # Automated Brevo Email Dispatch for HIGH or CRITICAL threats
+        if highest_risk in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+            try:
+                from backend.alerts.email_notifier import get_email_notifier
+                asyncio.create_task(get_email_notifier().notify_threat_event(unified_event, user_email=u_email))
+            except Exception as e:
+                logger.debug(f"Unified pipeline direct email notification notice: {e}")
 
         return {
             "event": unified_event,

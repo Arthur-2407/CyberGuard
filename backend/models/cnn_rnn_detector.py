@@ -195,7 +195,15 @@ if _TORCH_AVAILABLE:
             """
             if self.fused_input_dim is not None:
                 # Fused path: project to LSTM input, unsqueeze time dim
-                projected = self.feature_proj(x)  # [batch, lstm_hidden*2]
+                active_mask = (x.abs() > 1e-7).float()
+                if active_mask.all():
+                    x_norm = F.layer_norm(x, (self.fused_input_dim,))
+                else:
+                    active_count = active_mask.sum(dim=-1, keepdim=True).clamp(min=1.0)
+                    mean = (x * active_mask).sum(dim=-1, keepdim=True) / active_count
+                    var = (((x - mean) * active_mask) ** 2).sum(dim=-1, keepdim=True) / active_count
+                    x_norm = ((x - mean) / torch.sqrt(var + 1e-5)) * active_mask
+                projected = self.feature_proj(x_norm)  # [batch, lstm_hidden*2]
                 projected = projected.unsqueeze(1)  # [batch, 1, lstm_hidden*2]
                 lstm_input = projected
             else:
@@ -246,6 +254,13 @@ if _TORCH_AVAILABLE:
                 [batch, 1] ensemble P(synthetic) before sigmoid
             """
             logit_seq = self.seq_detector(mel_seq)      # [batch, 1]
+
+            # If fused vector has no dense embeddings (wav2vec2 is zero-padded for fast inference),
+            # safely rely on seq_detector (trained with direct multi-task supervision to prevent collapse).
+            has_dense_embeddings = bool(fused_vec.shape[-1] >= 975 and (fused_vec[:, 207:975].abs().sum() > 1e-4))
+            if not has_dense_embeddings:
+                return logit_seq
+
             logit_fused = self.fused_detector(fused_vec) # [batch, 1]
 
             combined = torch.cat([logit_seq, logit_fused], dim=-1)  # [batch, 2]
@@ -254,6 +269,40 @@ if _TORCH_AVAILABLE:
             weighted = (weights[:, 0:1] * logit_seq +
                         weights[:, 1:2] * logit_fused)
             return weighted
+
+        def compute_multi_task_loss(
+            self,
+            mel_seq: "torch.Tensor",
+            fused_vec: "torch.Tensor",
+            targets: "torch.Tensor",
+            criterion: "nn.Module",
+            seq_weight: float = 0.40,
+            fused_weight: float = 0.40,
+            ens_weight: float = 0.20,
+        ) -> "Tuple[torch.Tensor, dict]":
+            """
+            Balanced multi-task loss preventing gradient starvation and branch collapse.
+            Directly trains both sequence (CNN-BiLSTM) and fused branches alongside the gated ensemble.
+            """
+            logit_seq = self.seq_detector(mel_seq)
+            logit_fused = self.fused_detector(fused_vec)
+
+            combined = torch.cat([logit_seq, logit_fused], dim=-1)
+            weights = self.gate(combined.detach())
+            logit_ens = weights[:, 0:1] * logit_seq + weights[:, 1:2] * logit_fused
+
+            loss_seq = criterion(logit_seq, targets)
+            loss_fused = criterion(logit_fused, targets)
+            loss_ens = criterion(logit_ens, targets)
+
+            total_loss = seq_weight * loss_seq + fused_weight * loss_fused + ens_weight * loss_ens
+            metrics = {
+                "loss_total": float(total_loss.item()),
+                "loss_seq": float(loss_seq.item()),
+                "loss_fused": float(loss_fused.item()),
+                "loss_ens": float(loss_ens.item()),
+            }
+            return total_loss, metrics
 
         def predict_proba(
             self,

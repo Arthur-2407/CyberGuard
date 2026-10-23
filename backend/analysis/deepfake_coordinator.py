@@ -24,7 +24,7 @@ from typing import Optional, Dict, Any, List, Tuple
 import numpy as np
 from PIL import Image, ExifTags
 
-from backend.config import get_settings
+from backend.config import get_settings, ImageForensicsConfig
 from backend.threats.models import (
     ThreatEvent, Evidence, Explanation, ThreatCategory, RiskLevel
 )
@@ -38,6 +38,7 @@ class DeepfakeCoordinator:
 
     def __init__(self, config=None, voice_detector: VoiceCloneDetector = None):
         self.config = config or get_settings()
+        self.image_config: ImageForensicsConfig = getattr(self.config, "image_forensics", None) or ImageForensicsConfig()
         self.voice_detector = voice_detector
 
     def analyze(
@@ -296,26 +297,28 @@ class DeepfakeCoordinator:
         ).lower()
 
         ai_keywords = [
-            "stable diffusion", "midjourney", "dall-e", "novelai", "comfyui",
+            "stable diffusion", "midjourney", "dall-e", "dalle", "novelai", "comfyui",
             "automatic1111", "flux", "generative", "civitai", "fooocus", "firefly",
-            "bing image creator", "adobe firefly", "meta ai", "imagen"
+            "bing image creator", "adobe firefly", "meta ai", "imagen", "sdxl",
+            "stablediffusion", "invokeai", "dreamstudio", "photoshop generative",
+            "leonardo.ai", "tensor.art", "ideogram", "runway", "pika", "sora"
         ]
         detected_ai = [kw for kw in ai_keywords if kw in combined_meta_text]
         metadata_details["ai_generator_tags"] = detected_ai
 
         if detected_ai:
             metadata_details["provenance_status"] = "AI_GENERATOR_METADATA_CONFIRMED"
-            suspicion_delta += 0.75
+            suspicion_delta += self.image_config.ai_metadata_suspicion
             evidences.append(Evidence(
                 evidence_type="generative_ai_metadata_signature",
                 description=f"Container header contains explicit generative AI signature: '{detected_ai[0]}'.",
                 value=f"tool={detected_ai[0]}",
-                severity_contribution=0.75,
+                severity_contribution=self.image_config.ai_metadata_suspicion,
                 source="MetadataProvenance",
             ))
         elif metadata_details["camera_make"] or metadata_details["camera_model"]:
             metadata_details["provenance_status"] = "CAMERA_PROVENANCE_CONFIRMED"
-            suspicion_delta -= 0.15
+            suspicion_delta -= self.image_config.camera_provenance_dampener
             cam_desc = f"{metadata_details.get('camera_make') or ''} {metadata_details.get('camera_model') or ''}".strip()
             evidences.append(Evidence(
                 evidence_type="camera_hardware_provenance",
@@ -342,20 +345,20 @@ class DeepfakeCoordinator:
         """
         Calibrated multi-signal DSP forensic inspection:
           1. Error Level Analysis (ELA) with spatial grid disparity
-          2. 2D FFT with Hann windowing and off-axis periodic lattice peak detection
-          3. Native-resolution noise residue & sensor PRNU kurtosis
+          2. 2D FFT with Hann windowing, high-frequency attenuation & off-axis periodic lattice peak detection
+          3. Native-resolution noise residue & sensor PRNU kurtosis (calibrated for diffusion heavy tails)
           4. Resolution-normalized Laplacian edge sharpness
-          5. OpenCV face detection & boundary integrity inspection
-          6. Inter-channel color gradient dispersion
+          5. Facial microtexture (waxy skin) and boundary seam discontinuity forensics
+          6. Inter-channel color gradient dispersion (optical lens chromatic dispersion)
           7. Optional QR code payload scan
         """
         import scipy.ndimage
         import scipy.signal
 
         evidences: List[Evidence] = []
-        suspicion_score = 0.0
+        domain_anomalies: List[float] = []
 
-        # 1. Error Level Analysis (ELA) at 95% JPEG recompression
+        # 1. Error Level Analysis (ELA) at configured JPEG quality (default 95%)
         rgb_img = img.convert("RGB")
         w, h = rgb_img.size
         sample_img = rgb_img
@@ -364,7 +367,7 @@ class DeepfakeCoordinator:
             sample_img = rgb_img.resize((int(w * scale), int(h * scale)), Image.Resampling.BILINEAR)
 
         buf = io.BytesIO()
-        sample_img.save(buf, format="JPEG", quality=95)
+        sample_img.save(buf, format="JPEG", quality=self.image_config.ela_quality)
         buf.seek(0)
         recomp = Image.open(buf)
 
@@ -388,17 +391,29 @@ class DeepfakeCoordinator:
         else:
             ela_disparity = 0.0
 
-        # ELA calibration: severe localized compression disparity indicates spliced regions
-        if ela_disparity >= 14.0 and ela_max > 80.0:
-            suspicion_score += 0.35
+        s_ela = 0.0
+        ela_status = "NOMINAL"
+        if ela_disparity >= self.image_config.ela_disparity_critical and ela_max > self.image_config.ela_max_diff_threshold:
+            s_ela = 0.35
+            ela_status = "CRITICAL"
             evidences.append(Evidence(
                 evidence_type="ela_localized_disparity",
-                description=f"Error Level Analysis (ELA) reveals significant localized compression variance ({ela_disparity:.2f} disparity, max: {ela_max:.1f}), consistent with digital splicing.",
+                description=f"Error Level Analysis (ELA) reveals significant localized compression variance ({ela_disparity:.2f} disparity, max: {ela_max:.1f}), consistent with digital splicing or localized inpainting.",
                 value=f"disparity={ela_disparity:.2f}",
                 severity_contribution=0.35,
                 source="HeuristicForensics",
             ))
-        elif ela_mean < 8.0:
+        elif ela_disparity >= self.image_config.ela_disparity_moderate:
+            s_ela = 0.20
+            ela_status = "MODERATE"
+            evidences.append(Evidence(
+                evidence_type="ela_mild_disparity",
+                description=f"Moderate spatial compression disparity observed ({ela_disparity:.2f}).",
+                value=f"disparity={ela_disparity:.2f}",
+                severity_contribution=0.20,
+                source="HeuristicForensics",
+            ))
+        elif ela_mean < self.image_config.ela_nominal_max:
             evidences.append(Evidence(
                 evidence_type="ela_compression_nominal",
                 description=f"Error Level Analysis confirms uniform compression response across spatial zones (mean: {ela_mean:.2f}).",
@@ -406,6 +421,7 @@ class DeepfakeCoordinator:
                 severity_contribution=0.0,
                 source="HeuristicForensics",
             ))
+        domain_anomalies.append(s_ela)
 
         # 2. Calibrated 2D FFT Frequency Domain Analysis with 2D Hann Windowing
         gray = img.convert("L").resize((256, 256), Image.Resampling.BILINEAR)
@@ -420,7 +436,7 @@ class DeepfakeCoordinator:
         y_idx, x_idx = np.ogrid[:256, :256]
         dist = np.sqrt((x_idx - center_x) ** 2 + (y_idx - center_y) ** 2)
 
-        # High-frequency band
+        # High-frequency vs low-frequency band
         high_mask = (dist > 64) & (dist <= 120)
         low_mask = (dist > 4) & (dist <= 32)
         high_energy = float(np.mean(magnitude[high_mask]))
@@ -428,38 +444,91 @@ class DeepfakeCoordinator:
         energy_ratio = float(high_energy / low_energy)
 
         # Off-axis periodic harmonic lattice detection (transposed convolution spikes)
-        # Exclude cardinal axes (+- 3px) to prevent false flags on natural horizons, architecture, or straight edges
+        # Exclude cardinal axes (x=128, y=128) and standard JPEG 8x8 DCT grid frequencies (+-32, +-64, +-96 from center)
         cardinal_axes = (np.abs(x_idx - 128) <= 3) | (np.abs(y_idx - 128) <= 3)
-        off_axis_mask = high_mask & (~cardinal_axes)
+        dct_8x8_axes = (
+            (np.abs(np.abs(x_idx - 128) - 32) <= 1) | (np.abs(np.abs(y_idx - 128) - 32) <= 1) |
+            (np.abs(np.abs(x_idx - 128) - 64) <= 1) | (np.abs(np.abs(y_idx - 128) - 64) <= 1) |
+            (np.abs(np.abs(x_idx - 128) - 96) <= 1) | (np.abs(np.abs(y_idx - 128) - 96) <= 1)
+        )
+        off_axis_mask = high_mask & (~cardinal_axes) & (~dct_8x8_axes)
 
         med_spectrum = scipy.ndimage.median_filter(magnitude, size=7)
         diff_spectrum = (magnitude - med_spectrum) / (med_spectrum + 1e-5)
-        off_axis_max_spike = float(np.max(diff_spectrum[off_axis_mask])) if np.any(off_axis_mask) else 0.0
+        off_axis_spikes = diff_spectrum[off_axis_mask] if np.any(off_axis_mask) else np.array([0.0])
+        off_axis_max_spike = float(np.max(off_axis_spikes)) if len(off_axis_spikes) > 0 else 0.0
+        p99_spike = float(np.percentile(off_axis_spikes, 99.5)) if len(off_axis_spikes) > 0 else 0.0
+        critical_spike_count = int(np.sum(off_axis_spikes >= self.image_config.fft_lattice_spike_critical))
+        moderate_spike_count = int(np.sum(off_axis_spikes >= self.image_config.fft_lattice_spike_moderate))
 
-        # Historical peak-to-median metric (for compatibility)
         p99 = float(np.percentile(magnitude[high_mask], 99.8))
         med_hi = float(np.median(magnitude[high_mask])) + 1e-6
         peak_to_median = float(p99 / med_hi)
 
-        if off_axis_max_spike >= 12.0:
-            suspicion_score += 0.40
+        s_freq = 0.0
+        if off_axis_max_spike >= self.image_config.fft_lattice_spike_critical and (critical_spike_count >= 2 or p99_spike >= 2.5):
+            s_freq = max(s_freq, 0.45)
             evidences.append(Evidence(
                 evidence_type="spectral_periodic_lattice",
-                description=f"2D FFT frequency spectrum reveals anomalous periodic lattice spikes (off-axis harmonic spike ratio: {off_axis_max_spike:.2f}x background), indicative of neural transposed-convolution upsampling artifacts.",
+                description=f"2D FFT frequency spectrum reveals prominent periodic lattice spikes ({off_axis_max_spike:.2f}x background), indicative of neural transposed-convolution upsampling artifacts.",
                 value=f"spike_ratio={off_axis_max_spike:.2f}",
-                severity_contribution=0.40,
+                severity_contribution=0.45,
                 source="HeuristicForensics",
             ))
-        elif off_axis_max_spike >= 7.0:
-            suspicion_score += 0.20
+        elif moderate_spike_count >= self.image_config.fft_lattice_min_peaks and off_axis_max_spike >= self.image_config.fft_lattice_spike_moderate:
+            s_freq = max(s_freq, 0.20)
             evidences.append(Evidence(
                 evidence_type="mild_spectral_harmonics",
-                description=f"Mild periodic frequency harmonics observed in 2D spectrum ({off_axis_max_spike:.2f}x background).",
+                description=f"Periodic frequency harmonics observed in 2D spectrum ({off_axis_max_spike:.2f}x background, {moderate_spike_count} harmonic peaks).",
                 value=f"spike_ratio={off_axis_max_spike:.2f}",
                 severity_contribution=0.20,
                 source="HeuristicForensics",
             ))
-        else:
+
+        # High-frequency spectral attenuation check (latent diffusion VAE decoding)
+        # Note: Large natural photographic images downscaled naturally exhibit smooth 1/f^2 power-law roll-off.
+        # We protect high-resolution natural captures from false attenuation triggers if overall edge definition is intact.
+        is_large_natural = max(w, h) >= 800
+        if energy_ratio < self.image_config.fft_high_freq_attenuation_critical:
+            if not is_large_natural:
+                s_freq = max(s_freq, 0.45)
+                evidences.append(Evidence(
+                    evidence_type="spectral_high_freq_attenuation",
+                    description=f"Severe high-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}), consistent with neural latent diffusion upsampling without optical sensor detail.",
+                    value=f"hf_ratio={energy_ratio:.4f}",
+                    severity_contribution=0.45,
+                    source="HeuristicForensics",
+                ))
+            else:
+                s_freq = max(s_freq, 0.20)
+                evidences.append(Evidence(
+                    evidence_type="spectral_high_freq_attenuation",
+                    description=f"High-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}).",
+                    value=f"hf_ratio={energy_ratio:.4f}",
+                    severity_contribution=0.20,
+                    source="HeuristicForensics",
+                ))
+        elif energy_ratio < self.image_config.fft_high_freq_attenuation_moderate:
+            if not is_large_natural:
+                s_freq = max(s_freq, 0.20)
+                evidences.append(Evidence(
+                    evidence_type="spectral_high_freq_attenuation",
+                    description=f"Moderate high-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}).",
+                    value=f"hf_ratio={energy_ratio:.4f}",
+                    severity_contribution=0.20,
+                    source="HeuristicForensics",
+                ))
+        elif energy_ratio > self.image_config.fft_high_freq_boost_threshold:
+            s_freq = max(s_freq, 0.25)
+            evidences.append(Evidence(
+                evidence_type="spectral_high_freq_boost",
+                description=f"Anomalous high-frequency energy concentration (HF ratio: {energy_ratio:.4f}), indicative of synthetic checkerboard noise or artificial post-processing.",
+                value=f"hf_ratio={energy_ratio:.4f}",
+                severity_contribution=0.25,
+                source="HeuristicForensics",
+            ))
+
+        if s_freq == 0.0:
             evidences.append(Evidence(
                 evidence_type="spectral_distribution_natural",
                 description="2D FFT radial energy demonstrates smooth natural power-law drop-off without synthetic grid spikes.",
@@ -467,29 +536,98 @@ class DeepfakeCoordinator:
                 severity_contribution=0.0,
                 source="HeuristicForensics",
             ))
+        fft_status = "CRITICAL" if s_freq >= 0.40 else ("MODERATE" if s_freq >= 0.20 else "NOMINAL")
+        domain_anomalies.append(s_freq)
 
         # 3. Native-Resolution Noise Residual & PRNU Kurtosis
+        # Extract native 1:1 scale patch without downsampling to prevent interpolation-induced kurtosis explosion.
         native_gray = np.array(img.convert("L"), dtype=np.float32)
-        if max(native_gray.shape) > 1024:
-            scale = 1024.0 / max(native_gray.shape)
-            nw, nh = int(native_gray.shape[1] * scale), int(native_gray.shape[0] * scale)
-            native_gray = np.array(img.convert("L").resize((nw, nh), Image.Resampling.BILINEAR), dtype=np.float32)
+        orig_h, orig_w = native_gray.shape
 
-        denoised = scipy.ndimage.median_filter(native_gray, size=3)
-        residue = native_gray - denoised
-        res_var = float(np.var(residue))
-        kurtosis = float(np.mean(residue ** 4) / ((res_var + 1e-6) ** 2))
+        crop_size = min(self.image_config.noise_crop_size, orig_h, orig_w)
+        if orig_h > crop_size or orig_w > crop_size:
+            start_y = (orig_h - crop_size) // 2
+            start_x = (orig_w - crop_size) // 2
+            noise_patch = native_gray[start_y:start_y + crop_size, start_x:start_x + crop_size]
+        else:
+            noise_patch = native_gray
 
-        # Sensor noise calibration: natural sensors show kurtosis between 2.5 and 18
-        if kurtosis > 45.0 and res_var < 0.8:
-            suspicion_score += 0.20
+        denoised = scipy.ndimage.median_filter(noise_patch, size=3)
+        residue = noise_patch - denoised
+
+        # Structural edge masking: exclude top high-contrast scene edge pixels from the noise residual
+        # so physical sensor shot noise statistics are evaluated cleanly without scene edge contamination.
+        gx = scipy.ndimage.sobel(noise_patch, axis=1)
+        gy = scipy.ndimage.sobel(noise_patch, axis=0)
+        gmag = np.hypot(gx, gy)
+        edge_thresh = np.percentile(gmag, self.image_config.noise_edge_mask_percentile)
+        flat_mask = gmag <= edge_thresh
+
+        if np.any(flat_mask) and np.sum(flat_mask) >= 64:
+            res_eval = residue[flat_mask]
+        else:
+            res_eval = residue
+
+        res_var = float(np.var(res_eval))
+        kurtosis = float(np.mean(res_eval ** 4) / ((res_var + 1e-6) ** 2))
+
+        # Sensor noise calibration:
+        # In real optical cameras, photon shot noise and sensor PRNU produce near-Gaussian residuals
+        # with kurtosis typically in [2.0, 15.0].
+        # In generative diffusion/GAN models, latent approximations and discrete denoising steps produce
+        # extreme non-Gaussian heavy-tailed residual distributions (kurtosis > 30.0, > 70.0)
+        # or extreme artificial flattening (res_var < noise_variance_flattened).
+        s_noise = 0.0
+        noise_status = "NOMINAL"
+        if res_var < self.image_config.noise_variance_flattened:
+            s_noise = 0.45
+            noise_status = "CRITICAL"
             evidences.append(Evidence(
                 evidence_type="synthetic_noise_flattening",
-                description=f"Unnatural sensor noise residual profile (kurtosis: {kurtosis:.1f}, variance: {res_var:.3f}), characteristic of heavy diffusion denoising or synthetic rendering.",
-                value=f"kurtosis={kurtosis:.1f}",
-                severity_contribution=0.20,
+                description=f"Severe sensor noise residual flattening (variance: {res_var:.3f}, kurtosis: {kurtosis:.1f}), characteristic of synthetic rendering or heavy diffusion denoising.",
+                value=f"variance={res_var:.3f}",
+                severity_contribution=0.45,
                 source="HeuristicForensics",
             ))
+        elif kurtosis >= self.image_config.noise_kurtosis_critical:
+            s_noise = 0.45
+            noise_status = "CRITICAL"
+            evidences.append(Evidence(
+                evidence_type="synthetic_noise_kurtosis_anomaly",
+                description=f"Extreme non-Gaussian noise residual kurtosis ({kurtosis:.1f}, variance: {res_var:.3f}), characteristic of latent diffusion denoising artifacts deviating from physical CMOS/CCD sensor shot noise.",
+                value=f"kurtosis={kurtosis:.1f}",
+                severity_contribution=0.45,
+                source="HeuristicForensics",
+            ))
+        elif kurtosis >= self.image_config.noise_kurtosis_moderate:
+            s_noise = 0.25
+            noise_status = "MODERATE"
+            evidences.append(Evidence(
+                evidence_type="synthetic_noise_kurtosis_anomaly",
+                description=f"Elevated noise residual kurtosis ({kurtosis:.1f}, variance: {res_var:.3f}) deviating from natural camera sensor profile.",
+                value=f"kurtosis={kurtosis:.1f}",
+                severity_contribution=0.25,
+                source="HeuristicForensics",
+            ))
+        elif kurtosis >= self.image_config.noise_kurtosis_mild and res_var < 2.0:
+            s_noise = 0.15
+            noise_status = "MODERATE"
+            evidences.append(Evidence(
+                evidence_type="mild_noise_anomaly",
+                description=f"Mild sensor noise residual anomaly observed (variance: {res_var:.3f}, kurtosis: {kurtosis:.1f}).",
+                value=f"kurtosis={kurtosis:.1f}",
+                severity_contribution=0.15,
+                source="HeuristicForensics",
+            ))
+        else:
+            evidences.append(Evidence(
+                evidence_type="sensor_noise_nominal",
+                description=f"Sensor noise residual exhibits natural Gaussian-consistent statistics (kurtosis: {kurtosis:.1f}, variance: {res_var:.3f}).",
+                value=f"kurtosis={kurtosis:.1f}",
+                severity_contribution=0.0,
+                source="HeuristicForensics",
+            ))
+        domain_anomalies.append(s_noise)
 
         # 4. Normalized Edge Variance (Sharpness / Blur Discontinuity)
         edge_sub = native_gray[:512, :512] if (native_gray.shape[0] >= 512 and native_gray.shape[1] >= 512) else native_gray
@@ -501,14 +639,42 @@ class DeepfakeCoordinator:
 
         # 5. Face Detection & Facial Region Forensics
         face_info = self._detect_faces_and_analyze(img)
+        s_facial = 0.0
         if face_info["facial_forensics_applicable"]:
-            evidences.append(Evidence(
-                evidence_type="facial_region_forensics",
-                description=face_info["status"],
-                value=f"faces={face_info['faces_detected']}",
-                severity_contribution=0.0,
-                source="HeuristicForensics",
-            ))
+            s_facial = face_info.get("facial_anomaly_score", 0.0)
+            if s_facial > 0.0:
+                if face_info.get("facial_smoothing_detected"):
+                    evidences.append(Evidence(
+                        evidence_type="facial_microtexture_smoothing",
+                        description=f"Facial skin micro-texture exhibits synthetic waxy smoothing (skin laplacian: {face_info.get('skin_lap_var', 0.0)}, face edge: {face_info.get('face_lap_var', 0.0)}), characteristic of generative face replacement or neural airbrushing.",
+                        value=f"face_lap_var={face_info.get('face_lap_var', 0.0)}",
+                        severity_contribution=0.30,
+                        source="FacialForensics",
+                    ))
+                if face_info.get("boundary_seam_detected"):
+                    evidences.append(Evidence(
+                        evidence_type="facial_boundary_discontinuity",
+                        description=f"Perimeter edge discontinuity detected along facial boundary mask (seam ratio: {face_info.get('seam_ratio', 0.0)}x), consistent with face-swap blending seams.",
+                        value=f"seam_ratio={face_info.get('seam_ratio', 0.0)}",
+                        severity_contribution=0.25,
+                        source="FacialForensics",
+                    ))
+                if face_info.get("eye_disparity_detected"):
+                    evidences.append(Evidence(
+                        evidence_type="facial_eye_disparity",
+                        description="Bilateral eye region specular catchlight or variance disparity observed across facial landmarks.",
+                        value="eye_asymmetry",
+                        severity_contribution=0.20,
+                        source="FacialForensics",
+                    ))
+            else:
+                evidences.append(Evidence(
+                    evidence_type="facial_region_forensics",
+                    description=face_info["status"],
+                    value=f"faces={face_info['faces_detected']}",
+                    severity_contribution=0.0,
+                    source="FacialForensics",
+                ))
         else:
             evidences.append(Evidence(
                 evidence_type="facial_forensics_status",
@@ -517,34 +683,49 @@ class DeepfakeCoordinator:
                 severity_contribution=0.0,
                 source="HeuristicForensics",
             ))
+        facial_status_level = "CRITICAL" if s_facial >= 0.40 else ("MODERATE" if s_facial >= 0.20 else "NOMINAL")
+        domain_anomalies.append(s_facial)
 
         # 6. Inter-Channel Color Gradient Correlation (Optical Lens Dispersion)
+        s_color = 0.0
         color_corr = 1.0
         if img.mode in ("RGB", "RGBA"):
             try:
                 arr_rgb = np.array(img.convert("RGB"), dtype=np.float32)
-                if max(arr_rgb.shape[:2]) > 512:
-                    scale = 512.0 / max(arr_rgb.shape[:2])
-                    arr_rgb = np.array(img.convert("RGB").resize((int(arr_rgb.shape[1] * scale), int(arr_rgb.shape[0] * scale)), Image.Resampling.BILINEAR), dtype=np.float32)
-                r_grad = np.hypot(np.gradient(arr_rgb[:, :, 0], axis=0), np.gradient(arr_rgb[:, :, 0], axis=1))
-                g_grad = np.hypot(np.gradient(arr_rgb[:, :, 1], axis=0), np.gradient(arr_rgb[:, :, 1], axis=1))
-                b_grad = np.hypot(np.gradient(arr_rgb[:, :, 2], axis=0), np.gradient(arr_rgb[:, :, 2], axis=1))
-                r_std, g_std, b_std = float(np.std(r_grad)), float(np.std(g_grad)), float(np.std(b_grad))
-                if r_std > 1e-4 and g_std > 1e-4 and b_std > 1e-4:
-                    rg_corr = float(np.corrcoef(r_grad.flatten(), g_grad.flatten())[0, 1])
-                    gb_corr = float(np.corrcoef(g_grad.flatten(), b_grad.flatten())[0, 1])
-                    color_corr = min(rg_corr, gb_corr)
-                if color_corr < 0.40 and (w * h > 20000):
-                    suspicion_score += 0.15
-                    evidences.append(Evidence(
-                        evidence_type="color_channel_decorrelation",
-                        description=f"Inter-channel gradient decorrelation ({color_corr:.3f}) deviating from natural optical lens dispersion.",
-                        value=f"corr={color_corr:.3f}",
-                        severity_contribution=0.15,
-                        source="HeuristicForensics",
-                    ))
+                h_c, w_c = arr_rgb.shape[:2]
+                if min(h_c, w_c) >= 24:
+                    if max(h_c, w_c) > 512:
+                        scale = 512.0 / max(h_c, w_c)
+                        arr_rgb = np.array(img.convert("RGB").resize((int(w_c * scale), int(h_c * scale)), Image.Resampling.BILINEAR), dtype=np.float32)
+                    r_grad = np.hypot(np.gradient(arr_rgb[:, :, 0], axis=0), np.gradient(arr_rgb[:, :, 0], axis=1))
+                    g_grad = np.hypot(np.gradient(arr_rgb[:, :, 1], axis=0), np.gradient(arr_rgb[:, :, 1], axis=1))
+                    b_grad = np.hypot(np.gradient(arr_rgb[:, :, 2], axis=0), np.gradient(arr_rgb[:, :, 2], axis=1))
+                    r_std, g_std, b_std = float(np.std(r_grad)), float(np.std(g_grad)), float(np.std(b_grad))
+                    if r_std > 1e-4 and g_std > 1e-4 and b_std > 1e-4:
+                        rg_corr = float(np.corrcoef(r_grad.flatten(), g_grad.flatten())[0, 1])
+                        gb_corr = float(np.corrcoef(g_grad.flatten(), b_grad.flatten())[0, 1])
+                        color_corr = min(rg_corr, gb_corr)
+                    if color_corr < self.image_config.color_decorrelation_critical:
+                        s_color = 0.25
+                        evidences.append(Evidence(
+                            evidence_type="color_channel_decorrelation",
+                            description=f"Significant inter-channel gradient decorrelation ({color_corr:.3f}) deviating from natural optical lens dispersion.",
+                            value=f"corr={color_corr:.3f}",
+                            severity_contribution=0.25,
+                            source="HeuristicForensics",
+                        ))
+                    elif color_corr < self.image_config.color_decorrelation_moderate:
+                        s_color = 0.15
+                        evidences.append(Evidence(
+                            evidence_type="color_channel_decorrelation",
+                            description=f"Inter-channel gradient decorrelation ({color_corr:.3f}) deviating from natural optical lens dispersion.",
+                            value=f"corr={color_corr:.3f}",
+                            severity_contribution=0.15,
+                            source="HeuristicForensics",
+                        ))
             except Exception as color_err:
                 logger.debug(f"Color gradient correlation notice: {color_err}")
+        domain_anomalies.append(s_color)
 
         # 7. Check for embedded QR code payload
         qr_detected = False
@@ -562,64 +743,196 @@ class DeepfakeCoordinator:
                     severity_contribution=0.20,
                     source="QRScanner",
                 ))
-                suspicion_score += 0.20
+                domain_anomalies.append(0.20)
         except (ImportError, Exception):
             pass
+
+        # Calculate combined multi-domain anomaly probability using Noisy-OR Bayesian fusion
+        prob_product = 1.0
+        for a in domain_anomalies:
+            prob_product *= (1.0 - max(0.0, min(1.0, a)))
+        combined_signal_prob = 1.0 - prob_product
 
         forensic_metrics = {
             "ela_mean": round(ela_mean, 2),
             "ela_max": round(ela_max, 2),
             "ela_disparity": round(ela_disparity, 2),
+            "ela_status": ela_status,
             "fft_high_freq_ratio": round(energy_ratio, 4),
             "fft_grid_peak_ratio": round(peak_to_median, 2),
             "fft_off_axis_spike_ratio": round(off_axis_max_spike, 2),
+            "fft_status": fft_status,
             "edge_variance": round(lap_var, 2),
             "normalized_edge_variance": round(norm_edge_var, 4),
             "noise_variance": round(res_var, 3),
             "noise_kurtosis": round(kurtosis, 1),
+            "noise_status": noise_status,
             "color_channel_correlation": round(float(color_corr), 4),
             "faces_detected": face_info["faces_detected"],
             "facial_forensics_applicable": face_info["facial_forensics_applicable"],
             "facial_status": face_info["status"],
+            "facial_status_level": facial_status_level,
             "qr_detected": qr_detected,
             "engine_type": "Heuristic Multi-Signal DSP & Forensics",
+            "thresholds": {
+                "manipulated": self.image_config.threshold_manipulated,
+                "inconclusive": self.image_config.threshold_inconclusive,
+                "critical": self.image_config.threshold_critical,
+            },
         }
 
-        return forensic_metrics, evidences, suspicion_score
+        return forensic_metrics, evidences, float(combined_signal_prob)
 
     def _detect_faces_and_analyze(self, img: Image.Image) -> Dict[str, Any]:
-        """Detect faces using OpenCV Haar cascade without hallucinating."""
-        cascade_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "detection", "assets", "haarcascade_frontalface_default.xml"
-        )
-        if not os.path.exists(cascade_path):
+        """Detect faces using OpenCV Haar cascade and inspect for deepfake / face-swap artifacts."""
+        cascade_candidates = [
+            os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "detection", "assets", "haarcascade_frontalface_default.xml"
+            )
+        ]
+        try:
+            import cv2
+            if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+                cascade_candidates.insert(0, os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml"))
+        except Exception:
+            pass
+
+        cascade_path = next((p for p in cascade_candidates if os.path.exists(p)), None)
+        if not cascade_path:
             return {
                 "faces_detected": 0,
                 "facial_forensics_applicable": False,
                 "status": "No face detected; facial forensics not applicable",
+                "facial_anomaly_score": 0.0,
             }
 
         try:
             import cv2
             face_cascade = cv2.CascadeClassifier(cascade_path)
             cv_gray = np.array(img.convert("L"))
-            if max(cv_gray.shape) > 1024:
-                scale = 1024.0 / max(cv_gray.shape)
-                cv_gray = cv2.resize(cv_gray, (int(cv_gray.shape[1] * scale), int(cv_gray.shape[0] * scale)))
+            orig_h, orig_w = cv_gray.shape[:2]
+            if max(orig_h, orig_w) > 1024:
+                scale = 1024.0 / max(orig_h, orig_w)
+                cv_gray = cv2.resize(cv_gray, (int(orig_w * scale), int(orig_h * scale)))
 
-            faces = face_cascade.detectMultiScale(cv_gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30))
+            min_side = min(cv_gray.shape[:2])
+            min_face = max(18, min(30, int(min_side * 0.25)))
+            faces = face_cascade.detectMultiScale(cv_gray, scaleFactor=1.08, minNeighbors=4, minSize=(min_face, min_face))
             face_count = len(faces)
             if face_count == 0:
                 return {
                     "faces_detected": 0,
                     "facial_forensics_applicable": False,
                     "status": "No face detected; facial boundary and warping forensics not applicable",
+                    "facial_anomaly_score": 0.0,
                 }
+
+            # Inspect detected face regions for synthetic smoothing and mask blending seams
+            bg_lap_var = float(cv2.Laplacian(cv_gray, cv2.CV_32F).var()) + 1e-5
+            facial_smoothing = False
+            boundary_seam = False
+            eye_disparity = False
+            anomaly_score = 0.0
+            face_lap_vals = []
+            skin_lap_vals = []
+            seam_ratios = []
+
+            # Try to load eye cascade
+            eye_cascade = None
+            try:
+                eye_path = os.path.join(getattr(cv2.data, "haarcascades", ""), "haarcascade_eye.xml")
+                if os.path.exists(eye_path):
+                    eye_cascade = cv2.CascadeClassifier(eye_path)
+            except Exception:
+                pass
+
+            for (fx, fy, fw, fh) in faces:
+                face_crop = cv_gray[fy:fy+fh, fx:fx+fw]
+                if face_crop.size == 0 or fw < 16 or fh < 16:
+                    continue
+
+                face_lap = float(cv2.Laplacian(face_crop, cv2.CV_32F).var())
+                face_lap_vals.append(face_lap)
+
+                # 1. Skin patch extraction (cheeks and forehead) to check for waxy synthetic texture
+                cheeks_forehead = [
+                    face_crop[int(fh * 0.15):int(fh * 0.35), int(fw * 0.30):int(fw * 0.70)],  # forehead
+                    face_crop[int(fh * 0.50):int(fh * 0.70), int(fw * 0.15):int(fw * 0.35)],  # left cheek
+                    face_crop[int(fh * 0.50):int(fh * 0.70), int(fw * 0.65):int(fw * 0.85)],  # right cheek
+                ]
+                valid_patches = [p for p in cheeks_forehead if p.size >= 16]
+                if valid_patches:
+                    curr_skin_laps = [float(cv2.Laplacian(p.astype(np.float32), cv2.CV_32F).var()) for p in valid_patches]
+                    mean_skin_lap = float(np.mean(curr_skin_laps))
+                    skin_lap_vals.append(mean_skin_lap)
+                    skin_to_edge_ratio = mean_skin_lap / (face_lap + 1e-5)
+                    # Waxy skin: face has sharp edges (face_lap >= face_edge_lap_min), but skin regions are unnaturally smooth
+                    if (skin_to_edge_ratio < self.image_config.face_skin_to_edge_ratio and face_lap >= self.image_config.face_edge_lap_min) or (mean_skin_lap < self.image_config.face_skin_lap_min and face_lap >= 60.0):
+                        facial_smoothing = True
+
+                # 2. Boundary seam check along perimeter
+                border_mask = np.ones(face_crop.shape, dtype=bool)
+                border_mask[int(fh * 0.15):int(fh * 0.85), int(fw * 0.15):int(fw * 0.85)] = False
+                grad_x = cv2.Sobel(face_crop, cv2.CV_32F, 1, 0)
+                grad_y = cv2.Sobel(face_crop, cv2.CV_32F, 0, 1)
+                grad_mag = np.hypot(grad_x, grad_y)
+                border_grad = float(np.mean(grad_mag[border_mask])) if np.any(border_mask) else 0.0
+                center_grad = float(np.mean(grad_mag[~border_mask])) + 1e-5
+                seam_ratio = border_grad / center_grad
+                seam_ratios.append(seam_ratio)
+
+                if seam_ratio > self.image_config.face_seam_ratio_threshold:
+                    boundary_seam = True
+
+                # 3. Eye symmetry and catchlight check
+                if eye_cascade and fh >= 40 and fw >= 40:
+                    upper_face = face_crop[int(fh * 0.15):int(fh * 0.55), :]
+                    eyes = eye_cascade.detectMultiScale(upper_face, scaleFactor=1.1, minNeighbors=3, minSize=(10, 10))
+                    if len(eyes) == 2:
+                        e1, e2 = eyes[0], eyes[1]
+                        crop1 = upper_face[e1[1]:e1[1]+e1[3], e1[0]:e1[0]+e1[2]]
+                        crop2 = upper_face[e2[1]:e2[1]+e2[3], e2[0]:e2[0]+e2[2]]
+                        if crop1.size > 0 and crop2.size > 0:
+                            v1, v2 = float(np.var(crop1)), float(np.var(crop2))
+                            if max(v1, v2) > 50.0:
+                                ratio_eyes = min(v1, v2) / max(v1, v2)
+                                if ratio_eyes < self.image_config.face_eye_asymmetry_threshold:
+                                    eye_disparity = True
+
+            if facial_smoothing:
+                anomaly_score += 0.30
+            if boundary_seam:
+                anomaly_score += 0.25
+            if eye_disparity:
+                anomaly_score += 0.20
+
+            avg_lap = round(float(np.mean(face_lap_vals)), 1) if face_lap_vals else 0.0
+            avg_skin_lap = round(float(np.mean(skin_lap_vals)), 1) if skin_lap_vals else 0.0
+            avg_seam = round(float(np.mean(seam_ratios)), 2) if seam_ratios else 1.0
+
+            status_str = f"{face_count} face region(s) detected and inspected for warping/blending boundaries"
+            if anomaly_score > 0.0:
+                reasons = []
+                if facial_smoothing:
+                    reasons.append("synthetic waxy skin texture")
+                if boundary_seam:
+                    reasons.append("perimeter blending seams")
+                if eye_disparity:
+                    reasons.append("eye specular asymmetry")
+                status_str += f" ({', '.join(reasons)} observed)"
+
             return {
                 "faces_detected": int(face_count),
                 "facial_forensics_applicable": True,
-                "status": f"{face_count} face region(s) detected and inspected for warping/blending boundaries",
+                "status": status_str,
+                "facial_anomaly_score": min(0.55, anomaly_score),
+                "facial_smoothing_detected": facial_smoothing,
+                "boundary_seam_detected": boundary_seam,
+                "eye_disparity_detected": eye_disparity,
+                "face_lap_var": avg_lap,
+                "skin_lap_var": avg_skin_lap,
+                "seam_ratio": avg_seam,
             }
         except Exception as face_err:
             logger.debug(f"Face detection notice: {face_err}")
@@ -627,6 +940,7 @@ class DeepfakeCoordinator:
                 "faces_detected": 0,
                 "facial_forensics_applicable": False,
                 "status": "No face detected; facial boundary and warping forensics not applicable",
+                "facial_anomaly_score": 0.0,
             }
 
     # ── IMAGE & ANIMATED MEDIA WORKFLOW ───────────────────────────────────────
@@ -656,16 +970,40 @@ class DeepfakeCoordinator:
             if is_animated:
                 frame_analysis, frame_evidences, anim_suspicion = self._analyze_animated_frames(img)
                 forensic_metrics, signal_evidences, signal_suspicion = self._run_image_forensic_signals(img)
-                total_suspicion = max(0.0, min(1.0, (signal_suspicion * 0.4) + (anim_suspicion * 0.4) + meta_suspicion))
+                total_suspicion = max(0.0, min(1.0, (signal_suspicion * 0.5) + (anim_suspicion * 0.5)))
                 all_evidences = meta_evidences + signal_evidences + frame_evidences
             else:
                 forensic_metrics, signal_evidences, signal_suspicion = self._run_image_forensic_signals(img)
-                total_suspicion = max(0.0, min(1.0, signal_suspicion + meta_suspicion))
+                total_suspicion = signal_suspicion
                 all_evidences = meta_evidences + signal_evidences
 
+            if metadata_details.get("provenance_status") == "AI_GENERATOR_METADATA_CONFIRMED":
+                total_suspicion = max(total_suspicion, self.image_config.ai_metadata_suspicion)
+
+            # Camera hardware provenance grounding (dampens false alarms if verified optical camera and natural sensor noise)
+            is_camera_provenance = (
+                metadata_details.get("provenance_status") == "CAMERA_PROVENANCE_CONFIRMED"
+                or bool(metadata_details.get("camera_make") and metadata_details.get("camera_model"))
+            )
+            if is_camera_provenance:
+                no_ai_meta = metadata_details.get("provenance_status") != "AI_GENERATOR_METADATA_CONFIRMED"
+                normal_sensor_noise = (
+                    forensic_metrics.get("noise_kurtosis", 0.0) <= self.image_config.noise_kurtosis_camera_max
+                    and forensic_metrics.get("noise_variance", 0.0) >= 0.20
+                )
+                if no_ai_meta and normal_sensor_noise:
+                    total_suspicion = max(0.0, total_suspicion - self.image_config.camera_provenance_dampener)
+                    all_evidences.append(Evidence(
+                        evidence_type="authentic_camera_provenance",
+                        description=f"Verified camera hardware provenance ({metadata_details.get('camera_make')} {metadata_details.get('camera_model')}) and natural sensor noise confirm authentic optical capture.",
+                        value=f"{metadata_details.get('camera_make')} {metadata_details.get('camera_model')}",
+                        severity_contribution=-self.image_config.camera_provenance_dampener,
+                        source="CameraProvenance",
+                    ))
+
             # Decision Fusion & Classification Calibration
-            if total_suspicion >= 0.65:
-                severity = RiskLevel.HIGH if total_suspicion < 0.85 else RiskLevel.CRITICAL
+            if total_suspicion >= self.image_config.threshold_manipulated:
+                severity = RiskLevel.HIGH if total_suspicion < self.image_config.threshold_critical else RiskLevel.CRITICAL
                 classification = "LIKELY_MANIPULATED"
                 category = ThreatCategory.DEEPFAKE
                 summary = "Synthetic media or localized manipulation indicators detected across forensic frequency, metadata, and spatial domains."
@@ -678,10 +1016,10 @@ class DeepfakeCoordinator:
                     "Request original uncompressed camera file or authenticated RAW provenance.",
                     "Verify sender identity and out-of-band communication context before taking sensitive action.",
                 ]
-            elif total_suspicion >= 0.30:
-                severity = RiskLevel.LOW
+            elif total_suspicion >= self.image_config.threshold_inconclusive:
+                severity = RiskLevel.LOW if total_suspicion < 0.50 else RiskLevel.MEDIUM
                 classification = "INCONCLUSIVE"
-                category = ThreatCategory.SAFE
+                category = ThreatCategory.SAFE if total_suspicion < 0.50 else ThreatCategory.DEEPFAKE
                 summary = "Forensic inspection inconclusive. Moderate compression or unverified provenance observed without definitive manipulation proof."
                 reasoning = (
                     f"Forensic signals fell into an intermediate threshold (suspicion index: {total_suspicion:.2f}). "
@@ -701,6 +1039,8 @@ class DeepfakeCoordinator:
                 ]
 
             forensic_metrics["manipulation_probability"] = round(float(total_suspicion), 4)
+            forensic_metrics["risk_score"] = round(float(total_suspicion), 4)
+            forensic_metrics["threat_score"] = round(float(total_suspicion), 4)
             forensic_metrics["metadata_profile"] = metadata_details["provenance_status"]
             forensic_metrics["exif_suspicious"] = (metadata_details["provenance_status"] == "AI_GENERATOR_METADATA_CONFIRMED")
 

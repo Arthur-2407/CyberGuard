@@ -17,12 +17,15 @@ URLhaus focuses on malware-distribution URLs. A NO_MATCH result does NOT mean
 the IOC is safe — it means URLhaus has no matching record for that indicator.
 """
 
+import asyncio
+import copy
 import httpx
 import logging
 import time
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 from backend.config import get_settings
+from backend.threats.enclave import ThreatIntelEnclave, PHISHING_AND_URL_SCOPE
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +46,28 @@ class URLhausProvider:
     Provider-specific results are normalized into a common schema before
     being passed to the correlation engine — VirusTotal never sees URLhaus
     raw fields and vice versa.
+    Integrates with ThreatIntelEnclave to restrict execution exclusively to the Phishing & URL tab
+    and caches full reports to conserve API tokens and prevent quota exhaustion.
     """
 
     _cached_status: Optional[Dict[str, Any]] = None
     _status_cache_time: float = 0.0
     _CACHE_TTL_SEC: float = 300.0
+
+    # In-memory report cache: cache_key -> (timestamp, normalized_report)
+    _REPORT_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+    # In-flight request deduplication map: cache_key -> asyncio.Future
+    _IN_FLIGHT_REQUESTS: Dict[str, asyncio.Future] = {}
+
+    @classmethod
+    def clear_report_cache(cls):
+        """Clear cached reports and active in-flight request records."""
+        cls._REPORT_CACHE.clear()
+        cls._IN_FLIGHT_REQUESTS.clear()
+
+    @classmethod
+    def get_cached_report_count(cls) -> int:
+        return len(cls._REPORT_CACHE)
 
     def __init__(self, config=None):
         self.config = config or get_settings()
@@ -245,6 +265,19 @@ class URLhausProvider:
         Returns a dict containing either the JSON response (with status=SUCCESS)
         or an error/status dict. Auth headers are never logged.
         """
+        # Enforce boundary isolation to Phishing & URL tab to conserve API tokens
+        enclave = ThreatIntelEnclave.get_instance()
+        if getattr(self.uh_config, "isolated_enclave_only", True) and not enclave.is_scope_authorized():
+            logger.info(
+                f"provider=urlhaus status=ISOLATED_ENCLAVE_RESTRICTED endpoint={endpoint} "
+                f"reason=NOT_IN_PHISHING_TAB active_scope={enclave.get_active_scope()}"
+            )
+            enclave.record_token_saved(1, "enclave_blocked")
+            return {
+                "_internal_status": "ISOLATED_ENCLAVE_RESTRICTED",
+                "query_status": "isolated_enclave_restricted",
+            }
+
         url = f"{_URLHAUS_BASE}{endpoint}"
         headers = self._get_headers()
 
@@ -623,6 +656,7 @@ class URLhausProvider:
             "TIMEOUT": "TIMEOUT",
             "UNAVAILABLE": "UNAVAILABLE",
             "ERROR": "ERROR",
+            "ISOLATED_ENCLAVE_RESTRICTED": "ISOLATED_ENCLAVE_RESTRICTED",
         }
         mapped = status_map.get(internal_status, "ERROR")
         msg_map = {
@@ -631,6 +665,7 @@ class URLhausProvider:
             "TIMEOUT": "URLhaus request timed out.",
             "UNAVAILABLE": "URLhaus service could not be reached.",
             "ERROR": f"URLhaus query failed with status: {internal_status}",
+            "ISOLATED_ENCLAVE_RESTRICTED": "URLhaus intelligence is restricted exclusively to the Phishing & URL tab to conserve API tokens.",
         }
         return {
             "provider": "URLhaus",
@@ -652,22 +687,123 @@ class URLhausProvider:
             "external_reference": None,
             "match_scope": "NOT_APPLICABLE",
             "limitations": [],
+            "message": msg_map.get(mapped, f"Status: {internal_status}"),
             "error": msg_map.get(mapped, f"Status: {internal_status}"),
+            "enclave_isolated": mapped == "ISOLATED_ENCLAVE_RESTRICTED",
         }
+
+    async def _get_cached_or_fetch_report(
+        self,
+        indicator: str,
+        indicator_type: str,
+        fetch_coro,
+        force_refresh: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Execute URLhaus lookup with multi-tier token saving:
+        1. Boundary check: restrict execution exclusively to Phishing & URL tab.
+        2. In-memory report cache check: returns instant response with zero token usage.
+        3. Request deduplication: coalesces concurrent lookups for identical indicator.
+        4. Fresh API request and cache update on valid completed/no_match responses.
+        """
+        if not self.is_configured:
+            return self._not_configured_result(indicator, indicator_type)
+
+        enclave = ThreatIntelEnclave.get_instance()
+        if getattr(self.uh_config, "isolated_enclave_only", True) and not enclave.is_scope_authorized():
+            logger.info(
+                f"provider=urlhaus status=ISOLATED_ENCLAVE_RESTRICTED indicator={indicator} "
+                f"reason=NOT_IN_PHISHING_TAB active_scope={enclave.get_active_scope()}"
+            )
+            enclave.record_token_saved(1, "enclave_blocked")
+            return {
+                "provider": "URLhaus",
+                "status": "ISOLATED_ENCLAVE_RESTRICTED",
+                "indicator": indicator,
+                "indicator_type": indicator_type,
+                "matched": False,
+                "classification": None,
+                "url_status": None,
+                "threat": None,
+                "date_added": None,
+                "last_seen_online": None,
+                "host": None,
+                "tags": [],
+                "payloads": [],
+                "blacklists": {},
+                "urls_for_host": [],
+                "evidence": [],
+                "external_reference": None,
+                "match_scope": "NOT_APPLICABLE",
+                "limitations": [
+                    "URLhaus intelligence is restricted exclusively to the Phishing & URL tab to conserve API tokens."
+                ],
+                "message": "URLhaus intelligence is restricted exclusively to the Phishing & URL tab to conserve API tokens.",
+                "error": "URLhaus is isolated to Phishing & URL tab.",
+                "enclave_isolated": True,
+                "tokens_saved": 1,
+            }
+
+        cache_key = f"uh:{indicator_type}:{str(indicator).strip().lower()}"
+
+        # Tier 2: Check cache
+        if not force_refresh and self.uh_config.cache_enabled and cache_key in URLhausProvider._REPORT_CACHE:
+            cached_time, cached_rep = URLhausProvider._REPORT_CACHE[cache_key]
+            ttl = getattr(self.uh_config, "cache_ttl_sec", 86400.0)
+            if time.time() - cached_time < ttl:
+                logger.info(f"provider=urlhaus cache=HIT key={cache_key} tokens_saved=1")
+                enclave.record_token_saved(1, "cache_hit")
+                res = copy.deepcopy(cached_rep)
+                res["cached"] = True
+                res["cached_at"] = cached_time
+                res["tokens_saved"] = 1
+                return res
+
+        # Tier 3: Deduplication of concurrent in-flight requests
+        if not force_refresh and cache_key in URLhausProvider._IN_FLIGHT_REQUESTS:
+            logger.info(f"provider=urlhaus dedup=COALESCED key={cache_key} tokens_saved=1")
+            enclave.record_token_saved(1, "dedup")
+            fut = URLhausProvider._IN_FLIGHT_REQUESTS[cache_key]
+            res = await fut
+            out = copy.deepcopy(res)
+            out["deduplicated"] = True
+            return out
+
+        # Tier 4: Dispatch fresh outbound API request
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        URLhausProvider._IN_FLIGHT_REQUESTS[cache_key] = fut
+        enclave.record_request_dispatched()
+        enclave.record_cache_miss()
+
+        try:
+            report = await fetch_coro()
+            if isinstance(report, dict) and report.get("status") in ("COMPLETED", "NO_MATCH"):
+                URLhausProvider._REPORT_CACHE[cache_key] = (time.time(), copy.deepcopy(report))
+            if not fut.done():
+                fut.set_result(copy.deepcopy(report))
+            return report
+        except Exception as e:
+            if not fut.done():
+                fut.set_result(self._error_result(indicator, indicator_type, "ERROR"))
+            raise
+        finally:
+            URLhausProvider._IN_FLIGHT_REQUESTS.pop(cache_key, None)
 
     # ── Public IOC-type-specific lookup methods ────────────────────────────────
 
-    async def lookup_url(self, url: str) -> Dict[str, Any]:
+    async def lookup_url(self, url: str, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Lookup a URL in URLhaus malware-distribution URL database.
         Documented operation: POST /v1/url/ with form field url=<url>
         """
-        if not self.is_configured:
-            return self._not_configured_result(url, "url")
-
-        logger.info(f"provider=urlhaus operation=lookup_url indicator_type=url")
-        raw = await self._post("/url/", {"url": url})
-        return self._normalize_url_result(raw, url)
+        async def _fetch():
+            if not self.is_configured:
+                return self._not_configured_result(url, "url")
+            logger.info(f"provider=urlhaus operation=lookup_url indicator_type=url")
+            raw = await self._post("/url/", {"url": url})
+            return self._normalize_url_result(raw, url)
+        return await self._get_cached_or_fetch_report(url, "url", _fetch, force_refresh=force_refresh)
 
     async def lookup_urlid(self, urlid: str) -> Dict[str, Any]:
         """
@@ -770,42 +906,45 @@ class URLhausProvider:
         }
 
 
-    async def lookup_host(self, host: str, indicator_type: str = "domain") -> Dict[str, Any]:
+    async def lookup_host(self, host: str, indicator_type: str = "domain", force_refresh: bool = False) -> Dict[str, Any]:
         """
         Lookup a host (domain or IP) in URLhaus host intelligence.
         Documented operation: POST /v1/host/ with form field host=<host>
         Returns HOST-LEVEL evidence — not URL-level.
         """
-        if not self.is_configured:
-            return self._not_configured_result(host, indicator_type)
+        async def _fetch():
+            if not self.is_configured:
+                return self._not_configured_result(host, indicator_type)
+            logger.info(f"provider=urlhaus operation=lookup_host indicator_type={indicator_type}")
+            raw = await self._post("/host/", {"host": host})
+            return self._normalize_host_result(raw, host, indicator_type)
+        return await self._get_cached_or_fetch_report(host, indicator_type, _fetch, force_refresh=force_refresh)
 
-        logger.info(f"provider=urlhaus operation=lookup_host indicator_type={indicator_type}")
-        raw = await self._post("/host/", {"host": host})
-        return self._normalize_host_result(raw, host, indicator_type)
-
-    async def lookup_payload_sha256(self, sha256_hash: str) -> Dict[str, Any]:
+    async def lookup_payload_sha256(self, sha256_hash: str, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Lookup a SHA-256 hash in URLhaus payload database.
         Documented operation: POST /v1/payload/ with sha256_hash=<hash>
         """
-        if not self.is_configured:
-            return self._not_configured_result(sha256_hash, "hash_sha256")
+        async def _fetch():
+            if not self.is_configured:
+                return self._not_configured_result(sha256_hash, "hash_sha256")
+            logger.info(f"provider=urlhaus operation=lookup_payload_sha256 indicator_type=hash_sha256")
+            raw = await self._post("/payload/", {"sha256_hash": sha256_hash})
+            return self._normalize_payload_result(raw, sha256_hash, "sha256")
+        return await self._get_cached_or_fetch_report(sha256_hash, "hash_sha256", _fetch, force_refresh=force_refresh)
 
-        logger.info(f"provider=urlhaus operation=lookup_payload_sha256 indicator_type=hash_sha256")
-        raw = await self._post("/payload/", {"sha256_hash": sha256_hash})
-        return self._normalize_payload_result(raw, sha256_hash, "sha256")
-
-    async def lookup_payload_md5(self, md5_hash: str) -> Dict[str, Any]:
+    async def lookup_payload_md5(self, md5_hash: str, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Lookup an MD5 hash in URLhaus payload database.
         Documented operation: POST /v1/payload/ with md5_hash=<hash>
         """
-        if not self.is_configured:
-            return self._not_configured_result(md5_hash, "hash_md5")
-
-        logger.info(f"provider=urlhaus operation=lookup_payload_md5 indicator_type=hash_md5")
-        raw = await self._post("/payload/", {"md5_hash": md5_hash})
-        return self._normalize_payload_result(raw, md5_hash, "md5")
+        async def _fetch():
+            if not self.is_configured:
+                return self._not_configured_result(md5_hash, "hash_md5")
+            logger.info(f"provider=urlhaus operation=lookup_payload_md5 indicator_type=hash_md5")
+            raw = await self._post("/payload/", {"md5_hash": md5_hash})
+            return self._normalize_payload_result(raw, md5_hash, "md5")
+        return await self._get_cached_or_fetch_report(md5_hash, "hash_md5", _fetch, force_refresh=force_refresh)
 
     def lookup_sha1_not_applicable(self, sha1_hash: str) -> Dict[str, Any]:
         """

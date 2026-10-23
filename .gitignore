@@ -8,6 +8,9 @@
 .env
 .env.*
 *.env
+!.env.example
+.admin_bootstrap_credentials
+*.admin_bootstrap_credentials
 local.properties
 **/local.properties
 android/local.properties
@@ -89,6 +92,7 @@ backend/models/weights/*
 *.safetensors
 *.tflite
 *.h5
+*.gguf
 
 # ------------------------------------------------------------------------------
 # 5. Python Builds, Caches & Virtual Environments

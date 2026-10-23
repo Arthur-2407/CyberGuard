@@ -30,6 +30,8 @@ except ImportError:
 
 _LOADED_MODEL = None
 _MODEL_DEVICE: Optional[str] = None
+_LOADED_PATH: Optional[str] = None
+_LOADED_MTIME: Optional[float] = None
 
 
 def resolve_device(device_cfg: str = "auto") -> str:
@@ -95,7 +97,7 @@ def load_model(
     Returns:
         Loaded (or fresh) EnsembleDetector in eval mode.
     """
-    global _LOADED_MODEL, _MODEL_DEVICE
+    global _LOADED_MODEL, _MODEL_DEVICE, _LOADED_PATH, _LOADED_MTIME
 
     if not _TORCH_AVAILABLE:
         logger.warning("PyTorch is required to load the detection model. Returning None.")
@@ -103,19 +105,27 @@ def load_model(
 
     device = resolve_device(device_cfg)
 
-    # Check if we already have the model loaded on the right device
-    if _LOADED_MODEL is not None and _MODEL_DEVICE == device:
+    weights_path = Path(model_path)
+    if not weights_path.is_absolute():
+        project_root = Path(__file__).resolve().parent.parent.parent
+        weights_path = project_root / model_path
+
+    resolved_path_str = str(weights_path.resolve())
+    cur_mtime = weights_path.stat().st_mtime if weights_path.exists() else None
+
+    # Check if we already have the exact model file and version loaded on the right device
+    if (
+        _LOADED_MODEL is not None
+        and _MODEL_DEVICE == device
+        and _LOADED_PATH == resolved_path_str
+        and cur_mtime is not None
+        and _LOADED_MTIME == cur_mtime
+    ):
         return _LOADED_MODEL
 
     from backend.models.cnn_rnn_detector import EnsembleDetector
 
     model = EnsembleDetector(n_mels=n_mels, fused_dim=fused_dim)
-
-    weights_path = Path(model_path)
-    if not weights_path.is_absolute():
-        # Resolve relative to project root
-        project_root = Path(__file__).resolve().parent.parent.parent
-        weights_path = project_root / model_path
 
     if weights_path.exists():
         try:
@@ -142,6 +152,8 @@ def load_model(
 
     _LOADED_MODEL = model
     _MODEL_DEVICE = device
+    _LOADED_PATH = resolved_path_str
+    _LOADED_MTIME = cur_mtime
 
     return model
 
@@ -153,9 +165,11 @@ def get_loaded_model() -> Optional["EnsembleDetector"]:
 
 def unload_model() -> None:
     """Release model from memory."""
-    global _LOADED_MODEL, _MODEL_DEVICE
+    global _LOADED_MODEL, _MODEL_DEVICE, _LOADED_PATH, _LOADED_MTIME
     _LOADED_MODEL = None
     _MODEL_DEVICE = None
+    _LOADED_PATH = None
+    _LOADED_MTIME = None
     import gc
     gc.collect()
     if _TORCH_AVAILABLE:

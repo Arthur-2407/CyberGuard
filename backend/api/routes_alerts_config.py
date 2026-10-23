@@ -8,8 +8,11 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
+from backend.storage.auth import require_admin
+from backend.storage.database import UserModel
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +59,11 @@ async def get_thresholds():
 
 
 @config_router.put("/thresholds")
-async def update_thresholds(body: ThresholdUpdateRequest):
-    """Update alert thresholds at runtime (without restart)."""
+async def update_thresholds(
+    body: ThresholdUpdateRequest,
+    admin: UserModel = Depends(require_admin),
+):
+    """Update alert thresholds at runtime (without restart). Requires ADMIN privileges."""
     from backend.main import app_settings
 
     new_critical = body.critical if body.critical is not None else app_settings.risk.alert_thresholds.critical
@@ -95,19 +101,44 @@ async def get_system_status():
 
     app_detector    = get_app_detector()
     app_ws_notifier = get_app_ws_notifier()
-    vt_provider     = get_virustotal_provider(app_settings)
-    uh_provider     = get_urlhaus_provider(app_settings)
-
-    vt_status_obj = await vt_provider.check_status(force_refresh=False)
-    uh_status_obj = await uh_provider.check_status(force_refresh=False)
-    vt_st = vt_status_obj.get("status", "UNKNOWN")
-    uh_st = uh_status_obj.get("status", "UNKNOWN")
+    vt_provider     = get_virustotal_provider()
+    uh_provider     = get_urlhaus_provider()
+    vt_configured   = bool(app_settings.virustotal.enabled and app_settings.virustotal.api_key)
+    uh_configured   = bool(app_settings.urlhaus.enabled and app_settings.urlhaus.auth_key)
+    # Use cached or configuration-derived status to prevent consuming external API quotas during routine system health checks
+    vt_cached = getattr(vt_provider, "_cached_status", None) if vt_provider else None
+    uh_cached = getattr(uh_provider, "_cached_status", None) if uh_provider else None
+    vt_st = vt_cached.get("status") if vt_cached else ("READY" if vt_configured else "NOT_CONFIGURED")
+    uh_st = uh_cached.get("status") if uh_cached else ("READY" if uh_configured else "NOT_CONFIGURED")
 
     has_neural = bool(app_detector and app_detector.has_neural_model)
     fallback_active = bool(app_detector and app_detector.is_fallback_active)
 
+    capabilities = {
+        "voice_cloning_detector": "NEURAL_READY" if has_neural else ("HEURISTIC_ONLY" if fallback_active else "UNAVAILABLE"),
+        "speaker_embedding": "READY" if is_ecapa_available() else "UNAVAILABLE",
+        "wav2vec2": "READY" if is_wav2vec2_available() else "UNAVAILABLE",
+        "phishing_nlp": "READY" if getattr(app_settings.cyberguard, "phishing_analysis_enabled", True) else "DISABLED",
+        "url_forensics": "READY" if getattr(app_settings.cyberguard, "url_analysis_enabled", True) else "DISABLED",
+        "qr_forensics": "READY" if getattr(app_settings.cyberguard, "qr_analysis_enabled", True) else "DISABLED",
+        "image_forensics": "READY" if getattr(app_settings.cyberguard, "deepfake_image_enabled", True) else "DISABLED",
+        "video_forensics": "READY" if getattr(app_settings.cyberguard, "deepfake_video_enabled", True) else "DISABLED",
+        "virustotal_intel": vt_st,
+        "urlhaus_intel": uh_st,
+        "enforcement_shield": "ACTIVE" if getattr(app_settings.enforcement, "enabled", True) else "DISABLED",
+    }
+    operational_count = sum(
+        1 for v in capabilities.values()
+        if v in ("READY", "NEURAL_READY", "ACTIVE", "HEURISTIC_ONLY")
+    )
+
+    from backend.services.continuous_learning import ContinuousLearningService
+    active_det_ver = ContinuousLearningService.get_active_model_version()
+
     return {
         "status": "operational",
+        "active_detector_version": active_det_ver,
+        "detector_version": active_det_ver,
         "detector_initialized": has_neural,
         "neural_detector_ready": has_neural,
         "heuristic_fallback_active": fallback_active,
@@ -122,6 +153,9 @@ async def get_system_status():
         "urlhaus_configured": bool(app_settings.urlhaus.enabled and app_settings.urlhaus.auth_key),
         "urlhaus_status": uh_st,
         "threat_intel_active": (vt_st == "READY") and (uh_st == "READY"),
+        "capabilities": capabilities,
+        "operational_engine_count": operational_count,
+        "total_engine_count": len(capabilities),
         "config": {
             "sample_rate": app_settings.audio.sample_rate,
             "chunk_duration_sec": app_settings.audio.chunk_duration_sec,

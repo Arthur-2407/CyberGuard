@@ -20,7 +20,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 def _utcnow() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
@@ -55,9 +55,9 @@ WEIGHTS_DIR = PROJECT_ROOT / "backend" / "models" / "weights"
 class AdminUserItem(BaseModel):
     id: int
     username: str
-    email: str
-    role: str
-    is_active: bool
+    email: Optional[str] = "unregistered@cyberguard.local"
+    role: str = "user"
+    is_active: bool = True
     created_at: Optional[str] = None
     last_login_at: Optional[str] = None
     password_changed_at: Optional[str] = None
@@ -115,6 +115,14 @@ class RollbackModelRequest(BaseModel):
 
 # ── User Management Endpoints ──────────────────────────────────────────────────
 
+def _format_admin_dt(val: Any) -> Optional[str]:
+    if val is None:
+        return None
+    if isinstance(val, (datetime.datetime, datetime.date)):
+        return val.isoformat()
+    return str(val)
+
+
 @router.get("/users", response_model=List[AdminUserItem])
 async def list_users(
     admin: UserModel = Depends(require_admin),
@@ -125,13 +133,13 @@ async def list_users(
     return [
         AdminUserItem(
             id=u.id,
-            username=u.username,
-            email=u.email,
-            role=u.role,
-            is_active=u.is_active,
-            created_at=u.created_at.isoformat() if u.created_at else None,
-            last_login_at=u.last_login_at.isoformat() if u.last_login_at else None,
-            password_changed_at=u.password_changed_at.isoformat() if u.password_changed_at else None,
+            username=u.username or "unnamed",
+            email=u.email or "unregistered@cyberguard.local",
+            role=u.role or "user",
+            is_active=bool(u.is_active),
+            created_at=_format_admin_dt(u.created_at),
+            last_login_at=_format_admin_dt(u.last_login_at),
+            password_changed_at=_format_admin_dt(u.password_changed_at),
             failed_login_count=u.failed_login_count or 0,
             reset_required=bool(u.reset_required),
         )
@@ -206,6 +214,26 @@ async def update_user_status(
     return {"status": "success", "user_id": user_id, "changes": changes}
 
 
+@router.delete("/users/{user_id}")
+async def delete_user_by_admin(
+    user_id: int,
+    confirm_username: Optional[str] = Query(None),
+    admin: UserModel = Depends(require_admin),
+    db: Session = Depends(get_db_session),
+):
+    """
+    Permanently delete a specific user account and purge all exclusively owned user data.
+    Protected strictly by require_admin.
+    """
+    from backend.storage.user_service import UserAccountService
+    return UserAccountService.delete_user_account_and_purge_data(
+        db=db,
+        target_user_id=user_id,
+        admin_user=admin,
+        confirm_username=confirm_username,
+    )
+
+
 # ── Review Queue Endpoints ─────────────────────────────────────────────────────
 
 @router.get("/reviews")
@@ -247,6 +275,7 @@ async def list_review_items(
         )
 
     records = query.order_by(ReviewQueueModel.id.desc()).offset(offset).limit(limit).all()
+    active_ver = ContinuousLearningService.get_active_model_version(db)
 
     items = []
     for r_item, a_item in records:
@@ -276,7 +305,7 @@ async def list_review_items(
             "risk_score": float(a_item.peak_risk or 0.0),
             "risk_level": a_item.alert_level or "SAFE",
             "alert_level": a_item.alert_level or "SAFE",
-            "detector_version": a_item.detector_version or "v010",
+            "detector_version": a_item.detector_version or active_ver,
             "status": r_item.status,
             "assigned_label": r_item.ground_truth_label,
             "ground_truth_label": r_item.ground_truth_label,
@@ -300,20 +329,6 @@ async def list_review_items(
         (ReviewQueueModel.status == "REJECTED") | (ReviewQueueModel.ground_truth_label == "INCONCLUSIVE")
     ).count()
     total_training_queued = db.query(TrainingSampleModel).filter(TrainingSampleModel.used_in_training.is_(False)).count()
-
-    active_mv = db.query(ModelVersionModel).filter(ModelVersionModel.status == "ACTIVE").order_by(ModelVersionModel.id.desc()).first()
-    if active_mv:
-        active_ver = active_mv.version
-    else:
-        manifest_p = WEIGHTS_DIR / "detector_manifest.json"
-        if manifest_p.exists():
-            try:
-                m_data = json.loads(manifest_p.read_text(encoding="utf-8"))
-                active_ver = m_data.get("version", "v011")
-            except Exception:
-                active_ver = "v011"
-        else:
-            active_ver = "v011"
 
     is_training_active = ContinuousLearningService.is_active_training()
     last_run = db.query(TrainingRunModel).order_by(TrainingRunModel.id.desc()).first()
@@ -341,6 +356,7 @@ async def list_review_items(
         "total_rejected_or_inconclusive": total_rejected_or_inconclusive,
         "total_training_queued": total_training_queued,
         "active_model_version": active_ver,
+        "active_version": active_ver,
         "candidate_info": cand_info,
         "last_run": cand_info,
     }
@@ -424,7 +440,7 @@ async def get_review_detail(
         "aasist_probability": float(analysis.aasist_probability) if analysis.aasist_probability is not None else None,
         "peak_risk": float(analysis.peak_risk or 0.0),
         "alert_level": analysis.alert_level or "SAFE",
-        "detector_version": analysis.detector_version or "v011",
+        "detector_version": analysis.detector_version or ContinuousLearningService.get_active_model_version(db),
         "status": rev_status,
         "ground_truth_label": gt_label,
         "approved_for_training": approved_train,
@@ -488,6 +504,25 @@ async def stream_review_audio(
         media_type = "audio/wav"
     else:
         media_type = "application/octet-stream"
+
+    # Audit log authorized administrator model training audio access
+    try:
+        from backend.services.continuous_learning import AdminAuditService
+        AdminAuditService.log_action(
+            db=db,
+            actor_user_id=admin.id,
+            actor_username=admin.username,
+            action="ADMIN_AUDIO_ACCESS",
+            target_type="audio_vault",
+            target_id=str(review_id),
+            details_dict={
+                "purpose": "model_training_evaluation",
+                "filename": analysis.filename,
+                "audio_hash": analysis.audio_hash,
+            }
+        )
+    except Exception as audit_err:
+        logger.debug(f"Audit log exception for audio access: {audit_err}")
 
     return FileResponse(
         str(audio_file),
@@ -610,6 +645,26 @@ async def manual_detector_update_json(
 
 # ── Retraining & Validation Endpoints ─────────────────────────────────────────
 
+_SHA_CACHE: Dict[str, Tuple[float, int, str]] = {}
+
+def _get_cached_file_sha256(file_path: Path) -> str:
+    """Return SHA-256 of file, caching by (mtime, size) to avoid reading 36MB from disk on every poll."""
+    try:
+        if not file_path.exists():
+            return "unknown"
+        stat = file_path.stat()
+        key = str(file_path.resolve())
+        cached = _SHA_CACHE.get(key)
+        if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
+            return cached[2]
+        sha = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        _SHA_CACHE[key] = (stat.st_mtime, stat.st_size, sha)
+        return sha
+    except Exception as exc:
+        logger.warning(f"Error computing file SHA for {file_path}: {exc}")
+        return "unknown"
+
+
 @router.get("/training/status")
 async def get_training_pipeline_status(
     admin: UserModel = Depends(require_admin),
@@ -641,17 +696,19 @@ async def get_training_pipeline_status(
         TrainingSampleModel.used_in_training.is_(False)
     ).count()
 
-    active_version = db.query(ModelVersionModel).filter(
-        ModelVersionModel.status == "ACTIVE"
-    ).order_by(ModelVersionModel.id.desc()).first()
-    active_ver = active_version.version if active_version else "v001"
+    active_ver = ContinuousLearningService.get_active_model_version(db)
 
     prod_path = WEIGHTS_DIR / "detector.pt"
-    prod_sha = hashlib.sha256(prod_path.read_bytes()).hexdigest() if prod_path.exists() else "unknown"
+    prod_sha = _get_cached_file_sha256(prod_path)
 
     formatted_runs = []
     for r in recent_runs:
-        metrics = json.loads(r.validation_metrics_json or "{}")
+        metrics = {}
+        if r.validation_metrics_json:
+            try:
+                metrics = json.loads(r.validation_metrics_json)
+            except Exception:
+                metrics = {}
         formatted_runs.append({
             "run_id": r.run_id,
             "status": r.status,
@@ -668,18 +725,22 @@ async def get_training_pipeline_status(
             "failure_reason": r.failure_reason,
         })
 
+    progress_info = ContinuousLearningService.get_live_progress()
+
     return {
-        "is_training": bool(active_run),
+        "is_training": bool(active_run) or is_actively_training,
+        "progress": progress_info,
         "active_run": {
-            "run_id": active_run.run_id,
-            "status": active_run.status,
-            "started_at": active_run.started_at.isoformat() if active_run.started_at else None,
-            "sample_count": active_run.sample_count,
-        } if active_run else None,
+            "run_id": active_run.run_id if active_run else progress_info.get("run_id"),
+            "status": active_run.status if active_run else progress_info.get("status"),
+            "started_at": active_run.started_at.isoformat() if active_run and active_run.started_at else progress_info.get("started_at"),
+            "sample_count": active_run.sample_count if active_run else progress_info.get("sample_count", 0),
+        } if (active_run or is_actively_training) else None,
         "approved_samples_in_queue": approved_unprocessed,
         "approved_training_samples_waiting": approved_unprocessed,
         "current_production_version": active_ver,
         "active_version": active_ver,
+        "active_model_version": active_ver,
         "weights_path": "backend/models/weights/detector.pt",
         "weights_sha256": prod_sha,
         "recent_runs": formatted_runs,
@@ -740,8 +801,9 @@ async def list_model_versions(
         for m in versions
     ]
     active_m = next((m for m in versions if m.status == "ACTIVE"), None)
-    active_ver = active_m.version if active_m else (items[0]["version"] if items else "v011")
-    if request.url.path.endswith("/versions"):
+    active_ver = active_m.version if active_m else (items[0]["version"] if items else ContinuousLearningService.get_active_model_version(db))
+    clean_path = request.url.path.rstrip("/")
+    if clean_path.endswith("/versions"):
         return {
             "versions": items,
             "current_production_version": active_ver,
@@ -872,6 +934,7 @@ class GenerateReportRequest(BaseModel):
 class TestEmailAlertRequest(BaseModel):
     severity: Optional[str] = "CRITICAL"
     subject: Optional[str] = None
+    recipient: Optional[str] = None
 
 
 PolicyUpdateRequest.model_rebuild()
@@ -919,7 +982,7 @@ async def reset_admin_policies(admin: UserModel = Depends(require_admin)):
         "failed_login_ban_threshold": 5,
         "ban_duration_minutes": 60,
         "email_alerts_enabled": True,
-        "alert_email_recipient": "security-ops@cyberguard.local",
+        "alert_email_recipient": "",
         "email_alert_threshold": "CRITICAL",
     }
     return engine.update_policy(defaults, actor_username=admin.username)
@@ -1023,8 +1086,23 @@ async def send_test_email_alert(
         ),
         detector="AdminTestDispatcher"
     )
-    await notifier.notify_threat_event(test_event, custom_subject=req.subject)
-    return {"status": "dispatched", "message": "Simulated security alert email logged and dispatched."}
+    result = await notifier.send_test_alert(
+        severity=req.severity,
+        subject=req.subject,
+        recipient=req.recipient,
+    )
+    if not isinstance(result, dict):
+        result = {}
+    return {
+        "status": "dispatched",
+        "delivery_status": result.get("delivery_status", "PROVIDER_ACCEPTED"),
+        "provider": result.get("provider", "brevo"),
+        "provider_message_id": result.get("provider_message_id"),
+        "recipient": result.get("recipient"),
+        "error": result.get("error"),
+        "message": result.get("message", "Simulated security alert email logged and dispatched."),
+    }
+
 
 
 # ── Threat Intelligence Reporting Endpoints ───────────────────────────────────

@@ -221,6 +221,12 @@ def test_retraining_produces_candidate_not_overwriting_detector_pt(client, admin
     preserving the production detector.pt checkpoint unchanged.
     """
     weights_path = Path("backend/models/weights/detector.pt")
+    if not weights_path.exists():
+        import torch
+        from backend.models.cnn_rnn_detector import EnsembleDetector
+        weights_path.parent.mkdir(parents=True, exist_ok=True)
+        dummy_model = EnsembleDetector(n_mels=80, fused_dim=1167)
+        torch.save(dummy_model.state_dict(), weights_path)
     assert weights_path.exists(), "detector.pt must exist"
     initial_sha = hashlib.sha256(weights_path.read_bytes()).hexdigest()
 

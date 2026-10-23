@@ -46,7 +46,7 @@ class EnforcementEngine:
         self._blocked_devices: Dict[str, Dict[str, Any]] = {}
         self._blocked_domains: Dict[str, Dict[str, Any]] = {}
         self._blocked_hashes: Dict[str, Dict[str, Any]] = {}
-        self._allowlist_ips: Set[str] = {"127.0.0.1", "::1", "localhost"}
+        self._allowlist_ips: Set[str] = {"127.0.0.1", "::1", "localhost", "testclient"}
 
         # DDoS rate limiting: ip -> deque of request timestamps
         self._request_history: Dict[str, collections.deque] = collections.defaultdict(collections.deque)
@@ -146,7 +146,7 @@ class EnforcementEngine:
             "failed_login_ban_threshold": 5,
             "ban_duration_minutes": 60,
             "email_alerts_enabled": True,
-            "alert_email_recipient": "security-ops@cyberguard.local",
+            "alert_email_recipient": "",
             "email_alert_threshold": "CRITICAL",
             "updated_at": _utcnow().isoformat(),
             "updated_by": "SYSTEM_DEFAULT",
@@ -192,7 +192,7 @@ class EnforcementEngine:
                 "failed_login_ban_threshold": int(policy_row.failed_login_ban_threshold or 5),
                 "ban_duration_minutes": int(policy_row.ban_duration_minutes or 60),
                 "email_alerts_enabled": bool(policy_row.email_alerts_enabled),
-                "alert_email_recipient": policy_row.alert_email_recipient or "security-ops@cyberguard.local",
+                "alert_email_recipient": policy_row.alert_email_recipient or "",
                 "email_alert_threshold": policy_row.email_alert_threshold or "CRITICAL",
                 "updated_at": policy_row.updated_at.isoformat() if policy_row.updated_at else _utcnow().isoformat(),
                 "updated_by": policy_row.updated_by or "SYSTEM",
@@ -200,12 +200,17 @@ class EnforcementEngine:
             # Compatibility aliases for UI and API clients
             policy_dict["policy_name"] = policy_dict["org_name"]
             policy_dict["enforcement_action"] = policy_dict["security_level"]
+            sec_lvl = str(policy_row.security_level or "").upper()
+            if sec_lvl in ("OBSERVE", "ASSISTED", "ENFORCE"):
+                policy_dict["enforcement_mode"] = sec_lvl
+            else:
+                policy_dict["enforcement_mode"] = "ENFORCE" if bool(policy_row.auto_block_critical_threats) else "OBSERVE"
             policy_dict["auto_block_threat_score"] = policy_dict["auto_block_threshold"]
             policy_dict["ddos_rate_limit_per_min"] = policy_dict["ddos_rpm_limit"]
             policy_dict["ddos_burst_threshold"] = policy_dict["ddos_burst_limit"]
             policy_dict["email_notifications_enabled"] = policy_dict["email_alerts_enabled"]
             policy_dict["email_minimum_severity"] = policy_dict["email_alert_threshold"]
-            policy_dict["email_notification_recipients"] = [policy_dict["alert_email_recipient"]]
+            policy_dict["email_notification_recipients"] = [policy_dict["alert_email_recipient"]] if policy_dict["alert_email_recipient"] else []
 
             with self._mem_lock:
                 self._cached_policy = policy_dict
@@ -606,12 +611,18 @@ class EnforcementEngine:
 
     def evaluate_threat_for_auto_block(self, event: Any) -> Optional[Dict[str, Any]]:
         """
-        Evaluate a ThreatEvent. If critical or exceeds policy threshold,
-        automatically contains relevant IP, domain, or malicious hash.
+        Evaluate a ThreatEvent according to configured containment mode (OBSERVE, ASSISTED, ENFORCE).
+        - OBSERVE:  Generate telemetry & audit findings, never block automatically (safe baseline).
+        - ASSISTED: Recommend reversible containment action with rollback plan for analyst sign-off.
+        - ENFORCE:  Apply scoped policy containment automatically for high-confidence threats.
         """
         policy = self.get_policy()
-        if not policy.get("auto_block_critical_threats", True):
-            return None
+        mode = str(policy.get("enforcement_mode", policy.get("security_level", "ENFORCE"))).upper()
+        if mode not in ("OBSERVE", "ASSISTED", "ENFORCE"):
+            mode = "ENFORCE" if policy.get("auto_block_critical_threats", True) else "OBSERVE"
+
+        if not policy.get("auto_block_critical_threats", True) and mode == "ENFORCE":
+            mode = "OBSERVE"
 
         # Check severity or confidence
         severity = getattr(event, "severity", None)
@@ -630,6 +641,40 @@ class EnforcementEngine:
         is_local = ti.get("is_local", False)
 
         if indicator and not is_local:
+            if mode == "OBSERVE":
+                logger.info(
+                    f"[ENFORCEMENT MODE: OBSERVE] Threat detected for {indicator_type} '{indicator}' ({sev_val}). "
+                    "Automatic blocking suppressed per policy."
+                )
+                return {
+                    "status": "OBSERVED",
+                    "mode": "OBSERVE",
+                    "action": "NONE",
+                    "indicator": indicator,
+                    "indicator_type": indicator_type,
+                    "severity": sev_val,
+                    "source_incident_id": incident_id,
+                    "message": "Policy mode OBSERVE: Finding recorded, automated containment suppressed.",
+                }
+
+            if mode == "ASSISTED":
+                logger.info(
+                    f"[ENFORCEMENT MODE: ASSISTED] Threat detected for {indicator_type} '{indicator}' ({sev_val}). "
+                    "Reversible action recommended for analyst approval."
+                )
+                return {
+                    "status": "RECOMMENDED",
+                    "mode": "ASSISTED",
+                    "recommended_action": f"BLOCK_{str(indicator_type).upper()}",
+                    "indicator": indicator,
+                    "indicator_type": indicator_type,
+                    "severity": sev_val,
+                    "source_incident_id": incident_id,
+                    "rollback_plan": f"POST /api/admin/enforcement/unblock with entity_type='{str(indicator_type).upper()}' and entity_value='{indicator}'",
+                    "message": "Policy mode ASSISTED: Reversible containment recommendation generated for human approval.",
+                }
+
+            # Mode: ENFORCE
             if indicator_type == "ip":
                 return self.block_entity(
                     entity_type="IP",

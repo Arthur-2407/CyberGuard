@@ -38,10 +38,10 @@ risk:
   alert_cooldown_sec: 15.0
   # Alert thresholds (risk score 0.0–1.0)
   alert_thresholds:
-    low: 0.35
-    medium: 0.60
-    high: 0.80
-    critical: 0.95
+    low: 0.25
+    medium: 0.50
+    high: 0.70
+    critical: 0.85
 
 speaker:
   # ECAPA embedding dimension
@@ -69,7 +69,9 @@ server:
     - "http://127.0.0.1:3000"
     - "http://localhost:8080"
     - "http://127.0.0.1:8080"
-    - "null"
+  trusted_proxies:
+    - "127.0.0.1"
+    - "::1"
 
 upload:
   # Maximum file size in bytes for uploaded media (default: 200 MB)
@@ -125,6 +127,38 @@ enforcement:
 
 email_alerts:
   enabled: true
-  recipient: "security-ops@cyberguard.local"
+  recipient: ""
   threshold: "CRITICAL"
+
+image_forensics:
+  threshold_manipulated: 0.65
+  threshold_inconclusive: 0.35
+  threshold_critical: 0.85
+  camera_provenance_dampener: 0.35
+  ai_metadata_suspicion: 0.85
+  fft_high_freq_attenuation_critical: 0.012
+  fft_high_freq_attenuation_moderate: 0.022
+  fft_high_freq_boost_threshold: 0.45
+  fft_lattice_spike_critical: 4.0
+  fft_lattice_spike_moderate: 2.3
+  fft_lattice_min_peaks: 4
+  noise_crop_size: 512
+  noise_kurtosis_critical: 70.0
+  noise_kurtosis_moderate: 30.0
+  noise_kurtosis_mild: 18.0
+  noise_kurtosis_camera_max: 25.0
+  noise_variance_flattened: 0.25
+  noise_edge_mask_percentile: 85.0
+  ela_quality: 95
+  ela_disparity_critical: 10.0
+  ela_disparity_moderate: 6.0
+  ela_max_diff_threshold: 60.0
+  ela_nominal_max: 8.0
+  face_skin_to_edge_ratio: 0.16
+  face_skin_lap_min: 20.0
+  face_edge_lap_min: 35.0
+  face_seam_ratio_threshold: 2.2
+  face_eye_asymmetry_threshold: 0.35
+  color_decorrelation_critical: 0.35
+  color_decorrelation_moderate: 0.50
 

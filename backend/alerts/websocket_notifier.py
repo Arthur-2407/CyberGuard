@@ -78,6 +78,18 @@ class WebSocketNotifier:
             # Session's WebSocket already disconnected; nothing to do.
             return
 
+        voice_cls = getattr(event, "voice_classification", None)
+        if not voice_cls:
+            voice_cls = "CLONED_VOICE" if event.risk_score >= 0.60 else "GENUINE_VOICE"
+
+        active_det = getattr(event, "active_detector", None)
+        if not active_det:
+            try:
+                from backend.ml.continuous_learning import ContinuousLearningService
+                active_det = ContinuousLearningService.get_active_model_version()
+            except Exception:
+                active_det = "v025"
+
         payload = json.dumps({
             "type": "risk_update",
             "session_id": event.session_id,
@@ -86,6 +98,9 @@ class WebSocketNotifier:
             "risk_score": event.risk_score,
             "alert_level": event.alert_level,
             "detection_score": event.detection_score,
+            "voice_classification": voice_cls,
+            "active_detector": active_det,
+            "rms": getattr(event, "rms", None),
             "speaker_id": event.speaker_id,
             "speaker_similarity": event.speaker_similarity,
             "recommendation": event.recommendation,

@@ -49,7 +49,7 @@ _NO_MATCH_STATUSES = frozenset({
 _UNAVAILABLE_STATUSES = frozenset({
     "UNAVAILABLE", "TIMEOUT", "ERROR", "NOT_CONFIGURED",
     "AUTHENTICATION_FAILED", "FORBIDDEN", "RATE_LIMITED",
-    "INITIALIZING",
+    "INITIALIZING", "ISOLATED_ENCLAVE_RESTRICTED",
 })
 
 # Provider statuses that represent successful data

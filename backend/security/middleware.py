@@ -44,12 +44,18 @@ class EnforcementMiddleware(BaseHTTPMiddleware):
             if path.startswith(prefix) or path == prefix:
                 return await call_next(request)
 
-        # Extract Client IP
+        # Extract Client IP securely
+        # Trust X-Forwarded-For ONLY if direct socket peer is an explicitly configured trusted reverse proxy
+        socket_host = request.client.host if request.client else "127.0.0.1"
+        from backend.config import get_settings
+        server_cfg = getattr(get_settings(), "server", None)
+        trusted_proxies = set(getattr(server_cfg, "trusted_proxies", ["127.0.0.1", "::1"]))
+
         forwarded_for = request.headers.get("X-Forwarded-For")
-        if forwarded_for:
+        if forwarded_for and socket_host in trusted_proxies:
             client_ip = forwarded_for.split(",")[0].strip()
         else:
-            client_ip = request.client.host if request.client else "127.0.0.1"
+            client_ip = socket_host
 
         # Extract or synthesize device fingerprint
         user_agent = request.headers.get("User-Agent", "Unknown")

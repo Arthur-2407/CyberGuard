@@ -15,7 +15,7 @@ import datetime
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
@@ -81,10 +81,14 @@ class AuthResponse(BaseModel):
 async def login(
     req: LoginRequest,
     response: Response,
+    request: Request,
     db: Session = Depends(get_db_session),
 ):
     """Authenticate and obtain session token."""
     user, raw_token = AuthService.authenticate(db, req.get_identifier(), req.password)
+
+    import os
+    secure_cookie = request.url.scheme == "https" or os.getenv("CYBERGUARD_COOKIE_SECURE", "").lower() in ("true", "1")
 
     # Set secure cookie
     response.set_cookie(
@@ -92,6 +96,7 @@ async def login(
         value=raw_token,
         max_age=7 * 24 * 3600,
         httponly=True,
+        secure=secure_cookie,
         samesite="lax",
     )
 
@@ -113,6 +118,7 @@ async def login(
 async def register(
     req: RegisterRequest,
     response: Response,
+    request: Request,
     db: Session = Depends(get_db_session),
 ):
     """Self-register as a standard user."""
@@ -129,11 +135,15 @@ async def register(
 
     # Auto-login after registration
     user, raw_token = AuthService.authenticate(db, user.username, req.password)
+    import os
+    secure_cookie = request.url.scheme == "https" or os.getenv("CYBERGUARD_COOKIE_SECURE", "").lower() in ("true", "1")
+
     response.set_cookie(
         key="cyberguard_session",
         value=raw_token,
         max_age=7 * 24 * 3600,
         httponly=True,
+        secure=secure_cookie,
         samesite="lax",
     )
 

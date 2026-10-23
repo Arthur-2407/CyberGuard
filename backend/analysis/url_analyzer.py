@@ -3,6 +3,7 @@ import urllib.parse
 import logging
 import uuid
 import copy
+import hashlib
 from typing import List, Dict, Any, Optional
 
 from backend.config import get_settings
@@ -12,6 +13,7 @@ from backend.threats.models import (
 from backend.threats.virustotal import get_virustotal_provider
 from backend.threats.urlhaus import get_urlhaus_provider
 from backend.threats.correlation import ThreatIntelCorrelationEngine, CorrelationStatus
+from backend.threats.live_intel_scraper import get_live_intel_scraper
 from backend.analysis.url_resolver import (
     SafeURLResolver, ResolutionResult, ResolutionStatus, AssociatedIOC, PageMetadata, RedirectHop
 )
@@ -41,6 +43,7 @@ class URLAnalyzer:
         self.urlhaus_provider = get_urlhaus_provider(self.config)
         self.correlation_engine = ThreatIntelCorrelationEngine()
         self.resolver = SafeURLResolver()
+        self.live_scraper = get_live_intel_scraper()
 
     async def analyze(
         self,
@@ -568,6 +571,38 @@ class URLAnalyzer:
         corr_duration_ms = (time.time() - corr_start) * 1000.0
         logger.info(f"analysis_id={analysis_id} stage=CORRELATION status={correlation.get('status')} duration_ms={corr_duration_ms:.1f}")
 
+        # ── STAGE 7b: Live Web Intelligence & Deep Crawler Forensics ──────────
+        # Integrates DuckDuckGo OSINT, Trafilatura, BS4, Playwright, Crawl4AI, Qwen LLM
+        live_start = time.time()
+        logger.info(f"analysis_id={analysis_id} stage=LIVE_WEB_INTEL status=SCRAPING")
+        live_intel: Dict[str, Any] = {}
+        try:
+            live_intel = await self.live_scraper.analyze_indicator_full(
+                indicator=canonical_url,
+                category="url",
+                vt_report=vt_report,
+                uh_report=uh_report,
+                context_metadata={
+                    "terminal_url": terminal_url,
+                    "redirect_count": resolution.redirect_count if resolution else 0,
+                    "page_title": page_title
+                }
+            )
+        except Exception as live_err:
+            logger.warning(f"analysis_id={analysis_id} stage=LIVE_WEB_INTEL status=NOTICE error={live_err}")
+            live_intel = {
+                "status": "ERROR",
+                "indicator": canonical_url,
+                "category": "url",
+                "url_sha256": hashlib.sha256(canonical_url.encode("utf-8")).hexdigest(),
+                "error": str(live_err),
+                "osint": {"engine": "DuckDuckGo Search", "hits_count": 0, "results": []},
+                "live_page_inspection": {"is_live": False, "rendering_engine": "HTTP+BS4"},
+                "qwen_llm_synthesis": {"executive_briefing": None, "containment_recommendations": []}
+            }
+        live_duration_ms = (time.time() - live_start) * 1000.0
+        logger.info(f"analysis_id={analysis_id} stage=LIVE_WEB_INTEL status=COMPLETED duration_ms={live_duration_ms:.1f}")
+
         # ── STAGE 8: CyberGuard Authoritative Risk Engine & Final Verdict Gate ─
         is_pending = (vt_status == "PENDING") or (uh_status == "WAITING_FOR_VIRUSTOTAL")
         custom_summary: Optional[str] = None
@@ -622,6 +657,41 @@ class URLAnalyzer:
                             confidence=0.95,
                             source="URLhaus"
                         ))
+
+            # Live DOM Inspection & OSINT Evidence Contribution
+            dom_insp = live_intel.get("live_page_inspection", {})
+            if dom_insp.get("has_credential_forms"):
+                evidences.append(Evidence(
+                    evidence_type="credential_harvesting_form",
+                    description="Live DOM Inspection: Password/credential input field detected on live destination page (Active Phishing Probe).",
+                    value=canonical_url,
+                    severity_contribution=0.8,
+                    confidence=0.95,
+                    source="Playwright+BS4"
+                ))
+                risk_level = self._max_risk(risk_level, RiskLevel.HIGH)
+
+            for susp_ind in dom_insp.get("suspicious_indicators", []):
+                if "password input" not in susp_ind.lower():
+                    evidences.append(Evidence(
+                        evidence_type="live_dom_indicator",
+                        description=f"Live DOM Analysis: {susp_ind}",
+                        value=canonical_url,
+                        severity_contribution=0.35,
+                        confidence=0.88,
+                        source="BeautifulSoup4"
+                    ))
+
+            osint_hits = live_intel.get("osint", {}).get("hits_count", 0)
+            if osint_hits > 0:
+                evidences.append(Evidence(
+                    evidence_type="live_osint_warning",
+                    description=f"DuckDuckGo OSINT: Found {osint_hits} real-time intelligence record(s) identifying security warnings or threat discussions for target domain.",
+                    value=canonical_url,
+                    severity_contribution=0.3,
+                    confidence=0.85,
+                    source="DuckDuckGoOSINT"
+                ))
 
             if has_associated_malware:
                 # Elevate risk: URL resolves or references intelligence documenting active malware target
@@ -707,6 +777,7 @@ class URLAnalyzer:
             "uh_ms": round(uh_duration_ms, 1),
             "corr_ms": round(corr_duration_ms, 1),
             "resolution_ms": round(res_duration_ms, 1),
+            "live_ms": round(live_duration_ms, 1),
         }
 
         return self._build_event(
@@ -733,6 +804,7 @@ class URLAnalyzer:
             associated_iocs=associated_iocs,
             custom_summary=custom_summary,
             custom_reasoning=custom_reasoning,
+            live_intel=live_intel,
         )
 
     def _build_event(
@@ -761,6 +833,7 @@ class URLAnalyzer:
         associated_iocs: Optional[List[AssociatedIOC]] = None,
         custom_summary: Optional[str] = None,
         custom_reasoning: Optional[str] = None,
+        live_intel: Optional[Dict[str, Any]] = None,
     ) -> ThreatEvent:
         total_duration_ms = (time.time() - start_time) * 1000.0
         timings["total_ms"] = round(total_duration_ms, 1)
@@ -844,10 +917,12 @@ class URLAnalyzer:
         # Structured Technical Details for UI and API consumers
         resolved_term_url = terminal_url or url
         raw_tech = copy.deepcopy(vt_report.get("technical_details", {}))
+        url_sha256 = hashlib.sha256(url.encode("utf-8")).hexdigest()
 
         # Backward compatible mapping (legacy consumers)
         raw_tech["url"] = url
         raw_tech["final_url"] = resolved_term_url
+        raw_tech["url_sha256"] = url_sha256
         if terminal_status_code is not None:
             raw_tech["http_response_code"] = terminal_status_code
 
@@ -880,6 +955,7 @@ class URLAnalyzer:
             "indicator": url,
             "indicator_type": "url",
             "original_url": url,
+            "url_sha256": url_sha256,
             "terminal_url": resolved_term_url,
             "final_url": resolved_term_url,
             "resolved_terminal_url": resolved_term_url,
@@ -908,6 +984,8 @@ class URLAnalyzer:
             "technical_details": raw_tech,
             "engine_results": vt_report.get("engine_results", []),
             "permalink": vt_report.get("permalink", ""),
+            "live_intelligence": live_intel or {},
+            "qwen_briefing": (live_intel or {}).get("qwen_llm_synthesis", {}).get("executive_briefing"),
             "cyberguard_local": {
                 "risk_level": local_risk_score,
                 "is_local": is_local,
@@ -940,7 +1018,7 @@ class URLAnalyzer:
                     for ev in evidences if ev.severity_contribution > 0
                 ],
                 "provenance": (
-                    "Source: CyberGuard Resolver + VirusTotal + URLhaus"
+                    "Source: CyberGuard Resolver + VirusTotal + URLhaus + LiveScraper + Qwen"
                     if recorded_malware_url or corr_status in (CorrelationStatus.CORROBORATED.value, CorrelationStatus.SINGLE_PROVIDER.value, CorrelationStatus.RELATED_EVIDENCE.value)
                     else "Source: CyberGuard"
                 ),
@@ -968,6 +1046,18 @@ class URLAnalyzer:
                     "threat": uh_report.get("threat"),
                     "external_reference": uh_report.get("external_reference"),
                 },
+                "live_crawler": {
+                    "status": (live_intel or {}).get("status", "COMPLETED"),
+                    "rendering_engine": (live_intel or {}).get("live_page_inspection", {}).get("rendering_engine", "HTTP+BS4"),
+                    "is_live": (live_intel or {}).get("live_page_inspection", {}).get("is_live", False),
+                    "osint_hits": (live_intel or {}).get("osint", {}).get("hits_count", 0),
+                    "has_credential_forms": (live_intel or {}).get("live_page_inspection", {}).get("has_credential_forms", False),
+                },
+                "qwen_llm": {
+                    "status": "COMPLETED" if (live_intel or {}).get("qwen_llm_synthesis", {}).get("executive_briefing") else "STANDBY",
+                    "executive_briefing": (live_intel or {}).get("qwen_llm_synthesis", {}).get("executive_briefing"),
+                    "containment_recommendations": (live_intel or {}).get("qwen_llm_synthesis", {}).get("containment_recommendations", []),
+                },
                 "related_intelligence": {
                     "has_related_threat": bool(recorded_malware_url or provider_report_url),
                     "recorded_malware_url": recorded_malware_url,
@@ -994,6 +1084,7 @@ class URLAnalyzer:
                 "correlation_ms": timings.get("corr_ms", 0.0),
                 "resolution_ms": timings.get("resolution_ms", 0.0),
                 "local_heuristics_ms": timings.get("local_ms", 0.0),
+                "live_crawler_ms": timings.get("live_ms", 0.0),
             },
             "is_pending": is_pending,
             "can_finalize": not is_pending,

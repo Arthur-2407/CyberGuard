@@ -22,8 +22,10 @@ import os
 import tempfile
 import uuid
 import hashlib
-import time
+import time 
 from pathlib import Path
+
+import numpy as np
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -33,11 +35,14 @@ from sqlalchemy.orm import Session
 from backend.storage.auth import get_optional_user, require_user
 from backend.storage.database import (
     get_db_session,
+    get_session_factory,
+    get_user_db_session_sync,
     AnalysisRecordModel,
     ReviewQueueModel,
     ModelVersionModel,
     UserModel,
 )
+from backend.services.continuous_learning import ContinuousLearningService
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +64,10 @@ class AnalysisResponse(BaseModel):
     chunk_scores: list
     processing_time_ms: float
     detector_version: str = "v001"
+    detector_state: str = "NEURAL_READY"  # NEURAL_READY | HEURISTIC_ONLY | UNAVAILABLE
+    calibration_notice: Optional[str] = None
     external_intelligence: Optional[dict] = None
+    pitch_analysis: Optional[dict] = None
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
@@ -195,12 +203,20 @@ async def analyze_audio_file(
             target_sr=app_settings.audio.sample_rate,
             apply_vad=True,
         )
-        chunks = chunk_audio(
+        # For uploaded file analysis, avoid high streaming overlap ratios (which generate 75+ redundant chunks).
+        # We sample up to 8 representative chunks evenly across the file for optimal responsiveness and thorough neural coverage.
+        max_file_chunks = 8
+        raw_chunks = chunk_audio(
             audio,
             sr=app_settings.audio.sample_rate,
-            chunk_duration=app_settings.audio.chunk_duration_sec,
-            overlap_ratio=app_settings.audio.overlap_ratio,
+            chunk_duration=4.0,  # 4.0s (64,000 samples) aligns with AASIST neural spectro-temporal receptive field
+            overlap_ratio=0.0,
         )
+        if len(raw_chunks) > max_file_chunks:
+            sample_indices = np.linspace(0, len(raw_chunks) - 1, max_file_chunks, dtype=int)
+            chunks = [raw_chunks[idx] for idx in sample_indices]
+        else:
+            chunks = raw_chunks
         t0 = _stage("preprocess_chunk", t0)
 
         if not chunks:
@@ -219,6 +235,7 @@ async def analyze_audio_file(
         )
 
         # Load speaker profile if specified
+        needs_speaker_emb = False
         if speaker_id:
             registry = SpeakerRegistry(
                 db_path=str(app_settings.abs_path(app_settings.storage.db_path))
@@ -226,6 +243,7 @@ async def analyze_audio_file(
             enrolled_emb = registry.get_embedding(speaker_id)
             if enrolled_emb is not None:
                 consistency_checker.set_enrolled_profile(enrolled_emb, speaker_id)
+                needs_speaker_emb = True
         t0 = _stage("setup", t0)
 
         # ── Run detection pipeline (offloaded to thread pool) ─────────────────────
@@ -239,10 +257,15 @@ async def analyze_audio_file(
         for i, chunk in enumerate(chunks):
             result = await loop.run_in_executor(
                 None,
-                functools.partial(app_detector.process_chunk, chunk, chunk_id=i)
+                functools.partial(
+                    app_detector.process_chunk,
+                    chunk,
+                    chunk_id=i,
+                    use_speaker_embedding=needs_speaker_emb
+                )
             )
             speaker_sim = None
-            if result.speaker_embedding is not None:
+            if result.speaker_embedding is not None and needs_speaker_emb:
                 c_result = consistency_checker.check(result.speaker_embedding)
                 speaker_sim = c_result.get("similarity")
 
@@ -258,43 +281,50 @@ async def analyze_audio_file(
                 "risk_score": snapshot.combined_risk,
                 "alert_level": snapshot.alert_level.value,
                 "processing_ms": result.processing_time_ms,
+                "pitch_analysis": result.pitch_analysis,
             })
         t0 = _stage("model_inference", t0)
 
+        # Aggregate session-level pitch & prosodic telemetry
+        valid_pitches = [c.get("pitch_analysis") for c in chunk_scores if c.get("pitch_analysis")]
+        if valid_pitches:
+            f0_means = [p["f0_mean_hz"] for p in valid_pitches if p.get("f0_mean_hz", 0) > 0]
+            f0_stds = [p["f0_std_hz"] for p in valid_pitches if p.get("f0_std_hz", 0) > 0]
+            jitters = [p["jitter"] for p in valid_pitches if p.get("jitter", 0) > 0]
+            shimmers = [p["shimmer"] for p in valid_pitches if p.get("shimmer", 0) > 0]
+            hnrs = [p["hnr_db"] for p in valid_pitches if p.get("hnr_db", 0) > 0]
+            stabilities = [p["pitch_stability_pct"] for p in valid_pitches if "pitch_stability_pct" in p]
+            anomalies = [p["is_pitch_anomaly"] for p in valid_pitches]
+
+            session_pitch = {
+                "f0_mean_hz": round(float(np.mean(f0_means)), 1) if f0_means else 0.0,
+                "f0_std_hz": round(float(np.mean(f0_stds)), 1) if f0_stds else 0.0,
+                "jitter": round(float(np.mean(jitters)), 4) if jitters else 0.0,
+                "shimmer": round(float(np.mean(shimmers)), 4) if shimmers else 0.0,
+                "hnr_db": round(float(np.mean(hnrs)), 1) if hnrs else 0.0,
+                "pitch_stability_pct": round(float(np.mean(stabilities)), 1) if stabilities else 85.0,
+                "pitch_verdict": "SYNTHETIC PITCH ANOMALY" if any(anomalies) or (jitters and np.mean(jitters) >= 0.060) else "ORGANIC HUMAN PROSODY",
+                "is_pitch_anomaly": bool(any(anomalies) or (jitters and np.mean(jitters) >= 0.060)),
+            }
+        else:
+            session_pitch = {
+                "f0_mean_hz": 0.0,
+                "f0_std_hz": 0.0,
+                "jitter": 0.0,
+                "shimmer": 0.0,
+                "hnr_db": 0.0,
+                "pitch_stability_pct": 90.0,
+                "pitch_verdict": "ORGANIC HUMAN PROSODY",
+                "is_pitch_anomaly": False,
+            }
+
         summary = risk_engine.get_session_summary()
         final_risk = chunk_scores[-1]["risk_score"] if chunk_scores else 0.0
-        
-        # ── VirusTotal Hash Lookup (concurrent, non-blocking) ─────────────────────
-        # Start VT lookup as a background task concurrently with risk calculation.
-        # We then await it with a short timeout so it never blocks the response
-        # more than 'timeout_sec' even if the VT service is slow.
+
+        # Note: VirusTotal & URLhaus intelligence lookups are exclusively scoped to
+        # the Phishing & URL tab to conserve API quota and avoid unnecessary threat lookups.
         vt_result = None
-        vt_provider = VirusTotalProvider(app_settings)
-        if vt_provider.is_configured:
-            vt_task = asyncio.ensure_future(vt_provider.get_file_report(file_hash_hex))
-            try:
-                vt_result = await asyncio.wait_for(
-                    vt_task,
-                    timeout=min(app_settings.virustotal.timeout_sec, 5.0),
-                )
-                if vt_result.get("status") == "COMPLETED":
-                    malicious = vt_result.get("malicious_count", 0)
-                    suspicious = vt_result.get("suspicious_count", 0)
-                    if malicious > 0 or suspicious > 0:
-                        vt_risk = min(1.0, (malicious * 0.1) + (suspicious * 0.05))
-                        final_risk = min(1.0, final_risk + vt_risk)
-                        summary["peak_risk"] = max(summary["peak_risk"], final_risk)
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"analysis_id={session_id} stage=virustotal "
-                    f"status=timeout duration_ms={int(app_settings.virustotal.timeout_sec * 1000)}"
-                )
-                vt_result = {"status": "TIMEOUT"}
-            except Exception as exc:
-                logger.warning(f"analysis_id={session_id} stage=virustotal status=error error={exc}")
-                vt_result = {"status": "FAILED"}
-        t0 = _stage("virustotal", t0)
-        
+
         recommendation = threshold_engine.evaluate(summary["peak_risk"])
 
         t_end = time.perf_counter()
@@ -306,8 +336,9 @@ async def analyze_audio_file(
         )
 
         # ── Cross-Pipeline Incident Recording & Alert Dispatch ───────────────────
-        from backend.main import get_app_incident_manager, get_app_alert_manager
-        inc_manager = get_app_incident_manager()
+        from backend.incidents.incident_manager import get_incident_manager_for_user
+        from backend.main import get_app_alert_manager
+        inc_manager = get_incident_manager_for_user(current_user)
         alert_mgr = get_app_alert_manager()
         
         peak_score = summary["peak_risk"]
@@ -343,6 +374,10 @@ async def analyze_audio_file(
                         source="VirusTotal"
                     ))
 
+            u_id = current_user.id if current_user else None
+            u_email = current_user.email if current_user else None
+            u_name = current_user.username if current_user else None
+
             threat_event = ThreatEvent(
                 source=f"File: {file.filename or 'upload'}",
                 source_type="audio_file",
@@ -358,7 +393,9 @@ async def analyze_audio_file(
                     limitations="Acoustic analysis based on calibrated multi-feature spectral and prosodic baselines."
                 ),
                 recommended_actions=recommendation.actions or [],
-                affected_user=speaker_id,
+                affected_user=u_name or speaker_id,
+                user_id=u_id,
+                user_email=u_email,
                 detector="VoiceCloneDetector",
                 processing_time_ms=total_ms,
                 correlation_id=session_id,
@@ -383,41 +420,38 @@ async def analyze_audio_file(
                         recommendation=recommendation,
                         detection_score=peak_score,
                         speaker_id=speaker_id,
+                        user_id=u_id,
+                        user_email=u_email,
                     ))
                 except Exception as alert_err:
                     logger.warning(f"Failed to dispatch alert notification: {alert_err}")
 
         # ── Model Version & Continuous Learning Vault Storage ─────────────────
-        active_version = "v001"
-        if db:
-            active_mv = (
-                db.query(ModelVersionModel)
-                .filter(ModelVersionModel.status == "ACTIVE")
-                .order_by(ModelVersionModel.id.desc())
-                .first()
-            )
-            if active_mv:
-                active_version = active_mv.version
+        central_factory = get_session_factory("data/cyberguard.db")
+        with central_factory() as central_db:
+            active_version = ContinuousLearningService.get_active_model_version(central_db)
 
-        # Secure non-public audio storage for review & training
+        # Secure non-public audio storage for review & training:
+        # Strictly restricted to authenticated accounts. Guest audio is NEVER permanently stored on disk.
         vault_rel_path: Optional[str] = None
-        try:
-            vault_dir = Path("data/audio_vault")
-            vault_dir.mkdir(parents=True, exist_ok=True)
-            vault_file = vault_dir / f"{file_hash_hex}.flac"
-            if not vault_file.exists():
-                import soundfile as sf
-                sf.write(str(vault_file), audio[:320000], app_settings.audio.sample_rate)
-            vault_rel_path = str(vault_file.as_posix())
-        except Exception as v_err:
-            logger.warning(f"Audio vault write notice: {v_err}")
-
-        # Persist AnalysisRecord & enqueue into ReviewQueueItem
-        if db:
+        if current_user and getattr(current_user, "id", None):
             try:
-                record = AnalysisRecordModel(
+                vault_dir = Path("data/audio_vault")
+                vault_dir.mkdir(parents=True, exist_ok=True)
+                vault_file = vault_dir / f"{file_hash_hex}.flac"
+                if not vault_file.exists():
+                    import soundfile as sf
+                    sf.write(str(vault_file), audio[:320000], app_settings.audio.sample_rate)
+                vault_rel_path = str(vault_file.as_posix())
+            except Exception as v_err:
+                logger.warning(f"Audio vault write notice: {v_err}")
+
+            # 1. Persist user's personal AnalysisRecord into user's isolated database
+            user_session = get_user_db_session_sync(current_user)
+            try:
+                user_record = AnalysisRecordModel(
                     analysis_id=session_id,
-                    user_id=current_user.id if current_user else None,
+                    user_id=current_user.id,
                     filename=file.filename or "unknown",
                     audio_hash=file_hash_hex,
                     audio_path=vault_rel_path,
@@ -430,19 +464,52 @@ async def analyze_audio_file(
                     alert_level=recommendation.alert_level.value,
                     analysis_status="COMPLETED",
                 )
-                db.add(record)
+                user_session.add(user_record)
+                user_session.commit()
+            except Exception as u_err:
+                user_session.rollback()
+                logger.warning(f"Failed to record analysis to user isolated database: {u_err}")
+            finally:
+                user_session.close()
 
-                review_item = ReviewQueueModel(
-                    review_id=f"REV_{session_id}",
-                    analysis_id=session_id,
-                    submitted_by_user_id=current_user.id if current_user else None,
-                    status="PENDING",
-                )
-                db.add(review_item)
-                db.commit()
-            except Exception as db_err:
-                db.rollback()
-                logger.warning(f"Failed to record analysis to database: {db_err}")
+            # 2. Central Admin Review Queue: Restricted to authenticated user audio samples
+            # with explicit submitted_by_user_id metadata for authorized model training
+            try:
+                with central_factory() as central_db:
+                    central_record = AnalysisRecordModel(
+                        analysis_id=session_id,
+                        user_id=current_user.id,
+                        filename=file.filename or "unknown",
+                        audio_hash=file_hash_hex,
+                        audio_path=vault_rel_path,
+                        duration_sec=float(len(audio) / app_settings.audio.sample_rate),
+                        total_chunks=len(chunks),
+                        detector_version=active_version,
+                        native_probability=float(summary["peak_risk"]),
+                        peak_risk=float(summary["peak_risk"]),
+                        mean_risk=float(summary["mean_risk"]),
+                        alert_level=recommendation.alert_level.value,
+                        analysis_status="COMPLETED",
+                    )
+                    central_db.add(central_record)
+
+                    review_item = ReviewQueueModel(
+                        review_id=f"REV_{session_id}",
+                        analysis_id=session_id,
+                        submitted_by_user_id=current_user.id,
+                        status="PENDING",
+                    )
+                    central_db.add(review_item)
+                    central_db.commit()
+            except Exception as c_err:
+                logger.warning(f"Failed to record audio to central admin training review queue: {c_err}")
+
+        det_state = app_detector.detector_state if hasattr(app_detector, "detector_state") else ("NEURAL_READY" if getattr(app_detector, "has_neural_model", False) else "HEURISTIC_ONLY")
+        calib_notice = (
+            "Calibrated neural inference active (validated acoustic-temporal deep representations)."
+            if det_state == "NEURAL_READY"
+            else "Acoustic heuristic fallback active. Score represents acoustic anomaly indicators, NOT a calibrated neural model probability."
+        )
 
         return AnalysisResponse(
             session_id=session_id,
@@ -461,7 +528,10 @@ async def analyze_audio_file(
             chunk_scores=chunk_scores,
             processing_time_ms=total_ms,
             detector_version=active_version,
-            external_intelligence=vt_result
+            detector_state=det_state,
+            calibration_notice=calib_notice,
+            external_intelligence=vt_result,
+            pitch_analysis=session_pitch,
         )
 
     except HTTPException:
@@ -482,27 +552,29 @@ async def analyze_audio_file(
 async def get_my_analysis_history(
     limit: int = 50,
     current_user: UserModel = Depends(require_user),
-    db: Session = Depends(get_db_session),
 ):
-    """Retrieve the authenticated user's own scan history. Cannot see other users' scans."""
-    records = (
-        db.query(AnalysisRecordModel)
-        .filter(AnalysisRecordModel.user_id == current_user.id)
-        .order_by(AnalysisRecordModel.id.desc())
-        .limit(limit)
-        .all()
-    )
-    return [
-        {
-            "analysis_id": r.analysis_id,
-            "filename": r.filename,
-            "duration_sec": r.duration_sec,
-            "total_chunks": r.total_chunks,
-            "detector_version": r.detector_version,
-            "native_probability": r.native_probability,
-            "peak_risk": r.peak_risk,
-            "alert_level": r.alert_level,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in records
-    ]
+    """Retrieve the authenticated user's own scan history from their isolated database."""
+    user_db = get_user_db_session_sync(current_user)
+    try:
+        records = (
+            user_db.query(AnalysisRecordModel)
+            .order_by(AnalysisRecordModel.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return [
+            {
+                "analysis_id": r.analysis_id,
+                "filename": r.filename,
+                "duration_sec": r.duration_sec,
+                "total_chunks": r.total_chunks,
+                "detector_version": r.detector_version,
+                "native_probability": r.native_probability,
+                "peak_risk": r.peak_risk,
+                "alert_level": r.alert_level,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in records
+        ]
+    finally:
+        user_db.close()

@@ -37,6 +37,7 @@ import logging
 import time
 import uuid
 
+import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
@@ -117,11 +118,15 @@ async def websocket_stream(websocket: WebSocket):
     valid_frames = 0
     empty_frames = 0
 
+    from backend.services.continuous_learning import ContinuousLearningService
+    active_det_version = ContinuousLearningService.get_active_model_version()
+
     # Send session start message
     await websocket.send_text(json.dumps({
         "type": "session_start",
         "session_id": session_id,
-        "detector_ready": app_detector is not None and app_detector.is_initialized
+        "detector_ready": app_detector is not None and app_detector.is_initialized,
+        "active_detector": active_det_version,
     }))
 
     # Get the running event loop for run_in_executor calls
@@ -190,12 +195,16 @@ async def websocket_stream(websocket: WebSocket):
 
                     # Track overall processing latency for this chunk
                     t_receive = time.monotonic()
+                    raw_chunk = chunk.copy()
 
-                    # Apply VAD and normalization in the thread pool (CPU-bound preprocessing)
-                    from backend.audio.preprocessor import preprocess_audio
+                    # Calculate raw audio RMS energy level
+                    rms = float(np.sqrt(np.mean(raw_chunk ** 2))) if len(raw_chunk) > 0 else 0.0
+
+                    # Apply normalization and mild VAD in thread pool
+                    from backend.audio.preprocessor import preprocess_audio, normalize
                     
                     t_preprocess_start = time.monotonic()
-                    chunk = await loop.run_in_executor(
+                    processed_chunk = await loop.run_in_executor(
                         None,
                         functools.partial(
                             preprocess_audio,
@@ -203,18 +212,28 @@ async def websocket_stream(websocket: WebSocket):
                             sr=app_settings.audio.sample_rate,
                             target_sr=app_settings.audio.sample_rate,
                             apply_vad=True,
+                            vad_aggressiveness=1,
                         )
                     )
                     t_preprocess_end = time.monotonic()
 
-                    if len(chunk) == 0:
-                        empty_frames += 1
-                        # VAD dropped the entire chunk (silence)
-                        await websocket.send_text(json.dumps({
-                            "type": "status_update",
-                            "status": "WAITING_FOR_DATA"
-                        }))
-                        continue
+                    # If VAD dropped all frames or telephony chunk is short, check acoustic energy
+                    if len(processed_chunk) == 0 or len(processed_chunk) < 8000:
+                        if rms >= 0.0008:
+                            # Natural speech energy present (normalized)
+                            processed_chunk = normalize(raw_chunk, method="peak")
+                        else:
+                            empty_frames += 1
+                            # True silence or listening pause
+                            await websocket.send_text(json.dumps({
+                                "type": "status_update",
+                                "status": "LISTENING",
+                                "detail": "Listening for caller voice...",
+                                "rms": round(rms, 4),
+                                "frames_received": frames_received,
+                                "active_detector": active_det_version,
+                            }))
+                            continue
                     
                     valid_frames += 1
 
@@ -223,7 +242,7 @@ async def websocket_stream(websocket: WebSocket):
                         None,
                         functools.partial(
                             app_detector.process_chunk,
-                            chunk,
+                            processed_chunk,
                             chunk_id=current_chunk_id,
                         )
                     )
@@ -235,14 +254,13 @@ async def websocket_stream(websocket: WebSocket):
                         f"total: {(t_inference_end - t_receive)*1000:.1f}ms"
                     )
 
-                    # Speaker consistency check (uses already-extracted embedding, no heavy compute)
+                    # Speaker consistency check
                     consistency_result = {
                         "similarity": None,
                         "enrolled": False,
                         "embedding_available": False,
                     }
                     speaker_similarity = None
-                    # result.speaker_embedding is None when ECAPA was unavailable
                     consistency_result = consistency_checker.check(result.speaker_embedding)
                     speaker_similarity = consistency_result.get("similarity")
 
@@ -253,10 +271,14 @@ async def websocket_stream(websocket: WebSocket):
                         speaker_similarity=speaker_similarity,
                     )
 
+                    # Voice classification: genuine human vs cloned synthetic voice
+                    is_cloned = risk_snapshot.combined_risk >= 0.60
+                    voice_classification = "CLONED_VOICE" if is_cloned else "GENUINE_VOICE"
+
                     # Get recommendation
                     recommendation = threshold_engine.evaluate(risk_snapshot.combined_risk)
 
-                    # Dispatch alert (delivered only to this session's WebSocket)
+                    # Dispatch real-time risk update and alert through AlertManager to WebSocket
                     await app_alert_manager.dispatch(
                         session_id=session_id,
                         chunk_id=result.chunk_id,
@@ -266,6 +288,8 @@ async def websocket_stream(websocket: WebSocket):
                         detection_score=result.synthetic_probability,
                         speaker_id=consistency_result.get("speaker_id"),
                         speaker_similarity=speaker_similarity,
+                        voice_classification=voice_classification,
+                        rms=round(rms, 4),
                     )
                     
                     # Feed high risk to Incident Manager

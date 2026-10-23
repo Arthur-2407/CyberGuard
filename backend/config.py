@@ -19,9 +19,11 @@ from dotenv import load_dotenv
 # Project root = two levels up from this file (backend/config.py → project root)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Load environment variables, guaranteeing project-level .env is loaded
+# Load environment variables, guaranteeing project-level .env and isolated secret files are loaded
+load_dotenv(_PROJECT_ROOT / ".env.email")
 load_dotenv(_PROJECT_ROOT / ".env")
 load_dotenv()
+
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +62,10 @@ class AudioConfig:
 
 @dataclass
 class AlertThresholds:
-    low: float = 0.35
-    medium: float = 0.60
-    high: float = 0.80
-    critical: float = 0.95
+    low: float = 0.25
+    medium: float = 0.50
+    high: float = 0.70
+    critical: float = 0.85
 
 
 @dataclass
@@ -119,6 +121,7 @@ class ServerConfig:
     host: str = "0.0.0.0"
     port: int = 3000
     cors_origins: List[str] = field(default_factory=lambda: ["*"])
+    trusted_proxies: List[str] = field(default_factory=lambda: ["127.0.0.1", "::1"])
 
 
 @dataclass
@@ -151,6 +154,8 @@ class VirusTotalConfig:
     poll_interval_sec: int = 15
     max_file_size_bytes: int = 33554432
     cache_enabled: bool = True
+    cache_ttl_sec: float = 86400.0  # 24-hour report cache for API quota/token conservation
+    isolated_enclave_only: bool = True  # Strict boundary isolation to Phishing & URL tab only
     # API key is sourced from env (or config override), with whitespace and quotes stripped for safety.
     api_key: str = field(default_factory=lambda: _clean_secret(os.getenv("VIRUSTOTAL_API_KEY", "")))
 
@@ -160,6 +165,8 @@ class URLhausConfig:
     enabled: bool = False
     timeout_sec: int = 10
     cache_enabled: bool = True
+    cache_ttl_sec: float = 86400.0  # 24-hour report cache for API quota/token conservation
+    isolated_enclave_only: bool = True  # Strict boundary isolation to Phishing & URL tab only
     # Auth-Key is sourced from environment only — never stored in YAML or source code.
     auth_key: str = field(default_factory=lambda: _clean_secret(os.getenv("URLHAUS_AUTH_KEY", "")))
 
@@ -178,8 +185,73 @@ class EnforcementConfig:
 @dataclass
 class EmailAlertsConfig:
     enabled: bool = True
-    recipient: str = "security-ops@cyberguard.local"
+    provider: str = "brevo"
+    brevo_api_key: str = ""
+    email_from: str = "cyberguardadmin@gmail.com"
+    email_from_name: str = "CyberGuard Security"
+    recipient: str = ""
+    recipients: List[str] = field(default_factory=list)
+    admin_recipients: List[str] = field(default_factory=list)
     threshold: str = "CRITICAL"
+    min_severity: str = "HIGH"
+    score_threshold: float = 0.85
+    cooldown_seconds: float = 300.0
+    daily_limit: int = 250
+    test_mode: bool = False
+    smtp_server: str = "smtp-relay.brevo.com"
+    smtp_port: int = 587
+    smtp_login: str = ""
+    smtp_key: str = ""
+    smtp_password: str = ""
+
+
+
+@dataclass
+class ImageForensicsConfig:
+    """Configurable parameters, thresholds, and factors for Image & Deepfake Forensics."""
+    # Decision classification thresholds
+    threshold_manipulated: float = 0.65       # Minimum manipulation score for LIKELY_MANIPULATED
+    threshold_inconclusive: float = 0.35      # Minimum score for INCONCLUSIVE
+    threshold_critical: float = 0.85          # Minimum score for CRITICAL severity
+
+    # Grounding factors
+    camera_provenance_dampener: float = 0.35  # Grounding dampener for verified optical camera hardware
+    ai_metadata_suspicion: float = 0.85       # Minimum suspicion when explicit generative AI signature detected
+
+    # 2D FFT Spectral Analysis
+    fft_high_freq_attenuation_critical: float = 0.012
+    fft_high_freq_attenuation_moderate: float = 0.022
+    fft_high_freq_boost_threshold: float = 0.45
+    fft_lattice_spike_critical: float = 4.0
+    fft_lattice_spike_moderate: float = 2.3
+    fft_lattice_min_peaks: int = 4
+
+    # Sensor Noise & PRNU Kurtosis (at native 1:1 scale with edge masking)
+    noise_crop_size: int = 512                # Native patch crop size (prevents downsampling interpolation artifacts)
+    noise_kurtosis_critical: float = 70.0
+    noise_kurtosis_moderate: float = 30.0
+    noise_kurtosis_mild: float = 18.0
+    noise_kurtosis_camera_max: float = 25.0   # Upper bound of acceptable sensor kurtosis for camera grounding
+    noise_variance_flattened: float = 0.25    # Unnaturally low noise variance (synthetic smoothing)
+    noise_edge_mask_percentile: float = 85.0  # Exclude structural edges to measure true sensor PRNU
+
+    # Error Level Analysis (ELA)
+    ela_quality: int = 95
+    ela_disparity_critical: float = 10.0
+    ela_disparity_moderate: float = 6.0
+    ela_max_diff_threshold: float = 60.0
+    ela_nominal_max: float = 8.0
+
+    # Facial Forensics
+    face_skin_to_edge_ratio: float = 0.16
+    face_skin_lap_min: float = 20.0
+    face_edge_lap_min: float = 35.0
+    face_seam_ratio_threshold: float = 2.2
+    face_eye_asymmetry_threshold: float = 0.35
+
+    # Color Channel Gradient Correlation
+    color_decorrelation_critical: float = 0.35
+    color_decorrelation_moderate: float = 0.50
 
 
 @dataclass
@@ -198,6 +270,7 @@ class Settings:
     urlhaus: URLhausConfig = field(default_factory=URLhausConfig)
     enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
     email_alerts: EmailAlertsConfig = field(default_factory=EmailAlertsConfig)
+    image_forensics: ImageForensicsConfig = field(default_factory=ImageForensicsConfig)
     project_root: Path = field(default_factory=lambda: _PROJECT_ROOT)
 
     def abs_path(self, relative: str) -> Path:
@@ -220,6 +293,7 @@ def _build_settings(raw: dict) -> Settings:
     urlhaus_raw = raw.get("urlhaus", {})
     enforcement_raw = raw.get("enforcement", {})
     email_alerts_raw = raw.get("email_alerts", {})
+    image_forensics_raw = raw.get("image_forensics", {})
 
     thresholds_raw = risk_raw.get("alert_thresholds", {})
 
@@ -292,7 +366,8 @@ def _build_settings(raw: dict) -> Settings:
         server=ServerConfig(
             host=server_raw.get("host", "0.0.0.0"),
             port=int(server_raw.get("port", 3000)),
-            cors_origins=server_raw.get("cors_origins", ["*"]),
+            cors_origins=[o for o in server_raw.get("cors_origins", ["*"]) if o and str(o).lower() != "null"] if isinstance(server_raw.get("cors_origins"), list) else ["*"],
+            trusted_proxies=[p.strip() for p in os.getenv("CYBERGUARD_TRUSTED_PROXIES", "").split(",") if p.strip()] if os.getenv("CYBERGUARD_TRUSTED_PROXIES") else server_raw.get("trusted_proxies", ["127.0.0.1", "::1"]),
         ),
         webhooks=WebhookConfig(
             enabled=webhooks_raw.get("enabled", False),
@@ -319,12 +394,16 @@ def _build_settings(raw: dict) -> Settings:
             poll_interval_sec=virustotal_raw.get("poll_interval_sec", 15),
             max_file_size_bytes=virustotal_raw.get("max_file_size_bytes", 33554432),
             cache_enabled=virustotal_raw.get("cache_enabled", True),
+            cache_ttl_sec=float(virustotal_raw.get("cache_ttl_sec", 86400.0)),
+            isolated_enclave_only=bool(virustotal_raw.get("isolated_enclave_only", True)),
             api_key=vt_key,
         ),
         urlhaus=URLhausConfig(
             enabled=uh_enabled,
             timeout_sec=urlhaus_raw.get("timeout_sec", 10),
             cache_enabled=urlhaus_raw.get("cache_enabled", True),
+            cache_ttl_sec=float(urlhaus_raw.get("cache_ttl_sec", 86400.0)),
+            isolated_enclave_only=bool(urlhaus_raw.get("isolated_enclave_only", True)),
             auth_key=_clean_secret(os.getenv("URLHAUS_AUTH_KEY", urlhaus_raw.get("auth_key", ""))),
         ),
         enforcement=EnforcementConfig(
@@ -337,9 +416,57 @@ def _build_settings(raw: dict) -> Settings:
             ban_duration_minutes=int(enforcement_raw.get("ban_duration_minutes", 60)),
         ),
         email_alerts=EmailAlertsConfig(
-            enabled=bool(email_alerts_raw.get("enabled", True)),
-            recipient=str(email_alerts_raw.get("recipient", "security-ops@cyberguard.local")),
-            threshold=str(email_alerts_raw.get("threshold", "CRITICAL")),
+            enabled=bool(os.environ.get("EMAIL_ENABLED", "").lower() in ("true", "1", "yes") if "EMAIL_ENABLED" in os.environ else email_alerts_raw.get("enabled", True)),
+            provider=os.getenv("EMAIL_PROVIDER", email_alerts_raw.get("provider", "brevo")).lower().strip(),
+            brevo_api_key=_clean_secret(os.getenv("BREVO_API_KEY", email_alerts_raw.get("brevo_api_key", ""))),
+            email_from=os.getenv("EMAIL_FROM", email_alerts_raw.get("email_from", "cyberguardadmin@gmail.com")).strip() or "cyberguardadmin@gmail.com",
+            email_from_name=os.getenv("EMAIL_FROM_NAME", email_alerts_raw.get("email_from_name", "CyberGuard Security")).strip() or "CyberGuard Security",
+            recipient=str(os.getenv("EMAIL_ALERT_RECIPIENTS", email_alerts_raw.get("recipient", "")).split(",")[0].strip()),
+            recipients=[r.strip() for r in os.getenv("EMAIL_ALERT_RECIPIENTS", email_alerts_raw.get("recipient", "")).split(",") if r.strip()],
+            admin_recipients=[r.strip() for r in os.getenv("EMAIL_ALERT_RECIPIENTS", email_alerts_raw.get("recipient", "")).split(",") if r.strip()],
+            threshold=os.getenv("EMAIL_ALERT_THRESHOLD") or str(email_alerts_raw.get("threshold", "CRITICAL")),
+            min_severity=os.getenv("EMAIL_ALERT_MIN_SEVERITY") or str(email_alerts_raw.get("min_severity", "HIGH")),
+            score_threshold=float(os.getenv("EMAIL_ALERT_THRESHOLD")) / 100.0 if (os.getenv("EMAIL_ALERT_THRESHOLD") and os.getenv("EMAIL_ALERT_THRESHOLD").replace(".", "", 1).isdigit() and float(os.getenv("EMAIL_ALERT_THRESHOLD")) > 1.0) else (float(os.getenv("EMAIL_ALERT_THRESHOLD")) if (os.getenv("EMAIL_ALERT_THRESHOLD") and os.getenv("EMAIL_ALERT_THRESHOLD").replace(".", "", 1).isdigit()) else 0.85),
+            cooldown_seconds=float(os.getenv("EMAIL_ALERT_COOLDOWN_SECONDS", email_alerts_raw.get("cooldown_seconds", 300.0))),
+            daily_limit=int(os.getenv("EMAIL_DAILY_LIMIT", email_alerts_raw.get("daily_limit", 250))),
+            test_mode=bool(os.environ.get("EMAIL_TEST_MODE", "").lower() in ("true", "1", "yes")),
+            smtp_server=os.getenv("SMTP_SERVER", os.getenv("SMTP_HOST", email_alerts_raw.get("smtp_server", "smtp-relay.brevo.com"))).strip(),
+            smtp_port=int(os.getenv("SMTP_PORT", email_alerts_raw.get("smtp_port", 587))),
+            smtp_login=_clean_secret(os.getenv("SMTP_LOGIN", os.getenv("SMTP_USER", email_alerts_raw.get("smtp_login", "")))),
+            smtp_key=_clean_secret(os.getenv("SMTP_KEY", os.getenv("SMTP_PASSWORD", os.getenv("BREVO_API_KEY", email_alerts_raw.get("smtp_key", ""))))),
+            smtp_password=_clean_secret(os.getenv("SMTP_PASSWORD", os.getenv("SMTP_KEY", os.getenv("BREVO_API_KEY", email_alerts_raw.get("smtp_password", ""))))),
+        ),
+        image_forensics=ImageForensicsConfig(
+            threshold_manipulated=float(os.getenv("IMAGE_FORENSICS_THRESHOLD_MANIPULATED", image_forensics_raw.get("threshold_manipulated", 0.65))),
+            threshold_inconclusive=float(os.getenv("IMAGE_FORENSICS_THRESHOLD_INCONCLUSIVE", image_forensics_raw.get("threshold_inconclusive", 0.35))),
+            threshold_critical=float(os.getenv("IMAGE_FORENSICS_THRESHOLD_CRITICAL", image_forensics_raw.get("threshold_critical", 0.85))),
+            camera_provenance_dampener=float(os.getenv("IMAGE_FORENSICS_CAMERA_DAMPENER", image_forensics_raw.get("camera_provenance_dampener", 0.35))),
+            ai_metadata_suspicion=float(os.getenv("IMAGE_FORENSICS_AI_METADATA_SUSPICION", image_forensics_raw.get("ai_metadata_suspicion", 0.85))),
+            fft_high_freq_attenuation_critical=float(image_forensics_raw.get("fft_high_freq_attenuation_critical", 0.012)),
+            fft_high_freq_attenuation_moderate=float(image_forensics_raw.get("fft_high_freq_attenuation_moderate", 0.022)),
+            fft_high_freq_boost_threshold=float(image_forensics_raw.get("fft_high_freq_boost_threshold", 0.45)),
+            fft_lattice_spike_critical=float(image_forensics_raw.get("fft_lattice_spike_critical", 4.0)),
+            fft_lattice_spike_moderate=float(image_forensics_raw.get("fft_lattice_spike_moderate", 2.3)),
+            fft_lattice_min_peaks=int(image_forensics_raw.get("fft_lattice_min_peaks", 4)),
+            noise_crop_size=int(image_forensics_raw.get("noise_crop_size", 512)),
+            noise_kurtosis_critical=float(image_forensics_raw.get("noise_kurtosis_critical", 70.0)),
+            noise_kurtosis_moderate=float(image_forensics_raw.get("noise_kurtosis_moderate", 30.0)),
+            noise_kurtosis_mild=float(image_forensics_raw.get("noise_kurtosis_mild", 18.0)),
+            noise_kurtosis_camera_max=float(image_forensics_raw.get("noise_kurtosis_camera_max", 25.0)),
+            noise_variance_flattened=float(image_forensics_raw.get("noise_variance_flattened", 0.25)),
+            noise_edge_mask_percentile=float(image_forensics_raw.get("noise_edge_mask_percentile", 85.0)),
+            ela_quality=int(image_forensics_raw.get("ela_quality", 95)),
+            ela_disparity_critical=float(image_forensics_raw.get("ela_disparity_critical", 10.0)),
+            ela_disparity_moderate=float(image_forensics_raw.get("ela_disparity_moderate", 6.0)),
+            ela_max_diff_threshold=float(image_forensics_raw.get("ela_max_diff_threshold", 60.0)),
+            ela_nominal_max=float(image_forensics_raw.get("ela_nominal_max", 8.0)),
+            face_skin_to_edge_ratio=float(image_forensics_raw.get("face_skin_to_edge_ratio", 0.16)),
+            face_skin_lap_min=float(image_forensics_raw.get("face_skin_lap_min", 20.0)),
+            face_edge_lap_min=float(image_forensics_raw.get("face_edge_lap_min", 35.0)),
+            face_seam_ratio_threshold=float(image_forensics_raw.get("face_seam_ratio_threshold", 2.2)),
+            face_eye_asymmetry_threshold=float(image_forensics_raw.get("face_eye_asymmetry_threshold", 0.35)),
+            color_decorrelation_critical=float(image_forensics_raw.get("color_decorrelation_critical", 0.35)),
+            color_decorrelation_moderate=float(image_forensics_raw.get("color_decorrelation_moderate", 0.50)),
         ),
     )
 
@@ -366,7 +493,9 @@ def get_settings() -> Settings:
 def reload_settings() -> Settings:
     """Force reload of settings from disk and environment."""
     global _settings
+    load_dotenv(_PROJECT_ROOT / ".env.email", override=True)
     load_dotenv(_PROJECT_ROOT / ".env", override=True)
     load_dotenv(override=True)
     _settings = None
     return get_settings()
+
