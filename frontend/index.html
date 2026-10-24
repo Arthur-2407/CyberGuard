@@ -110,6 +110,15 @@
         </button>
       </div>
 
+      <!-- Docker SOC Backend & Tunnel Status Indicator Pill -->
+      <div class="backend-tunnel-widget" id="backend-tunnel-widget">
+        <button class="nav-backend-btn" id="nav-backend-btn" onclick="openBackendModal()" title="CyberGuard Docker Backend &amp; Secure Tunnel Settings">
+          <span class="backend-pulse-dot offline" id="backend-nav-dot"></span>
+          <span class="backend-nav-text" id="backend-nav-text">DOCKER OFFLINE</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="backend-nav-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        </button>
+      </div>
+
       <!-- Non-destructively hidden telemetry status cluster (Preserves background event handlers without UI intrusion) -->
       <div class="nav-telemetry-hidden-stubs" style="display:none !important;" aria-hidden="true">
         <button class="nav-health-btn" id="nav-system-health-btn" onclick="openSystemHealthModal()">
@@ -3853,6 +3862,74 @@
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:12px; border-top:1px solid var(--border-subtle);">
           <button class="btn btn-secondary btn-sm" id="btn-copy-exif-json" onclick="copyExifJSON()">Copy EXIF JSON</button>
           <button class="btn btn-primary btn-sm" onclick="closeImageExifModal()" data-text="Close Inspector">Close Inspector</button>
+        </div>
+      </div>
+    </div>
+  <!-- CyberGuard Docker Backend & Secure Tunnel Configuration Modal -->
+  <div class="modal-overlay hidden" id="backend-connectivity-modal" onclick="if(event.target===this) closeBackendModal()">
+    <div class="card modal-card" style="max-width:680px; width:95%; max-height:90vh; overflow-y:auto; margin:auto; border:1px solid rgba(0,240,255,0.4); box-shadow:0 0 35px rgba(0,240,255,0.2);">
+      <div class="card-header" style="position:sticky; top:0; background:rgba(11,17,32,0.98); backdrop-filter:blur(14px); z-index:10; border-bottom:1px solid rgba(0,240,255,0.2); padding:14px 18px; margin-bottom:0; display:flex; justify-content:space-between; align-items:center;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="width:32px; height:32px; border-radius:6px; background:rgba(0,240,255,0.15); display:flex; align-items:center; justify-content:center; color:#00f0ff;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+          </div>
+          <div>
+            <h2 class="card-title" style="font-size:14px; margin:0; display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono', monospace; color:#00f0ff;">
+              DOCKER BACKEND &amp; TUNNEL CONTROLLER
+              <span class="card-tag" id="modal-backend-status-tag" style="background:rgba(239,68,68,0.15); color:#ef4444; font-size:10px;">OFFLINE</span>
+            </h2>
+            <div style="font-size:11px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">
+              On-demand laptop container orchestration &amp; secure public ingress.
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeBackendModal()">✕ Close</button>
+      </div>
+
+      <div style="padding:18px; display:flex; flex-direction:column; gap:16px;">
+        <!-- Status & Telemetry Card -->
+        <div style="background:rgba(0,0,0,0.35); border:1px solid var(--border-subtle); border-radius:8px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <span style="font-size:11px; color:#94a3b8; text-transform:uppercase; font-family:'JetBrains Mono', monospace;">Active Resolved Endpoint</span>
+            <span id="modal-backend-ping" style="font-size:11px; font-family:'JetBrains Mono', monospace; color:#94a3b8;">Latency: --</span>
+          </div>
+          <div id="modal-backend-url-display" style="font-family:'JetBrains Mono', monospace; font-size:13px; color:#38bdf8; word-break:break-all; font-weight:600;">
+            http://127.0.0.1:3000
+          </div>
+        </div>
+
+        <!-- Endpoint Form -->
+        <div>
+          <label style="display:block; font-size:11px; font-family:'JetBrains Mono', monospace; color:#f1f5f9; margin-bottom:6px; font-weight:600;">
+            BACKEND URL / SECURE TUNNEL ENDPOINT:
+          </label>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="custom-backend-url-input" class="input" placeholder="https://xxxx.trycloudflare.com or http://127.0.0.1:3000" style="flex:1; font-family:'JetBrains Mono', monospace; font-size:12px;" />
+            <button class="btn btn-secondary btn-sm" id="btn-test-backend" onclick="testCustomBackendUrl()">Test</button>
+            <button class="btn btn-primary btn-sm" id="btn-save-backend" onclick="saveCustomBackendUrl()">Save &amp; Apply</button>
+          </div>
+          <div id="backend-test-result" style="margin-top:6px; font-size:11.5px; font-family:'JetBrains Mono', monospace; min-height:18px;"></div>
+        </div>
+
+        <!-- Quick Presets -->
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-xs" onclick="setPresetBackend('http://127.0.0.1:3000')">Local Docker (127.0.0.1:3000)</button>
+          <button class="btn btn-secondary btn-xs" onclick="setPresetBackend('')">Current Origin Fallback</button>
+          <button class="btn btn-secondary btn-xs" onclick="clearCustomBackend()">Reset / Auto-Detect</button>
+        </div>
+
+        <!-- How it works banner -->
+        <div style="background:rgba(15,23,42,0.6); border-left:3px solid #00f0ff; border-radius:4px; padding:12px; font-size:11.5px; color:#94a3b8; line-height:1.6;">
+          <strong style="color:#00f0ff; display:block; margin-bottom:4px; font-family:'JetBrains Mono', monospace;">How On-Demand Docker Deployment Works:</strong>
+          • <strong>Frontends Stay Online 24/7</strong>: Your Vercel and GitHub Pages sites remain accessible continuously.<br />
+          • <strong>Zero Battery / Laptop Drain When Inactive</strong>: Run Docker on your laptop only when you need live scans, voice analysis, or threat intel.<br />
+          • <strong>Connecting Public Frontend to Laptop</strong>: Public HTTPS sites cannot reach <code>localhost</code> directly. Start the container with tunnel enabled:<br />
+          <code style="display:block; background:#040916; padding:6px 10px; border-radius:4px; color:#38bdf8; margin:6px 0; font-family:'JetBrains Mono', monospace;">.\scripts\docker-manager.ps1 start -Tunnel</code>
+          Then copy the assigned <code>https://*.trycloudflare.com</code> URL and paste it in the box above!
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px; border-top:1px solid var(--border-subtle); padding-top:12px;">
+          <button class="btn btn-secondary btn-sm" onclick="closeBackendModal()">Close</button>
         </div>
       </div>
     </div>

@@ -54,7 +54,7 @@ class Evidence(BaseModel):
 
 class Explanation(BaseModel):
     summary: str
-    reasoning: str
+    reasoning: str = "Automated telemetry and forensic explanation."
     limitations: Optional[str] = None
 
 class ThreatEvent(BaseModel):
@@ -76,7 +76,7 @@ class ThreatEvent(BaseModel):
     affected_asset: Optional[str] = None
     user_id: Optional[int] = None
     user_email: Optional[str] = None
-    detector: str
+    detector: str = "CyberGuard"
     detector_version: str = "1.0"
     processing_time_ms: float = 0.0
     capability_status: str = "READY"

@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Manages the lifecycle of the CyberGuard SOC backend container and optional secure
-    Cloudflare Tunnel on your local laptop. Keeps your laptop battery & resources free
+    Cloudflare Tunnel on your local laptop. Keeps your laptop battery and resources free
     when offline, and instantly exposes an authenticated, encrypted HTTPS endpoint for
     your Vercel and GitHub Pages frontends when you need it.
 
@@ -34,9 +34,9 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $ProjectRoot
 
 function Write-CyberHeader {
-    Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-    Write-Host "  CyberGuard SOC & AI Defense — Docker On-Demand Controller    " -ForegroundColor White
-    Write-Host "════════════════════════════════════════════════════════════════" -ForegroundColor Cyan
+    Write-Host "================================================================" -ForegroundColor Cyan
+    Write-Host "  CyberGuard SOC and AI Defense - Docker On-Demand Controller   " -ForegroundColor White
+    Write-Host "================================================================" -ForegroundColor Cyan
 }
 
 function Test-DockerEngine {
@@ -59,7 +59,7 @@ switch ($Command) {
     "start" {
         Write-CyberHeader
         if ($Tunnel) {
-            Write-Host "[INFO] Starting CyberGuard Backend + Cloudflare Secure Tunnel..." -ForegroundColor Green
+            Write-Host "[INFO] Starting CyberGuard Backend and Cloudflare Secure Tunnel..." -ForegroundColor Green
             docker compose --profile tunnel up -d --build
             Write-Host ""
             Write-Host "[SUCCESS] Containers started! Waiting 5s for tunnel assignment..." -ForegroundColor Cyan
@@ -102,7 +102,9 @@ switch ($Command) {
         try {
             $resp = Invoke-RestMethod -Uri "http://localhost:3000/health" -TimeoutSec 3 -ErrorAction SilentlyContinue
             Write-Host "  Backend HTTP Health: " -NoNewline
-            Write-Host "ONLINE ($($resp.service) v$($resp.version))" -ForegroundColor Green
+            $sName = $resp.service
+            $sVer = $resp.version
+            Write-Host "ONLINE ($sName v$sVer)" -ForegroundColor Green
         } catch {
             Write-Host "  Backend HTTP Health: " -NoNewline
             Write-Host "OFFLINE (Container stopped or initializing)" -ForegroundColor Red
@@ -119,18 +121,17 @@ switch ($Command) {
 
     "tunnel-url" {
         Write-Host "[INFO] Fetching Cloudflare Tunnel endpoint from logs..." -ForegroundColor Cyan
-        $tunnelLogs = docker logs cyberguard-tunnel 2>&1
-        $match = [regex]::Match($tunnelLogs, 'https://[a-zA-Z0-9\-]+\.trycloudflare\.com')
-        if ($match.Success) {
-            $url = $match.Value
-            Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
+        $m = cmd /c "docker logs cyberguard-tunnel 2>&1" | Select-String -Pattern "https://[a-zA-Z0-9-]+\.trycloudflare\.com"
+        if ($m -and $m.Matches.Count -gt 0) {
+            $url = $m.Matches[0].Value
+            Write-Host "----------------------------------------------------------------" -ForegroundColor Green
             Write-Host "  LIVE SECURE TUNNEL URL:" -ForegroundColor White
             Write-Host "  $url" -ForegroundColor Yellow -BackgroundColor Black
-            Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
+            Write-Host "----------------------------------------------------------------" -ForegroundColor Green
             Write-Host "Copy and paste this URL into your Vercel or GitHub Pages frontend:" -ForegroundColor Gray
             Write-Host "  1. Open CyberGuard Console (Vercel or GitHub Pages)" -ForegroundColor Gray
             Write-Host "  2. Click the 'Backend Endpoint' pill in the top-right navbar" -ForegroundColor Gray
-            Write-Host "  3. Paste the URL above and click 'Save & Test'" -ForegroundColor Gray
+            Write-Host "  3. Paste the URL above and click 'Save and Test'" -ForegroundColor Gray
         } else {
             Write-Host "[WARN] Quick Tunnel URL not yet found in logs or named token tunnel is active." -ForegroundColor Yellow
             Write-Host "Run 'docker logs cyberguard-tunnel' to inspect tunnel connection output." -ForegroundColor Gray
@@ -163,7 +164,7 @@ switch ($Command) {
         Write-Host "  start -Tunnel      Start backend + secure Cloudflare HTTPS Tunnel"
         Write-Host "  stop               Stop containers and release resources"
         Write-Host "  restart            Restart active containers"
-        Write-Host "  status             Inspect container status & local health probe"
+        Write-Host "  status             Inspect container status and local health probe"
         Write-Host "  tunnel-url         Retrieve and print active trycloudflare.com URL"
         Write-Host "  logs [-Follow]     Display container logs"
         Write-Host "  health             Ping local health check endpoint"

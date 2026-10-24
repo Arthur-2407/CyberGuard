@@ -7,6 +7,8 @@
 #   TLS endpoint for your live Vercel & GitHub Pages frontends to reach your laptop.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+name: cyberguard
+
 services:
   cyberguard-backend:
     build:
@@ -59,20 +61,7 @@ services:
         condition: service_healthy
     networks:
       - cyberguard-net
-    # If CLOUDFLARE_TUNNEL_TOKEN is set, runs authenticated named tunnel;
-    # otherwise runs an instant zero-config Quick Tunnel (https://*.trycloudflare.com)
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - >
-        if [ -n "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
-          echo "[INFO] Starting authenticated Cloudflare Tunnel with token..."
-          cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
-        else
-          echo "[INFO] Starting zero-config Cloudflare Quick Tunnel to cyberguard-backend:3000..."
-          cloudflared tunnel --url http://cyberguard-backend:3000 --no-autoupdate
-        fi
-    environment:
-      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: ["tunnel", "--url", "http://cyberguard-backend:3000"]
 
 networks:
   cyberguard-net:

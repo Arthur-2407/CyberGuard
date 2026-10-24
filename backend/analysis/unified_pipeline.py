@@ -419,7 +419,7 @@ class UnifiedThreatPipeline:
             evidence=evidences,
             explanation=explanation,
             recommended_actions=actions,
-            affected_user=u_name or speaker_id,
+            affected_user=u_name,
             user_id=u_id,
             user_email=u_email,
             detector="CyberGuard UnifiedThreatPipeline",

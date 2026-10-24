@@ -27,6 +27,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsndfile1 \
     ffmpeg \
     libzbar0 \
+    libportaudio2 \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -36,8 +37,7 @@ WORKDIR /app
 # Pre-install pip tools and lightweight CPU-only PyTorch to avoid massive CUDA blobs
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu torch torchaudio && \
-    pip install --no-cache-dir -r /app/backend/requirements.txt
+    pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu -r /app/backend/requirements.txt
 
 # Create dedicated non-root application user and persistent data structures
 RUN groupadd -g 10001 cyberguard && \

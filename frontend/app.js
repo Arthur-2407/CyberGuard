@@ -1013,18 +1013,46 @@ function stopLiveSession() {
   }
 
   addLog('Live session stopped.', 'info');
-  updateSystemStatus('offline');
+  // Live audio recording stopped; do not falsely mark backend as offline
+  wsConnected = false;
 }
 
 // ── System Status ─────────────────────────────────────────────────────────────
 function updateSystemStatus(state) {
   const statusEl = document.getElementById('system-status');
-  if (!statusEl) return;
-  const dot = statusEl.querySelector('.status-dot');
-  const span = statusEl.querySelector('span');
-  if (dot) dot.className = `status-dot ${state}`;
-  if (span) {
-    span.textContent = state === 'online' ? 'SYSTEM ONLINE' : state === 'error' ? 'SYSTEM ERROR' : 'DISCONNECTED';
+  if (statusEl) {
+    const dot = statusEl.querySelector('.status-dot');
+    const span = statusEl.querySelector('span');
+    if (dot) dot.className = `status-dot ${state}`;
+    if (span) {
+      span.textContent = state === 'online' ? 'SYSTEM ONLINE' : state === 'error' ? 'SYSTEM ERROR' : 'DISCONNECTED';
+    }
+  }
+
+  // Update Docker Backend Navbar Pill & Modal Status
+  const navDot = document.getElementById('backend-nav-dot');
+  const navText = document.getElementById('backend-nav-text');
+  const modalTag = document.getElementById('modal-backend-status-tag');
+  if (navDot && navText) {
+    if (state === 'online') {
+      navDot.className = 'backend-pulse-dot online';
+      navText.textContent = 'DOCKER ONLINE';
+      navText.style.color = '#10b981';
+      if (modalTag) {
+        modalTag.textContent = 'ONLINE';
+        modalTag.style.background = 'rgba(16,185,129,0.15)';
+        modalTag.style.color = '#10b981';
+      }
+    } else {
+      navDot.className = 'backend-pulse-dot offline';
+      navText.textContent = 'DOCKER OFFLINE';
+      navText.style.color = '#ef4444';
+      if (modalTag) {
+        modalTag.textContent = 'OFFLINE (STOPPED)';
+        modalTag.style.background = 'rgba(239,68,68,0.15)';
+        modalTag.style.color = '#ef4444';
+      }
+    }
   }
 }
 
@@ -1480,16 +1508,34 @@ async function analyzeFile() {
   } catch (err) {
     clearInterval(stageTimer);
     updatePipelineStepper(1);
+    const isNetworkErr = err instanceof TypeError || /fetch|network|failed to fetch|connect|refused/i.test(err.message);
     const resultsContainer = document.getElementById('results-body');
     if (resultsContainer) {
-      resultsContainer.innerHTML = `
-        <div class="results-empty" style="padding:40px 20px; text-align:center;">
-          <p style="color:#ef4444; font-size:13px; font-weight:600;">Analysis failed: ${escapeHtml(err.message)}</p>
-        </div>
-      `;
+      if (isNetworkErr) {
+        resultsContainer.innerHTML = `
+          <div class="results-empty" style="padding:40px 20px; text-align:center;">
+            <div style="font-size:32px; margin-bottom:8px;">⚠️</div>
+            <p style="color:#ef4444; font-size:13px; font-weight:700; font-family:'JetBrains Mono', monospace; margin-bottom:6px;">
+              BACKEND DOCKER CONTAINER OFFLINE
+            </p>
+            <p style="color:#94a3b8; font-size:11.5px; max-width:440px; margin:0 auto 14px; line-height:1.5;">
+              The frontend is online on Vercel / GitHub Pages. To run scans, start the CyberGuard backend in Docker on your laptop or configure your secure tunnel endpoint.
+            </p>
+            <button class="btn btn-secondary btn-xs" onclick="openBackendModal()">Configure Backend / Tunnel</button>
+          </div>
+        `;
+      } else {
+        resultsContainer.innerHTML = `
+          <div class="results-empty" style="padding:40px 20px; text-align:center;">
+            <p style="color:#ef4444; font-size:13px; font-weight:600;">Analysis failed: ${escapeHtml(err.message)}</p>
+          </div>
+        `;
+      }
     }
     if (err.name === 'AbortError' || didTimeout) {
       showToast('Analysis timed out. The server may be busy — please try again.', 'error');
+    } else if (isNetworkErr) {
+      showToast('CyberGuard Backend offline — Start Docker container or configure tunnel', 'error');
     } else {
       showToast('Analysis failed: ' + err.message, 'error');
     }
@@ -2520,16 +2566,26 @@ function showToast(message, type = 'info', duration = 4000) {
 
 // ── System Status Check ───────────────────────────────────────────────────────
 async function checkSystemStatus() {
+  const currentEndpoint = getResolvedApiBase();
+  const displayEl = document.getElementById('modal-backend-url-display');
+  if (displayEl) displayEl.textContent = currentEndpoint || '(Local / Origin Fallback)';
+
+  const startTime = performance.now();
   try {
-    const resp = await fetch(`${API_BASE}/api/config/status`);
+    const targetUrl = currentEndpoint ? `${currentEndpoint}/api/config/status` : '/api/config/status';
+    const resp = await fetch(targetUrl);
+    const latency = Math.round(performance.now() - startTime);
+    const pingEl = document.getElementById('modal-backend-ping');
+    if (pingEl) pingEl.textContent = `Latency: ${latency}ms`;
+
     if (resp.ok) {
       const data = await parseResponseSafely(resp, 'System Status');
       if (data && data.status === 'operational') {
         updateSystemStatus('online');
 
         // Update feature pill status
-        if (data.wav2vec2_available) document.getElementById('pill-wav2vec').classList.add('active');
-        if (data.ecapa_available) document.getElementById('pill-speaker').classList.add('active');
+        if (data.wav2vec2_available && document.getElementById('pill-wav2vec')) document.getElementById('pill-wav2vec').classList.add('active');
+        if (data.ecapa_available && document.getElementById('pill-speaker')) document.getElementById('pill-speaker').classList.add('active');
 
         // Load current thresholds
         if (data.config && data.config.thresholds) {
@@ -2555,6 +2611,8 @@ async function checkSystemStatus() {
       updateSystemStatus('offline');
     }
   } catch (_) {
+    const pingEl = document.getElementById('modal-backend-ping');
+    if (pingEl) pingEl.textContent = 'Latency: Offline';
     updateSystemStatus('offline');
   }
 }
@@ -6096,6 +6154,86 @@ function closeSCModal() {
   if (modal) modal.classList.add('hidden');
   window._scSelectedItemId = null;
 }
+
+// ── Docker SOC Backend & Secure Tunnel Console Modal ──────────────────────────
+function openBackendModal() {
+  const modal = document.getElementById('backend-connectivity-modal');
+  if (!modal) return;
+  const current = getResolvedApiBase();
+  const displayEl = document.getElementById('modal-backend-url-display');
+  const inputEl = document.getElementById('custom-backend-url-input');
+  const resultEl = document.getElementById('backend-test-result');
+
+  if (displayEl) displayEl.textContent = current || '(Local / Origin Fallback)';
+  if (inputEl) inputEl.value = localStorage.getItem('cyberguard_api_base') || current || '';
+  if (resultEl) resultEl.innerHTML = '';
+
+  modal.classList.remove('hidden');
+}
+
+function closeBackendModal() {
+  const modal = document.getElementById('backend-connectivity-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function testCustomBackendUrl() {
+  const inputEl = document.getElementById('custom-backend-url-input');
+  const resultEl = document.getElementById('backend-test-result');
+  if (!inputEl || !resultEl) return;
+
+  const url = (inputEl.value || '').trim().replace(/\/+$/, '');
+  resultEl.innerHTML = '<span style="color:#f59e0b;">Pinging health endpoint...</span>';
+
+  const t0 = performance.now();
+  try {
+    const pingTarget = url ? `${url}/health` : '/health';
+    const resp = await fetch(pingTarget, { method: 'GET', headers: { 'Accept': 'application/json' } });
+    const lat = Math.round(performance.now() - t0);
+    if (resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      resultEl.innerHTML = `<span style="color:#10b981;">✓ Reachable (${lat}ms) — ${escapeHtml(data.service || 'CyberGuard')} v${escapeHtml(data.version || '1.0')} ready</span>`;
+      const pingEl = document.getElementById('modal-backend-ping');
+      if (pingEl) pingEl.textContent = `Latency: ${lat}ms`;
+    } else {
+      resultEl.innerHTML = `<span style="color:#ef4444;">✗ Server returned HTTP ${resp.status} (${lat}ms)</span>`;
+    }
+  } catch (err) {
+    resultEl.innerHTML = `<span style="color:#ef4444;">✗ Unreachable: ${escapeHtml(err.message)} — Ensure Docker container is running and tunnel is active</span>`;
+  }
+}
+
+async function saveCustomBackendUrl() {
+  const inputEl = document.getElementById('custom-backend-url-input');
+  if (!inputEl) return;
+  const url = inputEl.value.trim();
+  setCyberGuardApiBase(url);
+  showToast(url ? `Backend endpoint saved: ${url}` : 'Backend reset to default origin', 'success');
+  openBackendModal();
+  if (typeof testCustomBackendUrl === 'function') {
+    testCustomBackendUrl();
+  }
+}
+
+function setPresetBackend(url) {
+  const inputEl = document.getElementById('custom-backend-url-input');
+  if (inputEl) {
+    inputEl.value = url;
+    testCustomBackendUrl();
+  }
+}
+
+function clearCustomBackend() {
+  setCyberGuardApiBase('');
+  openBackendModal();
+  showToast('Backend endpoint reset to auto-detect fallback', 'info');
+}
+
+window.openBackendModal = openBackendModal;
+window.closeBackendModal = closeBackendModal;
+window.testCustomBackendUrl = testCustomBackendUrl;
+window.saveCustomBackendUrl = saveCustomBackendUrl;
+window.setPresetBackend = setPresetBackend;
+window.clearCustomBackend = clearCustomBackend;
 
 // ── System Health & Engine Diagnostics Modal ──────────────────────────────────
 function openSystemHealthModal() {

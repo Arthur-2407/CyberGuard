@@ -574,16 +574,90 @@ The CyberGuard command center hosted at `http://127.0.0.1:3000` provides an eye-
 
 ## ◈ DEPLOYMENT & NODE INITIALIZATION
 
-### 1. Host Infrastructure Requirements
+### 1. Hybrid On-Demand Architecture (Docker + 24/7 Cloud Frontends)
 
-| Host Infrastructure Subsystem | Minimum Specification | Recommended Specification |
-| :--- | :--- | :--- |
-| 🐍 **Python Environment** | `Python 3.10`+ | `Python 3.12.10` (x86_64 / ARM64) |
-| 🔊 **Audio Demuxing Engine** | `FFmpeg 4.4`+ | `FFmpeg 6.0`+ configured in system `PATH` |
-| ⚡ **Compute Infrastructure**| `4-Core CPU` • `8 GB RAM` | `8-Core CPU` • `NVIDIA CUDA GPU` (16 GB VRAM) |
-| 📱 **Android Client Build** | `Android 10.0+ (API 29)` | `Android 14.0+ (API 34)` • Gradle 8.x |
+CyberGuard operates on an **On-Demand Laptop Backend + Resilient Static Cloud Frontend** architecture:
 
-### 2. Environment Initialization
+```
+┌──────────────────────────────────────────────┐       ┌──────────────────────────────────────────────┐
+│        Vercel Production Frontend            │       │         GitHub Pages Production Node         │
+│  https://cyber-guard-backend-ashen.vercel.app│       │      https://arthur-2407.github.io/CyberGuard│
+└───────────────────────┬──────────────────────┘       └───────────────────────┬──────────────────────┘
+                        │                                                      │
+                        └──────────────────────────┬───────────────────────────┘
+                                                   │
+                                      (HTTPS / WSS Encrypted Link)
+                                                   ▼
+                        ┌──────────────────────────────────────────────────────┐
+                        │        Cloudflare Secure Ingress Tunnel              │
+                        │       https://<assigned>.trycloudflare.com           │
+                        └──────────────────────────┬───────────────────────────┘
+                                                   │
+                                      (Local Docker Bridge Network)
+                                                   ▼
+                        ┌──────────────────────────────────────────────────────┐
+                        │      Your Laptop — Docker Container (On-Demand)      │
+                        │               cyberguard-backend:3000                │
+                        │   • AASIST SOTA Acoustic Deepfake Neural Core        │
+                        │   • Real-Time Binary WebSocket Audio Stream Ingestion│
+                        │   • VirusTotal v3 + Abuse.ch URLhaus Enclave Feeds   │
+                        │   • Computer Vision QR Forensic Scanning Core        │
+                        │   • SQLite Persistent Vault: ./data/cyberguard.db    │
+                        └──────────────────────────────────────────────────────┘
+```
+
+- **24/7 Frontend Availability**: Both [Vercel](https://cyber-guard-backend-ashen.vercel.app) and [GitHub Pages](https://arthur-2407.github.io/CyberGuard) stay permanently online.
+- **Laptop Resource & Battery Conservation**: Run the CyberGuard backend in Docker on your laptop only when you need it. When you stop the container or close your laptop, zero battery or cloud compute is consumed.
+- **Graceful Offline Degradation**: When Docker is stopped, the frontend web console opens smoothly, and displays a prominent `[ 🔴 DOCKER OFFLINE ]` indicator in the navbar.
+- **Zero Router Port Forwarding Required**: The included Cloudflare Tunnel companion service provides end-to-end TLS encryption and public reachability without exposing ports on your home or office router.
+
+---
+
+### 2. On-Demand Docker Startup (Recommended)
+
+Using the cross-platform management CLI:
+
+```powershell
+# Start Backend + Secure Cloudflare HTTPS Tunnel (for Vercel & GitHub Pages)
+.\scripts\docker-manager.ps1 start -Tunnel
+
+# Fetch your active HTTPS tunnel endpoint
+.\scripts\docker-manager.ps1 tunnel-url
+
+# Inspect container status & local health probe
+.\scripts\docker-manager.ps1 status
+
+# Stop containers and release all laptop resources when finished
+.\scripts\docker-manager.ps1 stop
+```
+
+*(On Linux / macOS bash: `./scripts/docker-manager.sh start --tunnel`, `./scripts/docker-manager.sh stop`)*
+
+#### Linking Tunnel in the Web Console:
+1. Open your live frontend on [Vercel](https://cyber-guard-backend-ashen.vercel.app) or [GitHub Pages](https://arthur-2407.github.io/CyberGuard).
+2. Click the **`[ DOCKER OFFLINE ]`** badge in the top navigation bar.
+3. Paste the active `https://*.trycloudflare.com` tunnel URL and click **Save & Apply**.
+4. The badge turns **`[ 🟢 DOCKER ONLINE ]`** and all live AI voice analysis, phishing URL checks, and threat intel queries immediately connect!
+
+#### Standard Docker Compose Commands:
+```bash
+# Local development only (http://localhost:3000):
+docker compose up -d --build cyberguard-backend
+
+# Production on-demand with secure tunnel:
+docker compose --profile tunnel up -d --build
+
+# View container logs:
+docker compose --profile tunnel logs -f
+
+# Stop and release resources:
+docker compose --profile tunnel down
+```
+
+---
+
+### 3. Alternative Local Python Environment Setup (Developers)
+
 ```powershell
 # 1. Clone repository
 git clone https://github.com/Arthur-2407/CyberGuard.git
@@ -597,16 +671,10 @@ python -m venv venv
 # (On Linux / macOS: source venv/bin/activate)
 
 # 4. Install production dependencies
+pip install --extra-index-url https://download.pytorch.org/whl/cpu torch torchaudio
 pip install -r backend\requirements.txt
-```
 
-### 3. Launching the CyberGuard Defense Node
-```powershell
-# Run the FastAPI server via Uvicorn on port 3000
-.\venv\Scripts\python.exe -m uvicorn backend.main:app --host 0.0.0.0 --port 3000 --reload
-```
-*Or execute the automated launcher script:*
-```powershell
+# 5. Launch local server
 .\start_server.ps1
 ```
 
@@ -615,6 +683,8 @@ pip install -r backend\requirements.txt
 | Command Center Node | Operational Access URL | Functional Scope | Status |
 | :--- | :--- | :--- | :---: |
 | 💻 **Web SOC Command HUD** | [`http://127.0.0.1:3000`](http://127.0.0.1:3000) | Primary cybernetic dashboard, audio oscilloscope, &amp; real-time risk gauges | ![Online](https://img.shields.io/badge/PORT-3000-00ff88?style=flat-square) |
+| ☁️ **Vercel Cloud HUD** | [`https://cyber-guard-backend-ashen.vercel.app`](https://cyber-guard-backend-ashen.vercel.app) | Public production web console with dynamic tunnel switcher | ![Online](https://img.shields.io/badge/VERCEL-ONLINE-00f0ff?style=flat-square) |
+| 🌐 **GitHub Pages HUD** | [`https://arthur-2407.github.io/CyberGuard`](https://arthur-2407.github.io/CyberGuard) | Multi-cloud redundant static mirror | ![Online](https://img.shields.io/badge/PAGES-ONLINE-10b981?style=flat-square) |
 | 📑 **Interactive OpenAPI (Swagger)** | [`http://127.0.0.1:3000/docs`](http://127.0.0.1:3000/docs) | Full interactive schema explorer &amp; REST endpoint execution suite | ![Online](https://img.shields.io/badge/DOCS-READY-00f0ff?style=flat-square) |
 | 📖 **Alternative ReDoc Console** | [`http://127.0.0.1:3000/redoc`](http://127.0.0.1:3000/redoc) | Clean offline-capable technical API specification viewer | ![Online](https://img.shields.io/badge/REDOC-READY-a855f7?style=flat-square) |
 

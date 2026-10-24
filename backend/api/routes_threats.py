@@ -94,13 +94,16 @@ def _get_dependencies(user: Optional[Any] = None):
 
 def _broadcast_threat_event(event: ThreatEvent):
     curr_user = _ACTIVE_USER_CONTEXT.get()
-    if curr_user and isinstance(curr_user, dict):
-        if not getattr(event, "user_id", None):
-            event.user_id = curr_user.get("id")
-        if not getattr(event, "user_email", None):
-            event.user_email = curr_user.get("email")
-        if not getattr(event, "affected_user", None):
-            event.affected_user = curr_user.get("username")
+    if curr_user and isinstance(curr_user, dict) and curr_user.get("id"):
+        # Authoritative server-side identity: bind strictly to verified authenticated session
+        event.user_id = curr_user.get("id")
+        event.user_email = curr_user.get("email")
+        event.affected_user = curr_user.get("username")
+    else:
+        # Unauthenticated / guest caller: strip any spoofed client-supplied identity
+        event.user_id = None
+        event.user_email = None
+        event.affected_user = None
 
     try:
         from backend.main import get_app_ws_notifier
@@ -119,14 +122,14 @@ def _broadcast_threat_event(event: ThreatEvent):
     except Exception as exc:
         logger.debug(f"Threat event broadcast skipped: {exc}")
 
-    # Automated Brevo Email Dispatch: Triggered ONLY on HIGH or CRITICAL threats to the specific active user
+    # Automated Email Dispatch: Triggered ONLY on HIGH or CRITICAL threats to the verified signed-in user
     try:
         sev = getattr(event, "severity", None)
         sev_str = sev.value if hasattr(sev, "value") else str(sev)
-        if str(sev_str).upper() in ("HIGH", "CRITICAL"):
+        if str(sev_str).upper() in ("HIGH", "CRITICAL") and event.user_id is not None:
             from backend.alerts.email_notifier import get_email_notifier
             notifier = get_email_notifier()
-            u_email = getattr(event, "user_email", None) or (curr_user.get("email") if curr_user and isinstance(curr_user, dict) else None)
+            u_email = event.user_email
             try:
                 import asyncio
                 loop = asyncio.get_running_loop()

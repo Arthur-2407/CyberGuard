@@ -36,6 +36,7 @@ import json
 import logging
 import time
 import uuid
+from typing import Optional, Any, Dict, List
 
 from concurrent.futures import ThreadPoolExecutor
 
@@ -88,10 +89,48 @@ async def websocket_stream(websocket: WebSocket):
 
     session_id = str(uuid.uuid4())[:12]
 
+    # Authenticate WebSocket session to bind alerts to the verified signed-in account
+    ws_user_id: Optional[int] = None
+    ws_user_email: Optional[str] = None
+    ws_user_name: Optional[str] = None
+    try:
+        from backend.storage.auth import AuthService
+        from backend.storage.database import get_session_factory
+        candidate_tokens = []
+        c_tok = websocket.cookies.get("cyberguard_session")
+        if c_tok:
+            candidate_tokens.append(c_tok)
+        raw_auth = websocket.headers.get("Authorization") or websocket.headers.get("authorization")
+        if raw_auth:
+            parts = raw_auth.strip().split()
+            if len(parts) == 2 and parts[0].lower() == "bearer":
+                candidate_tokens.append(parts[1])
+            elif len(parts) == 1:
+                candidate_tokens.append(parts[0])
+        x_tok = websocket.headers.get("X-Session-Token") or websocket.headers.get("x-session-token")
+        if x_tok:
+            candidate_tokens.append(x_tok)
+        q_tok = websocket.query_params.get("token")
+        if q_tok:
+            candidate_tokens.append(q_tok)
+
+        if candidate_tokens:
+            factory = get_session_factory("data/cyberguard.db")
+            with factory() as db:
+                for tok in candidate_tokens:
+                    user_row = AuthService.get_user_from_token(db, tok)
+                    if user_row and user_row.is_active:
+                        ws_user_id = user_row.id
+                        ws_user_email = user_row.email
+                        ws_user_name = user_row.username
+                        break
+    except Exception as auth_err:
+        logger.debug(f"WebSocket auth lookup notice: {auth_err}")
+
     # Register this WebSocket with its session_id so alerts are routed only here.
     await app_ws_notifier.connect(websocket, session_id)
 
-    logger.info(f"WebSocket stream session started: {session_id}")
+    logger.info(f"WebSocket stream session started: {session_id} (user_id={ws_user_id})")
 
     # Per-session objects
     stream = StreamCapture(
@@ -319,6 +358,8 @@ async def websocket_stream(websocket: WebSocket):
                         speaker_similarity=speaker_similarity,
                         voice_classification=voice_classification,
                         rms=round(speech_metrics.get("rms", 0.0), 4),
+                        user_id=ws_user_id,
+                        user_email=ws_user_email,
                     )
                     
                     # Feed high risk to Incident Manager only for confirmed synthetic cloned speech detections
@@ -364,7 +405,9 @@ async def websocket_stream(websocket: WebSocket):
                                 limitations="Acoustic analysis based on calibrated multi-feature spectral and prosodic baselines."
                             ),
                             recommended_actions=recommendation.actions or ["Halt communication", "Verify caller identity"],
-                            affected_user=consistency_result.get("speaker_id"),
+                            affected_user=ws_user_name if ws_user_id else None,
+                            user_id=ws_user_id,
+                            user_email=ws_user_email,
                             detector="VoiceCloneDetector",
                             processing_time_ms=result.processing_time_ms,
                             correlation_id=session_id,

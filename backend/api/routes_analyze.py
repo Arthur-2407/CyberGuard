@@ -374,9 +374,9 @@ async def analyze_audio_file(
                         source="VirusTotal"
                     ))
 
-            u_id = current_user.id if current_user else None
-            u_email = current_user.email if current_user else None
-            u_name = current_user.username if current_user else None
+            u_id = current_user.id if (current_user and current_user.is_active) else None
+            u_email = current_user.email if (current_user and current_user.is_active) else None
+            u_name = current_user.username if (current_user and current_user.is_active) else None
 
             threat_event = ThreatEvent(
                 source=f"File: {file.filename or 'upload'}",
@@ -393,7 +393,7 @@ async def analyze_audio_file(
                     limitations="Acoustic analysis based on calibrated multi-feature spectral and prosodic baselines."
                 ),
                 recommended_actions=recommendation.actions or [],
-                affected_user=u_name or speaker_id,
+                affected_user=u_name,
                 user_id=u_id,
                 user_email=u_email,
                 detector="VoiceCloneDetector",

@@ -405,6 +405,7 @@ if _SQLALCHEMY_AVAILABLE:
         id = Column(Integer, primary_key=True, autoincrement=True)
         alert_id = Column(String(64), unique=True, nullable=False, index=True)
         timestamp = Column(DateTime, default=_utcnow, index=True)
+        user_id = Column(Integer, nullable=True, index=True)  # Authenticated account ID responsible for alert
         recipient = Column(String(256), nullable=False, index=True)
         subject = Column(String(512), nullable=False)
         alert_level = Column(String(16), default="CRITICAL", nullable=False)
@@ -518,13 +519,25 @@ if _SQLALCHEMY_AVAILABLE:
                         pool_timeout=30,
                     )
 
-                # Enable WAL mode and busy timeout for concurrent safety
+                # Enable WAL mode (or DELETE mode fallback on network/bind-mounted filesystems) and busy timeout
                 @event.listens_for(eng, "connect")
                 def set_sqlite_pragma(dbapi_connection, connection_record):
                     cursor = dbapi_connection.cursor()
-                    cursor.execute("PRAGMA journal_mode=WAL")
-                    cursor.execute("PRAGMA synchronous=NORMAL")
-                    cursor.execute("PRAGMA busy_timeout=30000")
+                    try:
+                        cursor.execute("PRAGMA journal_mode=WAL")
+                    except Exception:
+                        try:
+                            cursor.execute("PRAGMA journal_mode=DELETE")
+                        except Exception:
+                            pass
+                    try:
+                        cursor.execute("PRAGMA synchronous=NORMAL")
+                    except Exception:
+                        pass
+                    try:
+                        cursor.execute("PRAGMA busy_timeout=30000")
+                    except Exception:
+                        pass
                     cursor.close()
 
                 _engines[key] = eng
@@ -542,6 +555,13 @@ if _SQLALCHEMY_AVAILABLE:
                         conn.exec_driver_sql("ALTER TABLE threat_events ADD COLUMN user_id INTEGER")
                     if "user_email" not in existing_cols:
                         conn.exec_driver_sql("ALTER TABLE threat_events ADD COLUMN user_email VARCHAR(256)")
+                    conn.commit()
+
+                res_email = conn.exec_driver_sql("PRAGMA table_info(email_alert_records)").fetchall()
+                if res_email:
+                    existing_email_cols = {row[1] for row in res_email}
+                    if "user_id" not in existing_email_cols:
+                        conn.exec_driver_sql("ALTER TABLE email_alert_records ADD COLUMN user_id INTEGER")
                     conn.commit()
         except Exception as exc:
             logger.debug(f"Column migration check notice: {exc}")
