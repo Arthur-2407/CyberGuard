@@ -10432,21 +10432,9 @@ body::after {
   color: #94a3b8;
 }
 
-.defcon-auto-indicator {
-  font-family: var(--font-mono);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: #00e5ff;
-  background: rgba(0, 229, 255, 0.12);
-  border: 1px solid rgba(0, 229, 255, 0.45);
-  border-radius: 3px;
-  padding: 1px 5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  box-shadow: 0 0 8px rgba(0, 229, 255, 0.25);
-  animation: autoIndicatorPulse 2.8s infinite ease-in-out;
+.defcon-auto-indicator,
+#defcon-auto-indicator {
+  display: none !important;
 }
 
 @keyframes autoIndicatorPulse {
@@ -14626,9 +14614,9 @@ button:hover:not(:disabled)::after,
 }
 
 /* ── Docker SOC Backend & Tunnel Status Widget ──────────────────────────────── */
-.backend-tunnel-widget {
-  display: flex;
-  align-items: center;
+.backend-tunnel-widget,
+#backend-tunnel-widget {
+  display: none !important;
 }
 
 .nav-backend-btn {

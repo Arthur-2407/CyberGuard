@@ -4,10 +4,6 @@
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/health",
-      "destination": "/health.json"
-    },
-    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

@@ -110,8 +110,8 @@
         </button>
       </div>
 
-      <!-- Docker SOC Backend & Tunnel Status Indicator Pill -->
-      <div class="backend-tunnel-widget" id="backend-tunnel-widget">
+      <!-- Docker SOC Backend & Tunnel Status Indicator Pill (Hidden from Overview page navbar; diagnostics preserved) -->
+      <div class="backend-tunnel-widget" id="backend-tunnel-widget" style="display:none !important;" aria-hidden="true">
         <button class="nav-backend-btn" id="nav-backend-btn" onclick="openBackendModal()" title="CyberGuard Docker Backend &amp; Secure Tunnel Settings">
           <span class="backend-pulse-dot offline" id="backend-nav-dot"></span>
           <span class="backend-nav-text" id="backend-nav-text">DOCKER OFFLINE</span>
@@ -203,7 +203,7 @@
               <div class="defcon-tactical-matrix autonomous-defcon-matrix" id="overview-defcon-matrix" onclick="handleDefconMatrixClick()" title="Autonomous AI Defense Posture — Real-time telemetry driven (Medium+ threats today)">
                 <div class="defcon-matrix-header">
                   <span class="defcon-label">DEFCON:</span>
-                  <span class="defcon-auto-indicator" id="defcon-auto-indicator" title="Autonomous Defense Level is dynamically calculated from today's Medium+ threats and cannot be manipulated">AUTO</span>
+                  <span class="defcon-auto-indicator" id="defcon-auto-indicator" style="display:none !important;" aria-hidden="true" title="Autonomous Defense Level is dynamically calculated from today's Medium+ threats and cannot be manipulated">AUTO</span>
                 </div>
                 <div class="defcon-pills-wrap" id="defcon-pills-wrap">
                   <div class="defcon-pill defcon-5" data-level="5" title="DEFCON 5: Baseline Monitoring (0 Medium+ threats today)">5</div>
@@ -2428,6 +2428,36 @@
       </div>
       <div class="modal-body" style="padding:16px;">
         
+        <!-- Backend Connection Architecture & Mode Controller -->
+        <div class="health-group" style="background:rgba(2,6,23,0.7); border:1px solid rgba(56,189,248,0.25); border-radius:8px; padding:12px; margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              <span style="font-size:12px; font-weight:700; font-family:'JetBrains Mono', monospace; color:#f8fafc;" id="sh-connection-mode-badge">MODE A: DEPLOYED BACKEND</span>
+            </div>
+            <span class="pipeline-status-badge status-ready" id="sh-connection-status-badge">CHECKING...</span>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+            <button class="btn btn-xs btn-secondary" id="btn-mode-deployed" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('deployed')">
+              Mode A: Deployed Cloud
+            </button>
+            <button class="btn btn-xs btn-secondary" id="btn-mode-local" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('local')">
+              Mode B: Local Docker (127.0.0.1)
+            </button>
+            <div style="display:flex; align-items:center; gap:4px; margin-left:auto;">
+              <span style="font-size:11px; color:#94a3b8; font-family:'JetBrains Mono', monospace;">Port:</span>
+              <input type="text" id="sh-local-port-input" value="3000" style="width:55px; height:24px; font-size:11px; font-family:'JetBrains Mono', monospace; padding:2px 6px; background:#0f172a; border:1px solid #334155; border-radius:4px; color:#f8fafc;" onchange="window.CyberGuardConnection && window.CyberGuardConnection.setPort(this.value)" />
+              <button class="btn btn-xs btn-secondary" onclick="window.CyberGuardConnection && window.CyberGuardConnection.checkConnection()" title="Ping endpoint immediately">Ping</button>
+              <button class="btn btn-xs btn-secondary" onclick="openBackendModal()" title="Advanced Tunnel & Port Settings">⚙ Advanced</button>
+            </div>
+          </div>
+
+          <div id="sh-connection-diagnostic" style="font-size:11px; font-family:'JetBrains Mono', monospace; color:#94a3b8; line-height:1.5;">
+            Initial connection probe in progress...
+          </div>
+        </div>
+
         <!-- Group 1: Voice & Biometrics -->
         <div class="health-group">
           <div class="health-group-title">
@@ -3911,8 +3941,10 @@
           <div id="backend-test-result" style="margin-top:6px; font-size:11.5px; font-family:'JetBrains Mono', monospace; min-height:18px;"></div>
         </div>
 
-        <!-- Quick Presets -->
+        <!-- Quick Presets & Mode Toggles -->
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-xs" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('local')">Switch to Mode B (Local Docker)</button>
+          <button class="btn btn-secondary btn-xs" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('deployed')">Switch to Mode A (Deployed Cloud)</button>
           <button class="btn btn-secondary btn-xs" onclick="setPresetBackend('http://127.0.0.1:3000')">Local Docker (127.0.0.1:3000)</button>
           <button class="btn btn-secondary btn-xs" onclick="setPresetBackend('')">Current Origin Fallback</button>
           <button class="btn btn-secondary btn-xs" onclick="clearCustomBackend()">Reset / Auto-Detect</button>

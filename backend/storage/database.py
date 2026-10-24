@@ -467,6 +467,18 @@ if _SQLALCHEMY_AVAILABLE:
     _session_factories: dict[str, Any] = {}
     _engine_lock = threading.RLock()
 
+    def _get_effective_url(db_path: str = "data/cyberguard.db") -> str:
+        """Resolve database connection string, prioritizing DATABASE_URL or Supabase configuration."""
+        if str(db_path).startswith("postgresql://") or str(db_path).startswith("postgresql+psycopg2://"):
+            return str(db_path)
+        if str(db_path) in (":memory:", "sqlite:///:memory:") or str(db_path).startswith("sqlite:"):
+            return ""
+        if db_path in ("data/cyberguard.db", "data/voiceguard.db", None, ""):
+            env_url = (os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL") or "").strip()
+            if env_url and ("postgres" in env_url):
+                return env_url
+        return ""
+
     def _resolve_db_file(db_path: str = "data/cyberguard.db") -> Path:
         """Resolve database path relative to project root."""
         if str(db_path) in (":memory:", "sqlite:///:memory:"):
@@ -481,8 +493,29 @@ if _SQLALCHEMY_AVAILABLE:
         return db_file
 
     def get_engine(db_path: str = "data/cyberguard.db"):
-        """Get or create SQLAlchemy engine for the specified database path with connection pooling."""
+        """Get or create SQLAlchemy engine for the specified database path/URL with connection pooling."""
         global _engines
+        eff_url = _get_effective_url(db_path)
+        if eff_url:
+            pg_url = eff_url
+            if pg_url.startswith("postgresql://"):
+                pg_url = "postgresql+psycopg2://" + pg_url[len("postgresql://"):]
+            key = pg_url
+            with _engine_lock:
+                if key not in _engines:
+                    eng = create_engine(
+                        pg_url,
+                        poolclass=QueuePool,
+                        pool_size=15,
+                        max_overflow=25,
+                        pool_timeout=30,
+                        pool_recycle=1800,
+                        pool_pre_ping=True,
+                        connect_args={"connect_timeout": 10},
+                    )
+                    _engines[key] = eng
+                return _engines[key]
+
         if str(db_path) in (":memory:", "sqlite:///:memory:"):
             key = ":memory:"
             with _engine_lock:
@@ -546,6 +579,8 @@ if _SQLALCHEMY_AVAILABLE:
 
     def _migrate_columns_if_missing(engine) -> None:
         """Safely add newly introduced columns to existing SQLite tables if not present."""
+        if getattr(engine.dialect, "name", "") != "sqlite":
+            return
         try:
             with engine.connect() as conn:
                 res = conn.exec_driver_sql("PRAGMA table_info(threat_events)").fetchall()
@@ -571,11 +606,24 @@ if _SQLALCHEMY_AVAILABLE:
         engine = get_engine(db_path)
         Base.metadata.create_all(bind=engine)
         _migrate_columns_if_missing(engine)
-        logger.info(f"Database initialized at {db_path}")
+        dialect_name = getattr(engine.dialect, "name", "database")
+        logger.info(f"Database ({dialect_name}) initialized for {db_path}")
 
     def get_session_factory(db_path: str = "data/cyberguard.db"):
-        """Return the session factory for the specified database (cached per path)."""
+        """Return the session factory for the specified database (cached per path or URL)."""
         global _session_factories
+        eff_url = _get_effective_url(db_path)
+        if eff_url:
+            pg_url = eff_url
+            if pg_url.startswith("postgresql://"):
+                pg_url = "postgresql+psycopg2://" + pg_url[len("postgresql://"):]
+            key = pg_url
+            with _engine_lock:
+                if key not in _session_factories:
+                    engine = get_engine(pg_url)
+                    _session_factories[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                return _session_factories[key]
+
         if str(db_path) in (":memory:", "sqlite:///:memory:"):
             key = ":memory:"
             with _engine_lock:
@@ -611,6 +659,8 @@ if _SQLALCHEMY_AVAILABLE:
 
     def init_user_db(db_path: str) -> None:
         """Ensure all required tenant tables exist in the user's isolated database."""
+        if _get_effective_url(db_path):
+            return
         engine = get_engine(db_path)
         Base.metadata.create_all(bind=engine)
         _migrate_columns_if_missing(engine)
@@ -620,15 +670,19 @@ if _SQLALCHEMY_AVAILABLE:
         Auto-create, initialize, and verify the isolated database for a user account.
         Guarantee complete schema readiness and thread-safe WAL access.
         """
+        eff_url = _get_effective_url()
+        if eff_url:
+            logger.info(f"Multi-tenant PostgreSQL isolation active for user_id={user_id}")
+            return eff_url
         db_path = get_user_db_path(user_id, username)
         init_user_db(db_path)
-        logger.info(f"✓ Provisioned isolated user database at {db_path} for user_id={user_id}")
+        logger.info(f"[OK] Provisioned isolated user database at {db_path} for user_id={user_id}")
         return db_path
 
     def close_user_database(db_path: str) -> None:
         """Dispose of the engine and connection pool for an isolated database, allowing safe file operations."""
         global _engines, _session_factories
-        if str(db_path) in (":memory:", "sqlite:///:memory:"):
+        if str(db_path) in (":memory:", "sqlite:///:memory:") or _get_effective_url(db_path):
             return
         db_file = _resolve_db_file(db_path)
         key = str(db_file.resolve())
@@ -648,6 +702,10 @@ if _SQLALCHEMY_AVAILABLE:
         if user and getattr(user, "id", None):
             db_path = getattr(user, "db_path", None) or get_user_db_path(user.id, user.username)
         else:
+            eff_url = _get_effective_url()
+            if eff_url:
+                SessionLocal = get_session_factory(eff_url)
+                return SessionLocal()
             db_path = ":memory:"
         init_user_db(db_path)
         SessionLocal = get_session_factory(db_path)

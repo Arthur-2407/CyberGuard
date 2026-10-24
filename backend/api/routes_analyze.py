@@ -476,30 +476,34 @@ async def analyze_audio_file(
             # with explicit submitted_by_user_id metadata for authorized model training
             try:
                 with central_factory() as central_db:
-                    central_record = AnalysisRecordModel(
-                        analysis_id=session_id,
-                        user_id=current_user.id,
-                        filename=file.filename or "unknown",
-                        audio_hash=file_hash_hex,
-                        audio_path=vault_rel_path,
-                        duration_sec=float(len(audio) / app_settings.audio.sample_rate),
-                        total_chunks=len(chunks),
-                        detector_version=active_version,
-                        native_probability=float(summary["peak_risk"]),
-                        peak_risk=float(summary["peak_risk"]),
-                        mean_risk=float(summary["mean_risk"]),
-                        alert_level=recommendation.alert_level.value,
-                        analysis_status="COMPLETED",
-                    )
-                    central_db.add(central_record)
+                    central_record = central_db.query(AnalysisRecordModel).filter(AnalysisRecordModel.analysis_id == session_id).first()
+                    if not central_record:
+                        central_record = AnalysisRecordModel(
+                            analysis_id=session_id,
+                            user_id=current_user.id,
+                            filename=file.filename or "unknown",
+                            audio_hash=file_hash_hex,
+                            audio_path=vault_rel_path,
+                            duration_sec=float(len(audio) / app_settings.audio.sample_rate),
+                            total_chunks=len(chunks),
+                            detector_version=active_version,
+                            native_probability=float(summary["peak_risk"]),
+                            peak_risk=float(summary["peak_risk"]),
+                            mean_risk=float(summary["mean_risk"]),
+                            alert_level=recommendation.alert_level.value,
+                            analysis_status="COMPLETED",
+                        )
+                        central_db.add(central_record)
 
-                    review_item = ReviewQueueModel(
-                        review_id=f"REV_{session_id}",
-                        analysis_id=session_id,
-                        submitted_by_user_id=current_user.id,
-                        status="PENDING",
-                    )
-                    central_db.add(review_item)
+                    existing_review = central_db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == f"REV_{session_id}").first()
+                    if not existing_review:
+                        review_item = ReviewQueueModel(
+                            review_id=f"REV_{session_id}",
+                            analysis_id=session_id,
+                            submitted_by_user_id=current_user.id,
+                            status="PENDING",
+                        )
+                        central_db.add(review_item)
                     central_db.commit()
             except Exception as c_err:
                 logger.warning(f"Failed to record audio to central admin training review queue: {c_err}")
@@ -558,6 +562,7 @@ async def get_my_analysis_history(
     try:
         records = (
             user_db.query(AnalysisRecordModel)
+            .filter(AnalysisRecordModel.user_id == current_user.id)
             .order_by(AnalysisRecordModel.id.desc())
             .limit(limit)
             .all()

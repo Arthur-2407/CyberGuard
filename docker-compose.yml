@@ -19,18 +19,22 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.email
+        required: false
     environment:
       - PORT=3000
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/cyberguard.db
+      - DATABASE_URL=${DATABASE_URL:-}
       - CYBERGUARD_ADMIN_PASSWORD=${CYBERGUARD_ADMIN_PASSWORD:-Admin@CyberGuard2026!}
       - CYBERGUARD_CORS_ORIGINS=${CYBERGUARD_CORS_ORIGINS:-https://cyber-guard-backend-ashen.vercel.app,https://arthur-2407.github.io,http://localhost:3000,http://127.0.0.1:3000}
       - CYBERGUARD_CORS_REGEX=${CYBERGUARD_CORS_REGEX:-^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.vercel\.app|.*\.pages\.dev|.*\.github\.io|.*\.trycloudflare\.com|.*\.ngrok-free\.app|.*\.loca\.lt)(:\d+)?$}
       - VIRUSTOTAL_ENABLED=${VIRUSTOTAL_ENABLED:-true}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - URLHAUS_ENABLED=${URLHAUS_ENABLED:-true}
-      - URLHAUS_AUTH_KEY=${URLHAUS_AUTH_KEY:-}
-      - EMAIL_TEST_MODE=${EMAIL_TEST_MODE:-true}
+      - EMAIL_TEST_MODE=${EMAIL_TEST_MODE:-false}
       - OMP_NUM_THREADS=2
       - MKL_NUM_THREADS=2
       - OPENBLAS_NUM_THREADS=2

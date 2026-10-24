@@ -608,17 +608,23 @@ CyberGuard operates on an **On-Demand Laptop Backend + Resilient Static Cloud Fr
 
 - **24/7 Frontend Availability**: Both [Vercel](https://cyber-guard-backend-ashen.vercel.app) and [GitHub Pages](https://arthur-2407.github.io/CyberGuard) stay permanently online.
 - **Laptop Resource & Battery Conservation**: Run the CyberGuard backend in Docker on your laptop only when you need it. When you stop the container or close your laptop, zero battery or cloud compute is consumed.
-- **Graceful Offline Degradation**: When Docker is stopped, the frontend web console opens smoothly, and displays a prominent `[ 🔴 DOCKER OFFLINE ]` indicator in the navbar.
+- **Dual Backend Modes**:
+  - **Mode A (Deployed Cloud)**: Default for public visitors. Connects to cloud origin without requiring Docker.
+  - **Mode B (Local Docker)**: Opt-in per browser via **System Health** (`http://127.0.0.1:3000`). Bounded auto-reconnection (5s to 30s) reconnects dynamically when Docker starts.
+- **Zero Header Clutter**: The Overview navbar remains sleek with zero distracting offline pills. Full telemetry and controls are accessible anytime via the **System Health** console.
 - **Zero Router Port Forwarding Required**: The included Cloudflare Tunnel companion service provides end-to-end TLS encryption and public reachability without exposing ports on your home or office router.
 
 ---
 
-### 2. On-Demand Docker Startup (Recommended)
+### 2. On-Demand Docker Startup & Dual-Mode Connectivity
 
 Using the cross-platform management CLI:
 
 ```powershell
-# Start Backend + Secure Cloudflare HTTPS Tunnel (for Vercel & GitHub Pages)
+# Start Backend on published host port 3000
+docker compose up -d
+
+# Start Backend + Secure Cloudflare HTTPS Tunnel (for remote HTTPS frontends)
 .\scripts\docker-manager.ps1 start -Tunnel
 
 # Fetch your active HTTPS tunnel endpoint
@@ -633,11 +639,27 @@ Using the cross-platform management CLI:
 
 *(On Linux / macOS bash: `./scripts/docker-manager.sh start --tunnel`, `./scripts/docker-manager.sh stop`)*
 
-#### Linking Tunnel in the Web Console:
-1. Open your live frontend on [Vercel](https://cyber-guard-backend-ashen.vercel.app) or [GitHub Pages](https://arthur-2407.github.io/CyberGuard).
-2. Click the **`[ DOCKER OFFLINE ]`** badge in the top navigation bar.
-3. Paste the active `https://*.trycloudflare.com` tunnel URL and click **Save & Apply**.
-4. The badge turns **`[ 🟢 DOCKER ONLINE ]`** and all live AI voice analysis, phishing URL checks, and threat intel queries immediately connect!
+#### Connecting the Frontend to Local Docker:
+1. Open your frontend on [Vercel](https://cyber-guard-backend-ashen.vercel.app) or localhost.
+2. Click **System Health** in the Overview toolbar.
+3. Select **Mode B: Local Docker (127.0.0.1)**. The port defaults to `3000`.
+4. As soon as Docker starts, the client automatically detects the backend, synchronizes real data, and streams live telemetry without a browser refresh!
+5. To switch back to standalone cloud mode, click **Mode A: Deployed Cloud**.
+
+#### Host Port & Health Endpoints:
+- Published Host Port: `3000` (`http://127.0.0.1:3000`)
+- Health Check: `http://127.0.0.1:3000/health` or `/api/health`
+- Detailed Engine Status: `http://127.0.0.1:3000/api/config/status`
+
+#### API & Email Credentials Configuration:
+1. Configure credentials in `.env` (or `.env.email`) in the repository root.
+2. Add your threat intelligence and email keys (`VIRUSTOTAL_API_KEY`, `URLHAUS_AUTH_KEY`, `BREVO_API_KEY`, `SMTP_PASSWORD`).
+3. `docker-compose.yml` automatically injects `.env` and `.env.email` into the container via `env_file` without baking secrets into images.
+4. Apply updated credentials safely without volume or database data loss:
+   ```bash
+   docker compose up -d --no-deps cyberguard-backend
+   ```
+5. Credentials remain completely server-side and are never exposed in frontend assets.
 
 #### Standard Docker Compose Commands:
 ```bash

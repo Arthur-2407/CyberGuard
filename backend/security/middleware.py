@@ -26,6 +26,7 @@ _BYPASS_PREFIXES = (
     "/static/",
     "/favicon.ico",
     "/health",
+    "/api/health",
     "/docs",
     "/openapi.json",
 )
@@ -37,6 +38,10 @@ class EnforcementMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        # Preflight OPTIONS requests must never be throttled or blocked
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
 
         # Always permit static assets, favicon, and health checks

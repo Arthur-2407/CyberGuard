@@ -5,10 +5,6 @@
   "outputDirectory": "frontend",
   "rewrites": [
     {
-      "source": "/health",
-      "destination": "/health.json"
-    },
-    {
       "source": "/frontend/(.*)",
       "destination": "/$1"
     },

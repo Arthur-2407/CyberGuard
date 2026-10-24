@@ -108,6 +108,7 @@ class PrivacyConfig:
 @dataclass
 class StorageConfig:
     db_path: str = "data/cyberguard.db"
+    database_url: str = ""
 
 
 @dataclass
@@ -358,6 +359,11 @@ def _build_settings(raw: dict) -> Settings:
         ),
         storage=StorageConfig(
             db_path=storage_db,
+            database_url=_clean_secret(
+                os.getenv("DATABASE_URL")
+                or os.getenv("SUPABASE_DB_URL")
+                or storage_raw.get("database_url", "")
+            ),
         ),
         upload=UploadConfig(
             max_file_size_bytes=upload_raw.get("max_file_size_bytes", 209715200),

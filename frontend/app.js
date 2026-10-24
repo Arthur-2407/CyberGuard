@@ -35,6 +35,15 @@ function getResolvedApiBase() {
       }
     }
     if (typeof localStorage !== 'undefined') {
+      const mode = localStorage.getItem('cyberguard_connection_mode');
+      if (mode === 'local') {
+        const port = localStorage.getItem('cyberguard_local_port') || '3000';
+        return `http://127.0.0.1:${port}`;
+      } else if (mode === 'deployed') {
+        const custom = localStorage.getItem('cyberguard_custom_tunnel');
+        if (custom && custom.trim()) return custom.trim().replace(/\/+$/, '');
+        return '';
+      }
       const stored = localStorage.getItem('cyberguard_api_base');
       if (stored && stored.trim()) return stored.trim().replace(/\/+$/, '');
     }
@@ -49,7 +58,9 @@ function getResolvedApiBase() {
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '0.0.0.0') {
       return (location.port === '3000') ? '' : 'http://127.0.0.1:3000';
     }
-    return '';
+    // On deployed static hosts (GitHub Pages, Vercel), default to local Docker at http://127.0.0.1:3000
+    // so the browser automatically connects to the local backend without manual configuration.
+    return 'http://127.0.0.1:3000';
   }
   return 'http://127.0.0.1:3000';
 }
@@ -91,8 +102,606 @@ function setCyberGuardApiBase(url) {
       window.WS_URL = WS_URL;
     } catch (_) {}
   }
-  if (typeof checkSystemStatus === 'function') checkSystemStatus();
+  if (window.CyberGuardConnection) {
+    window.CyberGuardConnection.scheduleCheck(100);
+  } else if (typeof checkSystemStatus === 'function') {
+    checkSystemStatus();
+  }
 }
+window.setCyberGuardApiBase = setCyberGuardApiBase;
+
+// ── CyberGuard Dual-Mode Backend Connection Manager ──────────────────────────
+const CyberGuardConnection = {
+  mode: (function() {
+    try {
+      const stored = localStorage.getItem('cyberguard_connection_mode');
+      if (stored === 'local' || stored === 'deployed') return stored;
+      if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '0.0.0.0')) {
+        return 'local';
+      }
+    } catch (_) {}
+    // Default to Mode B (Local Docker) so deployed static frontends connect to local backend out of the box
+    return 'local';
+  })(),
+
+  port: (function() {
+    try {
+      return localStorage.getItem('cyberguard_local_port') || '3000';
+    } catch (_) {
+      return '3000';
+    }
+  })(),
+
+  // Required 5 connection states: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'DEGRADED' | 'ERROR'
+  status: 'DISCONNECTED',
+  lastLatency: null,
+  lastError: null,
+  reconnectTimer: null,
+  retryDelay: 5000,
+  minRetryDelay: 5000,
+  maxRetryDelay: 30000,
+  backoffFactor: 1.5,
+  isChecking: false,
+  activeAbortController: null,
+
+  isOnline() {
+    return this.status === 'CONNECTED' || this.status === 'DEGRADED';
+  },
+
+  getApiBase() {
+    if (this.mode === 'local') {
+      return `http://127.0.0.1:${this.port}`;
+    }
+    return getResolvedApiBase();
+  },
+
+  resolveUrl(path) {
+    const base = this.getApiBase();
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!base) return cleanPath;
+    return `${base.replace(/\/+$/, '')}${cleanPath}`;
+  },
+
+  init() {
+    this.updateUI();
+    if (this.mode === 'local') {
+      const p = this.port || '3000';
+      API_BASE = `http://127.0.0.1:${p}`;
+      window.API_BASE = API_BASE;
+      this.scheduleCheck(100);
+    } else {
+      this.scheduleCheck(200);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        if (!this.isOnline()) {
+          this.scheduleCheck(200);
+        }
+      });
+      window.addEventListener('focus', () => {
+        if (!this.isOnline()) {
+          this.scheduleCheck(500);
+        }
+      });
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden && !this.isOnline()) {
+            this.scheduleCheck(300);
+          }
+        });
+      }
+    }
+  },
+
+  setMode(newMode) {
+    if (newMode !== 'local' && newMode !== 'deployed') return;
+    this.mode = newMode;
+    try {
+      localStorage.setItem('cyberguard_connection_mode', newMode);
+      if (newMode === 'local') {
+        localStorage.setItem('cyberguard_api_base', `http://127.0.0.1:${this.port}`);
+      } else {
+        const custom = localStorage.getItem('cyberguard_custom_tunnel') || '';
+        if (custom) {
+          localStorage.setItem('cyberguard_api_base', custom);
+        } else {
+          localStorage.removeItem('cyberguard_api_base');
+        }
+      }
+    } catch (_) {}
+
+    API_BASE = getResolvedApiBase();
+    WS_URL = _resolveWsUrl();
+    window.WS_URL = WS_URL;
+
+    this.retryDelay = this.minRetryDelay;
+    this.updateUI();
+    this.scheduleCheck(100);
+
+    const label = newMode === 'local' ? `Local Docker Backend (http://127.0.0.1:${this.port})` : 'Deployed Cloud Backend';
+    if (typeof showToast === 'function') {
+      showToast(`Switched to ${label}`, 'info');
+    }
+  },
+
+  setPort(p) {
+    const cleaned = String(p || '3000').trim().replace(/\D+/g, '') || '3000';
+    this.port = cleaned;
+    try {
+      localStorage.setItem('cyberguard_local_port', cleaned);
+      if (this.mode === 'local') {
+        localStorage.setItem('cyberguard_api_base', `http://127.0.0.1:${cleaned}`);
+        API_BASE = getResolvedApiBase();
+        WS_URL = _resolveWsUrl();
+        window.WS_URL = WS_URL;
+      }
+    } catch (_) {}
+    this.retryDelay = this.minRetryDelay;
+    this.scheduleCheck(100);
+  },
+
+  scheduleCheck(delayMs) {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.checkConnection();
+    }, delayMs);
+  },
+
+  cancelPending() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.activeAbortController) {
+      try { this.activeAbortController.abort(); } catch (_) {}
+      this.activeAbortController = null;
+    }
+  },
+
+  async checkConnection() {
+    if (this.isChecking) return;
+    this.isChecking = true;
+    this.cancelPending();
+
+    const controller = new AbortController();
+    this.activeAbortController = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const isLocal = this.mode === 'local';
+    const currentEndpoint = getResolvedApiBase();
+    const probeBase = isLocal ? (currentEndpoint || `http://127.0.0.1:${this.port}`) : currentEndpoint;
+
+    const displayEl = document.getElementById('modal-backend-url-display');
+    if (displayEl) {
+      displayEl.textContent = probeBase || (isLocal ? `http://127.0.0.1:${this.port}` : '(Deployed Static Host / Cloud)');
+    }
+
+    // If deployed mode with no custom tunnel on a known static host, detect standalone mode cleanly
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!isLocal && !probeBase && isStaticHost) {
+      clearTimeout(timeoutId);
+      this.isChecking = false;
+      this.activeAbortController = null;
+      this.status = 'DISCONNECTED';
+      this.lastLatency = null;
+      this.lastError = 'Standalone Deployed Frontend — No cloud backend API detected on this static host. Switch to Mode B (Local Docker) to connect your local Docker engine, or configure a secure tunnel endpoint.';
+      updateSystemStatus('offline');
+      this.updateUI();
+      this.scheduleCheck(30000);
+      return;
+    }
+
+    this.status = 'CONNECTING';
+    this.updateUI();
+
+    const healthUrl = probeBase ? `${probeBase}/api/health` : '/api/health';
+    const fallbackHealthUrl = probeBase ? `${probeBase}/health` : '/health';
+    const statusUrl = probeBase ? `${probeBase}/api/config/status` : '/api/config/status';
+
+    const t0 = performance.now();
+    try {
+      let resp;
+      try {
+        resp = await cyberGuardFetch(healthUrl, {
+          method: 'GET',
+          signal: controller.signal,
+          headers: { 'Accept': 'application/json' }
+        });
+      } catch (firstErr) {
+        if (controller.signal.aborted) throw firstErr;
+        try {
+          resp = await cyberGuardFetch(fallbackHealthUrl, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/json' }
+          });
+        } catch (secondErr) {
+          if (controller.signal.aborted) throw secondErr;
+          resp = await cyberGuardFetch(statusUrl, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/json' }
+          });
+        }
+      }
+
+      clearTimeout(timeoutId);
+      const latency = Math.round(performance.now() - t0);
+      this.lastLatency = latency;
+
+      if (resp && resp.ok) {
+        const raw = await resp.text().catch(() => '');
+        let data = null;
+        try { data = JSON.parse(raw); } catch (_) { data = null; }
+
+        if (!data || typeof data !== 'object' || raw.includes('<!DOCTYPE') || raw.includes('<html')) {
+          this.status = 'ERROR';
+          this.handleFailure(new Error('Endpoint returned non-JSON/HTML content instead of CyberGuard health payload'), 'ERROR');
+          return;
+        }
+
+        const isHealthy = data.status === 'ok' || data.status === 'operational';
+        if (!isHealthy) {
+          this.status = 'ERROR';
+          this.handleFailure(new Error(`Service returned non-healthy status: ${data.status}`), 'ERROR');
+          return;
+        }
+
+        const wasDisconnected = !this.isOnline();
+        const isDegraded = data.detector_ready === false;
+        this.status = isDegraded ? 'DEGRADED' : 'CONNECTED';
+        this.lastError = isDegraded ? 'Acoustic neural detector offline — running in degraded heuristic mode.' : null;
+        this.retryDelay = this.minRetryDelay;
+
+        if (probeBase) {
+          API_BASE = probeBase;
+          window.API_BASE = probeBase;
+          try {
+            WS_URL = _resolveWsUrl();
+            window.WS_URL = WS_URL;
+          } catch (_) {}
+        }
+
+        updateSystemStatus('online');
+        this.updateUI();
+
+        if (data.status === 'operational' || data.config) {
+          if (data.wav2vec2_available && document.getElementById('pill-wav2vec')) document.getElementById('pill-wav2vec').classList.add('active');
+          if (data.ecapa_available && document.getElementById('pill-speaker')) document.getElementById('pill-speaker').classList.add('active');
+          if (data.config && data.config.thresholds) {
+            const thrLow = document.getElementById('thr-low');
+            const thrMed = document.getElementById('thr-medium');
+            const thrHigh = document.getElementById('thr-high');
+            if (thrLow) thrLow.value = data.config.thresholds.low;
+            if (thrMed) thrMed.value = data.config.thresholds.medium;
+            if (thrHigh) thrHigh.value = data.config.thresholds.high;
+          }
+        }
+        if (data.virustotal_status && data.virustotal_status !== 'UNKNOWN' && typeof renderVirusTotalBadge === 'function') {
+          renderVirusTotalBadge({ status: data.virustotal_status });
+        } else if (data.threat_intel && data.threat_intel.virustotal_configured && typeof renderVirusTotalBadge === 'function') {
+          renderVirusTotalBadge({ status: 'READY' });
+        }
+        if (data.urlhaus_status && data.urlhaus_status !== 'UNKNOWN' && typeof renderURLhausBadge === 'function') {
+          renderURLhausBadge({ status: data.urlhaus_status });
+        } else if (data.threat_intel && data.threat_intel.urlhaus_configured && typeof renderURLhausBadge === 'function') {
+          renderURLhausBadge({ status: 'READY' });
+        }
+
+        if (wasDisconnected) {
+          this.syncRealDashboardData();
+        }
+
+        this.scheduleCheck(15000);
+      } else {
+        const statusText = resp ? `HTTP ${resp.status}` : 'Unknown response';
+        this.handleFailure(new Error(`Server returned ${statusText}`), 'ERROR');
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      this.handleFailure(err);
+    } finally {
+      this.isChecking = false;
+      this.activeAbortController = null;
+    }
+  },
+
+  handleFailure(err, explicitState = null) {
+    updateSystemStatus('offline');
+
+    let state = explicitState || 'DISCONNECTED';
+    let reason = 'Backend service is unavailable.';
+    if (err && err.name === 'AbortError') {
+      state = 'DISCONNECTED';
+      reason = `Connection timed out (4.0s). Ensure Docker container is running on http://127.0.0.1:${this.port}.`;
+    } else if (err && err.isPnaBlock) {
+      state = 'ERROR';
+      reason = err.message;
+    } else if (err && err.isStaticHostMismatch) {
+      state = 'DISCONNECTED';
+      reason = err.message;
+    } else if (err && err.message) {
+      const msg = err.message.toLowerCase();
+      if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('refused')) {
+        if (typeof location !== 'undefined' && location.protocol === 'https:' && this.mode === 'local') {
+          state = 'DISCONNECTED';
+          reason = `Connection to http://127.0.0.1:${this.port} unavailable or blocked by browser. If prompted for Local Network Access, click Allow. Alternatively, ensure Docker is running (docker compose up -d).`;
+        } else {
+          state = 'DISCONNECTED';
+          reason = `Connection refused on http://127.0.0.1:${this.port}. Ensure Docker container is running (docker compose up -d).`;
+        }
+      } else if (msg.includes('http 404')) {
+        state = 'ERROR';
+        reason = `Backend API route not found (HTTP 404). Ensure backend is registered on http://127.0.0.1:${this.port}.`;
+      } else if (msg.includes('http 405')) {
+        state = 'ERROR';
+        reason = `HTTP 405 Method Not Allowed: Static host rejected API request. Ensure Mode B (Local Docker) is active.`;
+      } else {
+        state = 'ERROR';
+        reason = `Health check failed: ${escapeHtml(err.message)}`;
+      }
+    }
+
+    this.status = state;
+    this.lastError = reason;
+    this.lastLatency = null;
+    this.updateUI();
+
+    if (this.mode === 'local') {
+      const nextDelay = this.retryDelay;
+      this.retryDelay = Math.min(this.maxRetryDelay, Math.round(this.retryDelay * this.backoffFactor));
+      this.scheduleCheck(nextDelay);
+    } else {
+      this.scheduleCheck(30000);
+    }
+  },
+
+  syncRealDashboardData() {
+    try {
+      if (typeof updateOverview === 'function') updateOverview(true);
+      if (typeof loadAlerts === 'function') loadAlerts();
+      if (typeof loadSpeakers === 'function') loadSpeakers();
+      if (typeof loadSecurityCenterData === 'function') loadSecurityCenterData();
+      if (typeof initSecurityCenterWebSocket === 'function') initSecurityCenterWebSocket();
+      if (typeof autoLinkThreatIntelPipeline === 'function') autoLinkThreatIntelPipeline(true);
+    } catch (e) {
+      console.warn('Dashboard data sync notice:', e);
+    }
+  },
+
+  updateUI() {
+    const modeBadge = document.getElementById('sh-connection-mode-badge');
+    const statusBadge = document.getElementById('sh-connection-status-badge');
+    const diagEl = document.getElementById('sh-connection-diagnostic');
+    const btnModeA = document.getElementById('btn-mode-deployed');
+    const btnModeB = document.getElementById('btn-mode-local');
+    const portInput = document.getElementById('sh-local-port-input');
+    const modalPing = document.getElementById('modal-backend-ping');
+
+    if (portInput && portInput.value !== this.port) {
+      portInput.value = this.port;
+    }
+
+    if (modalPing) {
+      modalPing.textContent = this.lastLatency !== null ? `Latency: ${this.lastLatency}ms` : 'Latency: Offline';
+    }
+
+    if (btnModeA && btnModeB) {
+      if (this.mode === 'local') {
+        btnModeB.classList.add('active');
+        btnModeA.classList.remove('active');
+        btnModeB.style.background = 'rgba(56, 189, 248, 0.25)';
+        btnModeB.style.borderColor = '#38bdf8';
+        btnModeB.style.color = '#38bdf8';
+        btnModeA.style.background = '';
+        btnModeA.style.borderColor = '';
+        btnModeA.style.color = '';
+      } else {
+        btnModeA.classList.add('active');
+        btnModeB.classList.remove('active');
+        btnModeA.style.background = 'rgba(168, 85, 247, 0.25)';
+        btnModeA.style.borderColor = '#a855f7';
+        btnModeA.style.color = '#a855f7';
+        btnModeB.style.background = '';
+        btnModeB.style.borderColor = '';
+        btnModeB.style.color = '';
+      }
+    }
+
+    if (modeBadge) {
+      modeBadge.textContent = this.mode === 'local' ? `MODE B: LOCAL DOCKER (127.0.0.1:${this.port})` : 'MODE A: DEPLOYED BACKEND';
+      modeBadge.style.color = this.mode === 'local' ? '#38bdf8' : '#a855f7';
+    }
+
+    if (statusBadge) {
+      const nextSec = Math.round(this.retryDelay / 1000);
+      switch (this.status) {
+        case 'CONNECTED':
+          statusBadge.textContent = `CONNECTED (${this.lastLatency || 0}ms)`;
+          statusBadge.className = 'pipeline-status-badge status-ready';
+          statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+          statusBadge.style.color = '#10b981';
+          break;
+        case 'CONNECTING':
+          statusBadge.textContent = 'CONNECTING...';
+          statusBadge.className = 'pipeline-status-badge status-warning';
+          statusBadge.style.background = 'rgba(6, 182, 212, 0.15)';
+          statusBadge.style.color = '#06b6d4';
+          break;
+        case 'DEGRADED':
+          statusBadge.textContent = `DEGRADED (${this.lastLatency || 0}ms)`;
+          statusBadge.className = 'pipeline-status-badge status-warning';
+          statusBadge.style.background = 'rgba(249, 115, 22, 0.15)';
+          statusBadge.style.color = '#f97316';
+          break;
+        case 'ERROR':
+          statusBadge.textContent = `ERROR · RETRY IN ${nextSec}S`;
+          statusBadge.className = 'pipeline-status-badge status-error';
+          statusBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+          statusBadge.style.color = '#ef4444';
+          break;
+        case 'DISCONNECTED':
+        default:
+          statusBadge.textContent = this.mode === 'local' ? `DISCONNECTED · RETRY IN ${nextSec}S` : 'STANDALONE CLOUD';
+          statusBadge.className = 'pipeline-status-badge status-warning';
+          statusBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+          statusBadge.style.color = '#f59e0b';
+          break;
+      }
+    }
+
+    if (diagEl) {
+      switch (this.status) {
+        case 'CONNECTED':
+          diagEl.textContent = `✓ Active connection established to ${this.mode === 'local' ? `Local Docker container (127.0.0.1:${this.port})` : 'Cloud Backend'}. Real-time telemetry streaming.`;
+          diagEl.style.color = '#10b981';
+          break;
+        case 'CONNECTING':
+          diagEl.textContent = `Connecting to ${this.mode === 'local' ? `Local Docker container (127.0.0.1:${this.port})` : 'Cloud Backend'}...`;
+          diagEl.style.color = '#06b6d4';
+          break;
+        case 'DEGRADED':
+          diagEl.textContent = `⚠ ${this.lastError || 'Backend online, but some detection services are degraded.'}`;
+          diagEl.style.color = '#f97316';
+          break;
+        case 'ERROR':
+          diagEl.textContent = `✖ ${this.lastError || 'Connection error occurred.'}`;
+          diagEl.style.color = '#ef4444';
+          break;
+        case 'DISCONNECTED':
+        default:
+          diagEl.textContent = this.lastError || (this.mode === 'local' ? `Attempting automatic reconnection to http://127.0.0.1:${this.port}...` : 'Running in standalone deployed mode.');
+          diagEl.style.color = '#f59e0b';
+          break;
+      }
+    }
+  }
+};
+
+// ── Centralized API Client & Fetch Engine ─────────────────────────────────────
+const _nativeFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : (typeof fetch !== 'undefined' ? fetch : null);
+
+function isLoopbackUrl(urlStr) {
+  try {
+    const loc = typeof location !== 'undefined' ? location.href : 'http://127.0.0.1:3000';
+    const parsed = new URL(urlStr, loc);
+    const h = parsed.hostname.toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0';
+  } catch (_) {
+    return false;
+  }
+}
+
+async function cyberGuardFetch(resource, init = {}) {
+  let url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : String(resource));
+  const isRelative = !url.startsWith('http://') && !url.startsWith('https://');
+
+  if (isRelative) {
+    const base = CyberGuardConnection.getApiBase();
+    if (!base) {
+      const isStaticHost = typeof location !== 'undefined' && 
+        (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+      if (isStaticHost) {
+        const staticErr = new Error(
+          `Cannot send API request to static deployment host (${location.hostname}). ` +
+          `No cloud backend is configured for Mode A. Please switch to Mode B (Local Docker: http://127.0.0.1:${CyberGuardConnection.port}) ` +
+          `in System Health or configure a valid tunnel URL.`
+        );
+        staticErr.isStaticHostMismatch = true;
+        throw staticErr;
+      }
+      url = url.startsWith('/') ? url : `/${url}`;
+    } else {
+      const cleanPath = url.startsWith('/') ? url : `/${url}`;
+      url = `${base.replace(/\/+$/, '')}${cleanPath}`;
+    }
+  }
+
+  const isLoopback = isLoopbackUrl(url);
+  const isSecure = typeof location !== 'undefined' && (location.protocol === 'https:' || (typeof window !== 'undefined' && window.isSecureContext));
+
+  const options = { ...init };
+  options.headers = { ...(init.headers || {}) };
+
+  // Attach auth header if available and not already specified
+  if (typeof getAuthToken === 'function' && !options.headers['Authorization']) {
+    try {
+      const token = getAuthToken();
+      if (token) options.headers['Authorization'] = `Bearer ${token}`;
+    } catch (_) {}
+  }
+
+  // W3C / Chrome Private Network Access (PNA): targetAddressSpace: 'loopback'
+  // Applies only to verified loopback destinations from secure (HTTPS) origins
+  if (isLoopback && isSecure) {
+    options.targetAddressSpace = 'loopback';
+  }
+
+  try {
+    let resp;
+    try {
+      resp = await _nativeFetch(url, options);
+    } catch (fetchErr) {
+      if (options.targetAddressSpace && /targetAddressSpace|invalid option|typeerror/i.test(fetchErr.message)) {
+        const fallback = { ...options };
+        delete fallback.targetAddressSpace;
+        resp = await _nativeFetch(url, fallback);
+      } else {
+        throw fetchErr;
+      }
+    }
+    return resp;
+  } catch (err) {
+    const msg = (err.message || '').toLowerCase();
+    if (err.name === 'AbortError') {
+      const abortErr = new Error(`Request timed out while contacting backend at ${url}`);
+      abortErr.name = 'AbortError';
+      abortErr.isTimeout = true;
+      throw abortErr;
+    }
+    if (isLoopback && isSecure && (msg.includes('failed to fetch') || msg.includes('networkerror'))) {
+      const pnaErr = new Error(
+        `Local Network Access to ${url} was blocked by browser security. ` +
+        `If Chrome prompted for Local Network Access, click Allow. ` +
+        `Alternatively, click the site settings icon in your address bar to permit access to local network devices.`
+      );
+      pnaErr.isPnaBlock = true;
+      throw pnaErr;
+    }
+    if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('refused')) {
+      const netErr = new Error(
+        `Unable to reach CyberGuard backend at ${url}. Ensure Docker container is running (docker compose up -d).`
+      );
+      netErr.isNetworkError = true;
+      throw netErr;
+    }
+    throw err;
+  }
+}
+
+window.cyberGuardFetch = cyberGuardFetch;
+window.CyberGuardClient = {
+  fetch: cyberGuardFetch,
+  getApiBase: () => CyberGuardConnection.getApiBase(),
+  resolveUrl: (path) => CyberGuardConnection.resolveUrl(path),
+  request: async (path, options = {}) => {
+    const resp = await cyberGuardFetch(path, options);
+    return await parseResponseSafely(resp, options.operationName || path, options);
+  }
+};
+
+// Intercept window.fetch for /api/ and API_BASE calls
+if (typeof window !== 'undefined' && _nativeFetch) {
+  window.fetch = function(resource, init) {
+    const urlStr = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+    if (urlStr && (urlStr.startsWith('/api/') || urlStr.startsWith('http://127.0.0.1') || urlStr.startsWith('http://localhost') || (API_BASE && (urlStr === API_BASE || urlStr.startsWith(API_BASE + '/'))))) {
+      return cyberGuardFetch(resource, init);
+    }
+    return _nativeFetch(resource, init);
+  };
+}
+
+window.CyberGuardConnection = CyberGuardConnection;
 window.setCyberGuardApiBase = setCyberGuardApiBase;
 
 // ── Single-Read HTTP Response & Error Processing Engine ──────────────────────
@@ -108,7 +717,7 @@ window.setCyberGuardApiBase = setCyberGuardApiBase;
  * @param {string} operationName - Name of the operation for diagnostics
  * @returns {Promise<any>}
  */
-async function parseResponseSafely(response, operationName = 'Request') {
+async function parseResponseSafely(response, operationName = 'Request', options = {}) {
   if (!response) {
     throw new Error(`${operationName}: No response received from server`);
   }
@@ -133,17 +742,31 @@ async function parseResponseSafely(response, operationName = 'Request') {
 
   if (!response.ok) {
     let errorDetail = '';
+    const contentType = response.headers && typeof response.headers.get === 'function' ? (response.headers.get('content-type') || '') : '';
+    const isHtmlResponse = contentType.includes('text/html') || rawText.includes('<!DOCTYPE') || rawText.includes('<html');
+
     if (isJson && jsonData && typeof jsonData === 'object') {
       errorDetail = jsonData.detail || jsonData.message || jsonData.error || JSON.stringify(jsonData);
     } else if (rawText && rawText.trim().length > 0) {
-      // Strip HTML tags if server returned an HTML error page (e.g. Vercel 404/502)
       const clean = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      errorDetail = clean.length > 250 ? clean.substring(0, 250) + '...' : clean;
+      if (isHtmlResponse) {
+        if (response.status === 405) {
+          errorDetail = `HTTP 405 Method Not Allowed: Target host rejected this request method. Static hosting platforms (e.g. GitHub Pages) do not accept POST API requests. Ensure Mode B (Local Docker: http://127.0.0.1:3000) is active.`;
+        } else if (response.status === 404) {
+          errorDetail = `HTTP 404 Not Found: Requested API route was not found on target host. Verify that the CyberGuard backend is running with current API routes.`;
+        } else {
+          errorDetail = `Server returned an HTML error document (HTTP ${response.status}) instead of API JSON.`;
+        }
+      } else {
+        errorDetail = clean.length > 200 ? clean.substring(0, 200) + '...' : clean;
+      }
     }
 
     let contextNote = '';
-    if (response.status === 404) {
-      contextNote = ' (Endpoint not found — check backend deployment and API routing)';
+    if (response.status === 404 && !errorDetail.includes('404')) {
+      contextNote = ' (Endpoint not found — check backend API routing)';
+    } else if (response.status === 405 && !errorDetail.includes('405')) {
+      contextNote = ' (Method not allowed on this endpoint)';
     } else if (response.status === 502 || response.status === 503 || response.status === 504) {
       contextNote = ' (Backend service unavailable or gateway error)';
     }
@@ -155,6 +778,20 @@ async function parseResponseSafely(response, operationName = 'Request') {
     err.data = jsonData;
     err.rawText = rawText;
     throw err;
+  }
+
+  // When HTTP 200 is returned: verify JSON when structured response is expected
+  if (options && options.expectJson !== false) {
+    if (!isJson || !jsonData || typeof jsonData !== 'object') {
+      const clean = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const isHtml = rawText.includes('<!DOCTYPE') || rawText.includes('<html');
+      if (isHtml || clean.includes('NOT_FOUND') || clean.includes('File not found')) {
+        throw new Error(`${operationName}: Received HTML/error response instead of valid API JSON. Check that your backend is connected.`);
+      }
+      if (options.requireJson) {
+        throw new Error(`${operationName}: Invalid JSON format received from server`);
+      }
+    }
   }
 
   return isJson ? jsonData : rawText;
@@ -1033,10 +1670,11 @@ function updateSystemStatus(state) {
   const navDot = document.getElementById('backend-nav-dot');
   const navText = document.getElementById('backend-nav-text');
   const modalTag = document.getElementById('modal-backend-status-tag');
+  const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
   if (navDot && navText) {
     if (state === 'online') {
       navDot.className = 'backend-pulse-dot online';
-      navText.textContent = 'DOCKER ONLINE';
+      navText.textContent = isLocal ? 'DOCKER ONLINE' : 'CLOUD ONLINE';
       navText.style.color = '#10b981';
       if (modalTag) {
         modalTag.textContent = 'ONLINE';
@@ -1045,10 +1683,10 @@ function updateSystemStatus(state) {
       }
     } else {
       navDot.className = 'backend-pulse-dot offline';
-      navText.textContent = 'DOCKER OFFLINE';
+      navText.textContent = isLocal ? 'DOCKER OFFLINE' : 'CLOUD OFFLINE';
       navText.style.color = '#ef4444';
       if (modalTag) {
-        modalTag.textContent = 'OFFLINE (STOPPED)';
+        modalTag.textContent = isLocal ? 'OFFLINE (STOPPED)' : 'STANDALONE';
         modalTag.style.background = 'rgba(239,68,68,0.15)';
         modalTag.style.color = '#ef4444';
       }
@@ -1481,7 +2119,7 @@ async function analyzeFile() {
     const token = typeof getAuthToken === 'function' ? getAuthToken() : '';
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const resp = await fetch(`${API_BASE}/api/analyze`, {
+    const resp = await cyberGuardFetch('/api/analyze', {
       method: 'POST',
       body: formData,
       headers: headers,
@@ -1508,10 +2146,24 @@ async function analyzeFile() {
   } catch (err) {
     clearInterval(stageTimer);
     updatePipelineStepper(1);
-    const isNetworkErr = err instanceof TypeError || /fetch|network|failed to fetch|connect|refused/i.test(err.message);
+    const isPnaErr = err.isPnaBlock || /local network access|private network|targetaddressspace/i.test(err.message);
+    const isNetworkErr = err.isNetworkError || isPnaErr || err instanceof TypeError || /fetch|network|failed to fetch|connect|refused/i.test(err.message);
     const resultsContainer = document.getElementById('results-body');
     if (resultsContainer) {
-      if (isNetworkErr) {
+      if (isPnaErr) {
+        resultsContainer.innerHTML = `
+          <div class="results-empty" style="padding:40px 20px; text-align:center;">
+            <div style="font-size:32px; margin-bottom:8px;">🔒</div>
+            <p style="color:#f59e0b; font-size:13px; font-weight:700; font-family:'JetBrains Mono', monospace; margin-bottom:6px;">
+              LOCAL NETWORK ACCESS PERMISSION REQUIRED
+            </p>
+            <p style="color:#94a3b8; font-size:11.5px; max-width:440px; margin:0 auto 14px; line-height:1.5;">
+              Chrome requires permission for HTTPS sites to contact loopback services. Click the permissions/tune icon in the address bar, allow 'Local Network Access' for this site, and try again.
+            </p>
+            <button class="btn btn-secondary btn-xs" onclick="openSystemHealthModal()">Open System Health</button>
+          </div>
+        `;
+      } else if (isNetworkErr) {
         resultsContainer.innerHTML = `
           <div class="results-empty" style="padding:40px 20px; text-align:center;">
             <div style="font-size:32px; margin-bottom:8px;">⚠️</div>
@@ -1519,7 +2171,7 @@ async function analyzeFile() {
               BACKEND DOCKER CONTAINER OFFLINE
             </p>
             <p style="color:#94a3b8; font-size:11.5px; max-width:440px; margin:0 auto 14px; line-height:1.5;">
-              The frontend is online on Vercel / GitHub Pages. To run scans, start the CyberGuard backend in Docker on your laptop or configure your secure tunnel endpoint.
+              The CyberGuard backend could not be reached at ${escapeHtml(CyberGuardConnection.getApiBase() || 'http://127.0.0.1:' + CyberGuardConnection.port)}. Ensure the Docker container is running (<code>docker compose up -d</code>) or configure a valid tunnel URL.
             </p>
             <button class="btn btn-secondary btn-xs" onclick="openBackendModal()">Configure Backend / Tunnel</button>
           </div>
@@ -1534,6 +2186,8 @@ async function analyzeFile() {
     }
     if (err.name === 'AbortError' || didTimeout) {
       showToast('Analysis timed out. The server may be busy — please try again.', 'error');
+    } else if (isPnaErr) {
+      showToast('Local Network Access blocked by browser — check address bar permissions', 'warning');
     } else if (isNetworkErr) {
       showToast('CyberGuard Backend offline — Start Docker container or configure tunnel', 'error');
     } else {
@@ -2566,54 +3220,8 @@ function showToast(message, type = 'info', duration = 4000) {
 
 // ── System Status Check ───────────────────────────────────────────────────────
 async function checkSystemStatus() {
-  const currentEndpoint = getResolvedApiBase();
-  const displayEl = document.getElementById('modal-backend-url-display');
-  if (displayEl) displayEl.textContent = currentEndpoint || '(Local / Origin Fallback)';
-
-  const startTime = performance.now();
-  try {
-    const targetUrl = currentEndpoint ? `${currentEndpoint}/api/config/status` : '/api/config/status';
-    const resp = await fetch(targetUrl);
-    const latency = Math.round(performance.now() - startTime);
-    const pingEl = document.getElementById('modal-backend-ping');
-    if (pingEl) pingEl.textContent = `Latency: ${latency}ms`;
-
-    if (resp.ok) {
-      const data = await parseResponseSafely(resp, 'System Status');
-      if (data && data.status === 'operational') {
-        updateSystemStatus('online');
-
-        // Update feature pill status
-        if (data.wav2vec2_available && document.getElementById('pill-wav2vec')) document.getElementById('pill-wav2vec').classList.add('active');
-        if (data.ecapa_available && document.getElementById('pill-speaker')) document.getElementById('pill-speaker').classList.add('active');
-
-        // Load current thresholds
-        if (data.config && data.config.thresholds) {
-          const thrLow = document.getElementById('thr-low');
-          const thrMed = document.getElementById('thr-medium');
-          const thrHigh = document.getElementById('thr-high');
-          if (thrLow) thrLow.value = data.config.thresholds.low;
-          if (thrMed) thrMed.value = data.config.thresholds.medium;
-          if (thrHigh) thrHigh.value = data.config.thresholds.high;
-        }
-
-        // Live Threat Intel sync from status
-        if (data.virustotal_status && data.virustotal_status !== 'UNKNOWN' && typeof renderVirusTotalBadge === 'function') {
-          renderVirusTotalBadge({ status: data.virustotal_status });
-        }
-        if (data.urlhaus_status && data.urlhaus_status !== 'UNKNOWN' && typeof renderURLhausBadge === 'function') {
-          renderURLhausBadge({ status: data.urlhaus_status });
-        }
-      } else {
-        updateSystemStatus('offline');
-      }
-    } else {
-      updateSystemStatus('offline');
-    }
-  } catch (_) {
-    const pingEl = document.getElementById('modal-backend-ping');
-    if (pingEl) pingEl.textContent = 'Latency: Offline';
-    updateSystemStatus('offline');
+  if (window.CyberGuardConnection) {
+    return window.CyberGuardConnection.checkConnection();
   }
 }
 
@@ -3068,6 +3676,7 @@ function updateIOCTypeBadges(val) {
 
 // ── Initialization ────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  if (window.CyberGuardConnection) window.CyberGuardConnection.init();
   drawGauge(0);
   initTimeline();
   checkSystemStatus();
@@ -3138,6 +3747,11 @@ async function scanThreat() {
   formData.append('source', 'web_dashboard');
 
   try {
+    const currentBase = getResolvedApiBase();
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!currentBase && isStaticHost) {
+      throw new Error('No backend API connected. To perform scans, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+    }
     const scanHeaders = { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' };
     delete scanHeaders['Content-Type'];
     const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -3145,8 +3759,7 @@ async function scanThreat() {
       body: formData,
       headers: scanHeaders
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Scan failed');
+    const data = await parseResponseSafely(res, 'Threat Scan', { requireJson: true });
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -3204,7 +3817,16 @@ async function searchIOC() {
   }, 60000);
 
   try {
-    const res = await fetch(`${API_BASE}/api/threats/search?ioc=${encodeURIComponent(ioc)}`, {
+    const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
+    const currentBase = isLocal ? (getResolvedApiBase() || `http://127.0.0.1:${window.CyberGuardConnection.port || '3000'}`) : getResolvedApiBase();
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!isLocal && !currentBase && isStaticHost) {
+      throw new Error('No backend API connected. To perform Threat Intelligence queries, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+    }
+    const targetUrl = (window.CyberGuardConnection && typeof window.CyberGuardConnection.resolveUrl === 'function')
+      ? window.CyberGuardConnection.resolveUrl(`/api/threats/search?ioc=${encodeURIComponent(ioc)}`)
+      : `${currentBase || API_BASE}/api/threats/search?ioc=${encodeURIComponent(ioc)}`;
+    const res = await fetch(targetUrl, {
       headers: { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' },
       signal: controller.signal
     });
@@ -3212,7 +3834,7 @@ async function searchIOC() {
     if (!res.ok && (res.status === 503 || res.status === 401 || res.status === 429)) {
       autoLinkThreatIntelPipeline(true);
     }
-    const data = await parseResponseSafely(res, 'Threat Intelligence Search');
+    const data = await parseResponseSafely(res, 'Threat Intelligence Search', { requireJson: true });
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -3269,14 +3891,23 @@ async function scanQR() {
   formData.append('source', 'web_dashboard');
 
   try {
+    const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
+    const currentBase = isLocal ? (getResolvedApiBase() || `http://127.0.0.1:${window.CyberGuardConnection.port || '3000'}`) : getResolvedApiBase();
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!isLocal && !currentBase && isStaticHost) {
+      throw new Error('No backend API connected. To perform QR forensic scans, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+    }
     const qrHeaders = { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' };
     delete qrHeaders['Content-Type'];
-    const res = await fetch(`${API_BASE}/api/threats/qr`, {
+    const targetUrl = (window.CyberGuardConnection && typeof window.CyberGuardConnection.resolveUrl === 'function')
+      ? window.CyberGuardConnection.resolveUrl('/api/threats/qr')
+      : `${currentBase || API_BASE}/api/threats/qr`;
+    const res = await fetch(targetUrl, {
       method: 'POST',
       body: formData,
       headers: qrHeaders
     });
-    const data = await parseResponseSafely(res, 'QR Forensic Scanner');
+    const data = await parseResponseSafely(res, 'QR Forensic Scanner', { requireJson: true });
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -8988,28 +9619,6 @@ function renderQueueAuthGate(tbody, reason = 'EXPIRED') {
 }
 
 async function quickAdminLogin() {
-  showToast('Restoring administrator session...', 'info');
-  try {
-    const res = await fetch(`${API_BASE}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username_or_email: 'admin',
-        username: 'admin',
-        password: 'Admin@CyberGuard2026!'
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setAuthToken(data.token);
-      saveCurrentUser(data.user);
-      syncAuthUI();
-      showToast('✓ Administrator session restored!', 'success');
-      await checkAuthStatus();
-      await loadReviewQueue();
-      return;
-    }
-  } catch (_) {}
   openAuthModal('login');
 }
 
