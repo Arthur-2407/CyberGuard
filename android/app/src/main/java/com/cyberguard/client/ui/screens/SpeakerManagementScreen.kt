@@ -134,7 +134,7 @@ fun SpeakerManagementScreen(navController: NavController, viewModel: MainViewMod
                     color = TextPrimary
                 )
                 Text(
-                    text = "TRUSTED IDENTITY REGISTRY // BIO-ACOUSTIC ENCLAVE",
+                    text = "TRUSTED IDENTITY REGISTRY",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         letterSpacing = 1.sp,
@@ -465,7 +465,7 @@ fun SpeakerManagementScreen(navController: NavController, viewModel: MainViewMod
                                     )
                                 )
                                 Text(
-                                    text = "TENANT ISOLATED // ZERO PROFILES REGISTERED",
+                                    text = "TENANT ISOLATED",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 9.sp,

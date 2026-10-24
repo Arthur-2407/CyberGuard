@@ -1,0 +1,79 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CyberGuard SOC & AI Multi-Modal Defense — Docker Compose Orchestration
+# ═══════════════════════════════════════════════════════════════════════════════
+# Architecture:
+# - cyberguard-backend: Core Python 3.12 FastAPI / WebSocket SOC AI engine
+# - tunnel (optional profile): Secure HTTPS Cloudflare Tunnel providing a public
+#   TLS endpoint for your live Vercel & GitHub Pages frontends to reach your laptop.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+services:
+  cyberguard-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: cyberguard-backend:latest
+    container_name: cyberguard-backend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - PYTHONUNBUFFERED=1
+      - DATABASE_PATH=/app/data/cyberguard.db
+      - CYBERGUARD_ADMIN_PASSWORD=${CYBERGUARD_ADMIN_PASSWORD:-Admin@CyberGuard2026!}
+      - CYBERGUARD_CORS_ORIGINS=${CYBERGUARD_CORS_ORIGINS:-https://cyber-guard-backend-ashen.vercel.app,https://arthur-2407.github.io,http://localhost:3000,http://127.0.0.1:3000}
+      - CYBERGUARD_CORS_REGEX=${CYBERGUARD_CORS_REGEX:-^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.vercel\.app|.*\.pages\.dev|.*\.github\.io|.*\.trycloudflare\.com|.*\.ngrok-free\.app|.*\.loca\.lt)(:\d+)?$}
+      - VIRUSTOTAL_ENABLED=${VIRUSTOTAL_ENABLED:-true}
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+      - URLHAUS_ENABLED=${URLHAUS_ENABLED:-true}
+      - URLHAUS_AUTH_KEY=${URLHAUS_AUTH_KEY:-}
+      - EMAIL_TEST_MODE=${EMAIL_TEST_MODE:-true}
+      - OMP_NUM_THREADS=2
+      - MKL_NUM_THREADS=2
+      - OPENBLAS_NUM_THREADS=2
+    volumes:
+      # Persist SQLite databases, scan history, threat telemetry, and model card
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - cyberguard-net
+
+  # Secure Cloudflare Tunnel service:
+  # Allows your publicly deployed frontends (Vercel & GitHub Pages) to communicate
+  # with your laptop backend over end-to-end encrypted HTTPS without port forwarding.
+  # Start with: docker compose --profile tunnel up -d
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: cyberguard-tunnel
+    restart: unless-stopped
+    profiles:
+      - tunnel
+    depends_on:
+      cyberguard-backend:
+        condition: service_healthy
+    networks:
+      - cyberguard-net
+    # If CLOUDFLARE_TUNNEL_TOKEN is set, runs authenticated named tunnel;
+    # otherwise runs an instant zero-config Quick Tunnel (https://*.trycloudflare.com)
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        if [ -n "$$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+          echo "[INFO] Starting authenticated Cloudflare Tunnel with token..."
+          cloudflared tunnel run --token "$$CLOUDFLARE_TUNNEL_TOKEN"
+        else
+          echo "[INFO] Starting zero-config Cloudflare Quick Tunnel to cyberguard-backend:3000..."
+          cloudflared tunnel --url http://cyberguard-backend:3000 --no-autoupdate
+        fi
+    environment:
+      - CLOUDFLARE_TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+
+networks:
+  cyberguard-net:
+    driver: bridge

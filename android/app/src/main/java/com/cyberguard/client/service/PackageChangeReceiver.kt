@@ -91,8 +91,8 @@ class PackageChangeReceiver : BroadcastReceiver() {
                 sha256 = "N/A",
                 detectedThreatDetails = "External package origin ($eventType). Bypassed official store verification and signature policy.",
                 threatCategory = "UNOFFICIAL_SIDELOAD_MALWARE",
-                virusScanResult = "HIGH_ENTROPY_EXECUTABLE // OBFUSCATED_DEX_SUSPECTED",
-                playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT // BYPASSED STORE SIGNING",
+                virusScanResult = "HIGH_ENTROPY_EXECUTABLE",
+                playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT",
                 aiAutonomousRecommendation = "Forced quarantine active. Installation temporarily frozen. Choose to delete/uninstall or authorize installation.",
                 apkPath = apkPath
             )

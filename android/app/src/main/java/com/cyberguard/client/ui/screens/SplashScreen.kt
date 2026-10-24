@@ -47,9 +47,6 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
     val discoveryStatusText by viewModel.discoveryStatus.collectAsState()
     val detectedGateway = viewModel.detectedGatewayIp
 
-    var isSubnetScanning by remember { mutableStateOf(false) }
-    var subnetScanNotice by remember { mutableStateOf<String?>(null) }
-
     // Interactive state for tactical HUD & radar inspection
     var selectedThreatDetail by remember { mutableStateOf<String?>(null) }
     var shieldShockwaveActive by remember { mutableStateOf(false) }
@@ -179,7 +176,7 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
             // Left HUD block: System ID & Optical Barcode Ticks
             Column(horizontalAlignment = Alignment.Start) {
                 Text(
-                    text = "┌  [SYS.ID // CG-CORE-4096]",
+                    text = "┌  [SYS.ID: CG-CORE-4096]",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
@@ -301,7 +298,7 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                 .pointerInput(Unit) {
                     detectTapGestures {
                         shieldShockwaveActive = true
-                        selectedThreatDetail = "QUANTUM SHIELD HARMONIZED // DEFENSE MATRIX 100%"
+                        selectedThreatDetail = "QUANTUM SHIELD HARMONIZED"
                     }
                 },
             contentAlignment = Alignment.Center
@@ -582,7 +579,7 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "QUANTUM NEURAL MATRIX // INITIALIZING",
+                    text = "QUANTUM NEURAL MATRIX",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         fontSize = 10.5.sp,
@@ -632,7 +629,7 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                 .height(156.dp)
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        selectedThreatDetail = "INTERCEPT TARGET LOCKED // VECTOR [${offset.x.toInt()}, ${offset.y.toInt()}] // AIR-GAPPED DEFENSE"
+                        selectedThreatDetail = "INTERCEPT TARGET LOCKED"
                     }
                 },
             contentAlignment = Alignment.Center
@@ -777,150 +774,99 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                         }
                     }
 
-                    if (!detectedGateway.isNullOrBlank()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                            color = HighlightSurface,
-                            border = BorderStroke(1.dp, CyberNeonCyan.copy(alpha = 0.6f))
+                    // 1. Priority Candidate: Auto-Detected Local Host Candidate
+                    val localCandidateIp = detectedGateway ?: "192.168.29.1"
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = HighlightSurface,
+                        border = BorderStroke(1.dp, CyberNeonCyan.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "AUTO-DETECTED HOST CANDIDATE",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 8.5.sp),
+                                    color = CyberNeonCyan
+                                )
+                                Text(
+                                    text = "$localCandidateIp:3000",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.5.sp),
+                                    color = TextPrimary
+                                )
+                            }
+                            Button(
+                                onClick = { viewModel.connectManually(localCandidateIp, "3000") },
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = "AUTO-DETECTED HOST CANDIDATE",
-                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 8.5.sp),
-                                        color = CyberNeonCyan
-                                    )
-                                    Text(
-                                        text = "$detectedGateway:3000",
-                                        style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp),
-                                        color = TextPrimary
-                                    )
-                                }
-                                Button(
-                                    onClick = { viewModel.connectManually(detectedGateway, "3000") },
-                                    colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
-                                    shape = RoundedCornerShape(6.dp),
-                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                                ) {
-                                    Text("CONNECT", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold))
-                                }
+                                Text("CONNECT", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold))
                             }
                         }
                     }
 
-                    if (subnetScanNotice != null) {
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = subnetScanNotice!!,
-                            style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 9.sp),
-                            color = if (subnetScanNotice!!.contains("FOUND")) StatusOnline else StatusWarning
-                        )
+                    // 2. Secondary Candidate: Deployed Cloud Defense Node
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = HighlightSurface,
+                        border = BorderStroke(1.dp, CyberBlue.copy(alpha = 0.6f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "DEPLOYED CLOUD NODE",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 8.5.sp),
+                                    color = CyberBlue
+                                )
+                                Text(
+                                    text = "cyber-guard-backend...vercel.app",
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp),
+                                    color = TextPrimary
+                                )
+                            }
+                            Button(
+                                onClick = { viewModel.connectToDeployedBackend() },
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberBlue, contentColor = DeepSpaceBackground),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                            ) {
+                                Text("CONNECT", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold))
+                            }
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    var ipInput by remember { mutableStateOf(detectedGateway ?: "") }
-                    var portInput by remember { mutableStateOf("3000") }
-
-                    OutlinedTextField(
-                        value = ipInput,
-                        onValueChange = { ipInput = it },
-                        label = { Text("MANUAL HOST IP", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp)) },
-                        placeholder = { Text(detectedGateway ?: "e.g. 192.168.1.100") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
+                    // 3. Autonomous System Auto-Detect & Re-Sync Trigger
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = { viewModel.retryDiscovery() },
                         modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CyberNeonCyan,
-                            unfocusedBorderColor = HolographicGlowBorder,
-                            focusedLabelColor = CyberNeonCyan,
-                            cursorColor = CyberNeonCyan,
-                            focusedContainerColor = HighlightSurface,
-                            unfocusedContainerColor = ElevatedSurface
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    OutlinedTextField(
-                        value = portInput,
-                        onValueChange = { portInput = it },
-                        label = { Text("PORT", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp)) },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CyberNeonCyan,
-                            unfocusedBorderColor = HolographicGlowBorder,
-                            focusedLabelColor = CyberNeonCyan,
-                            cursorColor = CyberNeonCyan,
-                            focusedContainerColor = HighlightSurface,
-                            unfocusedContainerColor = ElevatedSurface
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
+                        shape = RoundedCornerShape(6.dp),
+                        contentPadding = PaddingValues(vertical = 10.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = { viewModel.retryDiscovery() },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberNeonCyan),
-                            border = BorderStroke(1.dp, CyberNeonCyan),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(13.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("RETRY", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace))
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                isSubnetScanning = true
-                                subnetScanNotice = "SCANNING /24 SUBNET..."
-                                viewModel.scanSubnet(
-                                    onFound = { foundIp ->
-                                        isSubnetScanning = false
-                                        ipInput = foundIp
-                                        subnetScanNotice = "NODE FOUND AT $foundIp! CONNECTING..."
-                                        viewModel.connectManually(foundIp, portInput)
-                                    },
-                                    onFinished = {
-                                        isSubnetScanning = false
-                                        subnetScanNotice = "SUBNET SCAN COMPLETE."
-                                    }
-                                )
-                            },
-                            modifier = Modifier.weight(1.1f),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = ElectricCyan),
-                            border = BorderStroke(1.dp, ElectricCyan.copy(alpha = 0.7f)),
-                            shape = RoundedCornerShape(6.dp),
-                            enabled = !isSubnetScanning
-                        ) {
-                            Text(
-                                if (isSubnetScanning) "SCANNING..." else "SCAN SUBNET",
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 10.sp)
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "AUTO-CONNECT / RE-SYNC DEFENSE NODE",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.5.sp,
+                                letterSpacing = 0.8.sp
                             )
-                        }
-
-                        Button(
-                            onClick = { viewModel.connectManually(ipInput.trim(), portInput.trim()) },
-                            modifier = Modifier.weight(1f),
-                            colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
-                            shape = RoundedCornerShape(6.dp),
-                            enabled = ipInput.isNotBlank()
-                        ) {
-                            Text("CONNECT", style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold))
-                        }
+                        )
                     }
                 }
                 Spacer(modifier = Modifier.height(14.dp))
@@ -951,7 +897,7 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(3.dp))
 
         Text(
-            text = "PROTOCOL: ZERO-TRUST // ENCRYPTED SHA-256",
+            text = "PROTOCOL: ZERO-TRUST",
             style = MaterialTheme.typography.labelSmall.copy(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 8.5.sp,
@@ -1000,7 +946,7 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
             horizontalArrangement = Arrangement.Center
         ) {
             Text(
-                text = "└  QUANTUM DEFENSE GRID // NODE TELEMETRY ACTIVE  ┘",
+                text = "└  QUANTUM DEFENSE GRID  ┘",
                 style = MaterialTheme.typography.labelSmall.copy(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 9.sp,

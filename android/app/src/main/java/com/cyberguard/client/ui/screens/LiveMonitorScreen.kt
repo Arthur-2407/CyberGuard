@@ -169,7 +169,7 @@ fun LiveMonitorScreen(navController: NavController, viewModel: MainViewModel) {
             color = TextPrimary
         )
         Text(
-            text = "REAL-TIME ACOUSTIC TELEMETRY UPLINK // FRAME-BY-FRAME INFERENCE",
+            text = "REAL-TIME ACOUSTIC TELEMETRY UPLINK",
             style = MaterialTheme.typography.labelSmall.copy(
                 fontFamily = FontFamily.Monospace,
                 letterSpacing = 1.sp,
@@ -532,7 +532,7 @@ fun LiveMonitorScreen(navController: NavController, viewModel: MainViewModel) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "STANDBY // 16kHz LINEAR PCM READY", 
+                            text = "STANDBY", 
                             style = MaterialTheme.typography.titleMedium.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold

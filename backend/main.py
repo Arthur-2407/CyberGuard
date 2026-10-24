@@ -29,6 +29,24 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+# Bound thread stack overhead in containerized environments (Render / Linux cgroups)
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
+os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
+
+try:
+    import torch
+    torch.set_num_threads(1)
+    if hasattr(torch, "set_num_interop_threads"):
+        try:
+            torch.set_num_interop_threads(1)
+        except Exception:
+            pass
+except Exception:
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -398,11 +416,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS (configurable origins)
+# CORS (configurable origins with cloud deployment support)
+_cors_origins = list(app_settings.server.cors_origins)
+_env_origins = os.getenv("CYBERGUARD_CORS_ORIGINS", "")
+if _env_origins:
+    _cors_origins.extend([o.strip() for o in _env_origins.split(",") if o.strip()])
+
+_cors_regex = os.getenv(
+    "CYBERGUARD_CORS_REGEX",
+    r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.vercel\.app|.*\.pages\.dev|.*\.github\.io|.*\.trycloudflare\.com|.*\.ngrok-free\.app|.*\.loca\.lt)(:\d+)?$"
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=app_settings.server.cors_origins,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -447,6 +475,34 @@ if _FRONTEND_DIR.exists():
     @app.get("/alerts", include_in_schema=False)
     async def serve_frontend():
         return FileResponse(str(_FRONTEND_DIR / "index.html"))
+
+    @app.get("/styles.css", include_in_schema=False)
+    async def serve_styles():
+        return FileResponse(str(_FRONTEND_DIR / "styles.css"), media_type="text/css")
+
+    @app.get("/app.js", include_in_schema=False)
+    async def serve_app():
+        return FileResponse(str(_FRONTEND_DIR / "app.js"), media_type="application/javascript")
+
+    @app.get("/config.js", include_in_schema=False)
+    async def serve_config():
+        config_file = _FRONTEND_DIR / "config.js"
+        if config_file.exists():
+            return FileResponse(str(config_file), media_type="application/javascript")
+        return Response(content="window.__CYBERGUARD_CONFIG__ = window.__CYBERGUARD_CONFIG__ || {};", media_type="application/javascript")
+
+    @app.get("/logo_full.png", include_in_schema=False)
+    @app.get("/logo.png", include_in_schema=False)
+    async def serve_logo():
+        return FileResponse(str(_FRONTEND_DIR / "logo_full.png"), media_type="image/png")
+
+    @app.get("/sounds/{filename}", include_in_schema=False)
+    async def serve_sounds(filename: str):
+        sound_file = _FRONTEND_DIR / "sounds" / filename
+        if sound_file.exists():
+            media = "audio/wav" if filename.endswith(".wav") else "audio/mpeg"
+            return FileResponse(str(sound_file), media_type=media)
+        return Response(status_code=404)
 
 # ── Health & Favicon ───────────────────────────────────────────────────────────
 @app.get("/favicon.ico", include_in_schema=False)

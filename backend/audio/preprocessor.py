@@ -77,25 +77,28 @@ def to_mono(audio: np.ndarray) -> np.ndarray:
     return audio.mean(axis=0)
 
 
-def normalize(audio: np.ndarray, method: str = "peak") -> np.ndarray:
+def normalize(audio: np.ndarray, method: str = "peak", min_peak_threshold: float = 0.015) -> np.ndarray:
     """
     Normalize audio amplitude.
 
-    method='peak'  → scale so max(|audio|) == 1.0
+    method='peak'  → scale so max(|audio|) == 1.0 (only if peak >= min_peak_threshold)
     method='rms'   → scale to RMS of -20 dBFS
+    
+    Safety rule: If peak amplitude is below min_peak_threshold (e.g. ambient microphone
+    hiss or silence), do NOT amplify noise by 1000x. Return audio unchanged.
     """
     if audio is None or audio.size == 0:
         return audio
 
     if method == "peak":
         peak = np.max(np.abs(audio))
-        if peak > 1e-8:
+        if peak >= min_peak_threshold:
             return audio / peak
         return audio
     elif method == "rms":
         rms = np.sqrt(np.mean(audio ** 2))
         target_rms = 0.1  # ~ -20 dBFS
-        if rms > 1e-8:
+        if rms >= min_peak_threshold:
             return audio * (target_rms / rms)
         return audio
     else:
@@ -231,19 +234,94 @@ def chunk_audio(
     return chunks
 
 
+def is_speech_present(
+    audio: np.ndarray,
+    sr: int = 16000,
+    rms_thresh: float = 0.003,
+    peak_thresh: float = 0.012,
+    min_speech_duration_sec: float = 0.35,
+    vad_aggressiveness: int = 1,
+) -> Tuple[bool, str, dict]:
+    """
+    Evaluate whether a raw audio segment contains usable human speech for detection inference.
+
+    Distinguishes:
+      - Complete digital silence (all zeros or near-zero)
+      - Ambient room background noise / microphone floor hiss
+      - Short acoustic transients (clicks, taps, breathing)
+      - Genuine conversational human speech
+
+    Returns:
+      (is_speech, reason, metrics_dict)
+    """
+    if audio is None or len(audio) == 0:
+        return False, "EMPTY_AUDIO", {"rms": 0.0, "peak": 0.0, "speech_ratio": 0.0}
+
+    # Ensure 1D float32
+    if audio.ndim > 1:
+        audio = audio.mean(axis=0)
+
+    # 1. Acoustic Energy Check
+    rms = float(np.sqrt(np.mean(audio ** 2)))
+    peak = float(np.max(np.abs(audio)))
+
+    metrics = {
+        "rms": round(rms, 5),
+        "peak": round(peak, 5),
+        "duration_sec": round(len(audio) / max(1, sr), 3),
+    }
+
+    if rms < 0.0005 and peak < 0.002:
+        return False, "SILENCE", metrics
+
+    if rms < rms_thresh or peak < peak_thresh:
+        return False, "AMBIENT_NOISE", metrics
+
+    # 2. WebRTC Voice Activity Detection on raw audio (standard 16 kHz)
+    if _WEBRTCVAD_AVAILABLE and sr in (8000, 16000, 32000, 48000):
+        frame_ms = 30
+        frame_len = int(sr * frame_ms / 1000)
+        audio_int16 = np.clip(audio * 32767, -32768, 32767).astype(np.int16)
+        vad = webrtcvad.Vad(vad_aggressiveness)
+
+        speech_frames = 0
+        total_frames = 0
+        for i in range(0, len(audio_int16) - frame_len + 1, frame_len):
+            total_frames += 1
+            frame_bytes = audio_int16[i : i + frame_len].tobytes()
+            try:
+                if vad.is_speech(frame_bytes, sr):
+                    speech_frames += 1
+            except Exception:
+                pass
+
+        speech_sec = speech_frames * (frame_ms / 1000.0)
+        speech_ratio = speech_frames / max(1, total_frames)
+        metrics["speech_sec"] = round(speech_sec, 3)
+        metrics["speech_ratio"] = round(speech_ratio, 3)
+
+        if speech_sec < min_speech_duration_sec or speech_ratio < 0.20:
+            return False, "INSUFFICIENT_SPEECH_DURATION", metrics
+
+        return True, "SPEECH_DETECTED", metrics
+
+    # Fallback if WebRTC VAD unavailable: energy thresholding
+    return True, "SPEECH_DETECTED_ENERGY", metrics
+
+
 def preprocess_audio(
     audio: np.ndarray,
     sr: int,
     target_sr: int = 16000,
     apply_noise_reduction: bool = False,
     apply_vad: bool = True,
-    vad_aggressiveness: int = 2,
+    vad_aggressiveness: int = 1,
     normalize_method: str = "peak",
 ) -> np.ndarray:
     """
     Full preprocessing pipeline for a raw audio waveform.
 
-    Steps: to_mono → resample → normalize → [noise_reduction] → [VAD]
+    Steps: to_mono → resample → [noise_reduction] → [VAD] → normalize
 
     Returns preprocessed float32 mono waveform at target_sr.
     """
@@ -252,16 +330,15 @@ def preprocess_audio(
 
     audio = to_mono(audio)
     audio = resample(audio, orig_sr=sr, target_sr=target_sr)
-    audio = normalize(audio, method=normalize_method)
 
     if apply_noise_reduction:
         audio = reduce_noise(audio, sr=target_sr)
 
     if apply_vad:
         audio = webrtcvad_filter(audio, sr=target_sr, aggressiveness=vad_aggressiveness)
-        # Re-normalize after VAD since amplitude may shift
-        if audio.size > 0:
-            audio = normalize(audio, method=normalize_method)
+
+    if audio.size > 0:
+        audio = normalize(audio, method=normalize_method)
 
     return audio.astype(np.float32)
 

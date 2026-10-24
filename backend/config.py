@@ -75,9 +75,9 @@ class DetectionConfig:
     batch_size: int = 1
     n_mels: int = 80
     n_mfcc: int = 40
-    use_wav2vec2: bool = True
+    use_wav2vec2: bool = False
     wav2vec2_model: str = "facebook/wav2vec2-base"
-    use_speaker_embedding: bool = True
+    use_speaker_embedding: bool = False
     ecapa_model: str = "speechbrain/spkrec-ecapa-voxceleb"
 
 
@@ -328,9 +328,9 @@ def _build_settings(raw: dict) -> Settings:
             batch_size=detection_raw.get("batch_size", 1),
             n_mels=detection_raw.get("n_mels", 80),
             n_mfcc=detection_raw.get("n_mfcc", 40),
-            use_wav2vec2=detection_raw.get("use_wav2vec2", True),
+            use_wav2vec2=os.getenv("CYBERGUARD_USE_WAV2VEC2", "false").lower() == "true" if "CYBERGUARD_USE_WAV2VEC2" in os.environ else detection_raw.get("use_wav2vec2", False),
             wav2vec2_model=detection_raw.get("wav2vec2_model", "facebook/wav2vec2-base"),
-            use_speaker_embedding=detection_raw.get("use_speaker_embedding", True),
+            use_speaker_embedding=os.getenv("CYBERGUARD_USE_SPEAKER_EMBEDDING", "false").lower() == "true" if "CYBERGUARD_USE_SPEAKER_EMBEDDING" in os.environ else detection_raw.get("use_speaker_embedding", False),
             ecapa_model=detection_raw.get("ecapa_model", "speechbrain/spkrec-ecapa-voxceleb"),
         ),
         risk=RiskConfig(

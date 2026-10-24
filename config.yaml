@@ -18,10 +18,10 @@ detection:
   # Number of MFCC coefficients
   n_mfcc: 40
   # Use wav2vec2 embeddings (requires internet on first run to download)
-  use_wav2vec2: true
+  use_wav2vec2: false
   wav2vec2_model: "facebook/wav2vec2-base"
-  # Use SpeechBrain ECAPA speaker embeddings
-  use_speaker_embedding: true
+  # Use SpeechBrain ECAPA speaker embeddings (disabled by default in cloud to prevent HuggingFace cold-start OOM)
+  use_speaker_embedding: false
   ecapa_model: "speechbrain/spkrec-ecapa-voxceleb"
 
 risk:

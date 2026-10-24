@@ -15,12 +15,151 @@
 'use strict';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
-const IS_EXTERNAL_ORIGIN = typeof location !== 'undefined' && (location.protocol === 'file:' || location.origin === 'null' || (location.port && location.port !== '3000' && location.port !== '8000'));
-const API_BASE = IS_EXTERNAL_ORIGIN ? 'http://127.0.0.1:3000' : '';
-// Derive WebSocket scheme from page protocol to support both HTTP and HTTPS deployments.
-const WS_SCHEME = (typeof location !== 'undefined' && location.protocol === 'https:') ? 'wss:' : 'ws:';
-const WS_HOST = (typeof location !== 'undefined' && location.host && !IS_EXTERNAL_ORIGIN) ? location.host : '127.0.0.1:3000';
-const WS_URL = `${WS_SCHEME}//${WS_HOST}/ws/stream`;
+const IS_EXTERNAL_ORIGIN = typeof location !== 'undefined' && (
+  location.protocol === 'file:' ||
+  location.origin === 'null' ||
+  (location.hostname !== 'localhost' && location.hostname !== '127.0.0.1' && location.hostname !== '0.0.0.0') ||
+  (location.port && location.port !== '3000' && location.port !== '8000')
+);
+
+// Support configurable API base URL via query param, localStorage, window global, or origin fallback
+function getResolvedApiBase() {
+  try {
+    if (typeof window !== 'undefined' && window.location) {
+      const params = new URLSearchParams(window.location.search);
+      const qpBase = params.get('api_base') || params.get('backend_url');
+      if (qpBase && qpBase.trim()) {
+        const cleaned = qpBase.trim().replace(/\/+$/, '');
+        localStorage.setItem('cyberguard_api_base', cleaned);
+        return cleaned;
+      }
+    }
+    if (typeof localStorage !== 'undefined') {
+      const stored = localStorage.getItem('cyberguard_api_base');
+      if (stored && stored.trim()) return stored.trim().replace(/\/+$/, '');
+    }
+  } catch (_) {}
+
+  if (typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.api_base) {
+    const custom = window.__CYBERGUARD_CONFIG__.api_base.trim();
+    if (custom) return custom.replace(/\/+$/, '');
+  }
+
+  if (typeof location !== 'undefined') {
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '0.0.0.0') {
+      return (location.port === '3000') ? '' : 'http://127.0.0.1:3000';
+    }
+    return '';
+  }
+  return 'http://127.0.0.1:3000';
+}
+
+let API_BASE = getResolvedApiBase();
+
+// Derive WebSocket scheme & host dynamically from API base or current host
+function _resolveWsUrl() {
+  const currentBase = getResolvedApiBase();
+  if (currentBase) {
+    try {
+      const parsed = new URL(currentBase, (typeof location !== 'undefined' ? location.origin : 'http://127.0.0.1:3000'));
+      const s = parsed.protocol === 'https:' ? 'wss:' : 'ws:';
+      return `${s}//${parsed.host}/ws/stream`;
+    } catch (_) {}
+  }
+  const isHttps = typeof location !== 'undefined' && location.protocol === 'https:';
+  if (isHttps && IS_EXTERNAL_ORIGIN) {
+    return `wss://${location.host}/ws/stream`;
+  }
+  const s = isHttps ? 'wss:' : 'ws:';
+  const h = (typeof location !== 'undefined' && location.host && !IS_EXTERNAL_ORIGIN) ? location.host : '127.0.0.1:3000';
+  return `${s}//${h}/ws/stream`;
+}
+let WS_URL = _resolveWsUrl();
+
+function setCyberGuardApiBase(url) {
+  if (url && url.trim()) {
+    const cleaned = url.trim().replace(/\/+$/, '');
+    localStorage.setItem('cyberguard_api_base', cleaned);
+    API_BASE = cleaned;
+  } else {
+    localStorage.removeItem('cyberguard_api_base');
+    API_BASE = getResolvedApiBase();
+  }
+  if (typeof _resolveWsUrl === 'function') {
+    try {
+      WS_URL = _resolveWsUrl();
+      window.WS_URL = WS_URL;
+    } catch (_) {}
+  }
+  if (typeof checkSystemStatus === 'function') checkSystemStatus();
+}
+window.setCyberGuardApiBase = setCyberGuardApiBase;
+
+// ── Single-Read HTTP Response & Error Processing Engine ──────────────────────
+/**
+ * Safely parse an HTTP Response object reading its body stream exactly once.
+ * Reads body as text first via await response.text(), then attempts JSON parse.
+ * Guarantees the body stream is never consumed a second time.
+ * Handles successful JSON responses, error JSON, HTML error pages, plain-text error responses, empty bodies, and malformed JSON.
+ * Returns parsed JSON data (or raw string if non-JSON and ok).
+ * Throws a descriptive Error preserving HTTP status and server error detail.
+ *
+ * @param {Response} response - The fetch Response object
+ * @param {string} operationName - Name of the operation for diagnostics
+ * @returns {Promise<any>}
+ */
+async function parseResponseSafely(response, operationName = 'Request') {
+  if (!response) {
+    throw new Error(`${operationName}: No response received from server`);
+  }
+
+  let rawText = '';
+  try {
+    rawText = await response.text();
+  } catch (readErr) {
+    throw new Error(`${operationName} failed to read response stream: ${readErr.message}`);
+  }
+
+  let jsonData = null;
+  let isJson = false;
+  if (rawText && rawText.trim().length > 0) {
+    try {
+      jsonData = JSON.parse(rawText);
+      isJson = true;
+    } catch (_) {
+      isJson = false;
+    }
+  }
+
+  if (!response.ok) {
+    let errorDetail = '';
+    if (isJson && jsonData && typeof jsonData === 'object') {
+      errorDetail = jsonData.detail || jsonData.message || jsonData.error || JSON.stringify(jsonData);
+    } else if (rawText && rawText.trim().length > 0) {
+      // Strip HTML tags if server returned an HTML error page (e.g. Vercel 404/502)
+      const clean = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      errorDetail = clean.length > 250 ? clean.substring(0, 250) + '...' : clean;
+    }
+
+    let contextNote = '';
+    if (response.status === 404) {
+      contextNote = ' (Endpoint not found — check backend deployment and API routing)';
+    } else if (response.status === 502 || response.status === 503 || response.status === 504) {
+      contextNote = ' (Backend service unavailable or gateway error)';
+    }
+
+    const msg = errorDetail || `HTTP ${response.status} (${response.statusText || 'Error'})${contextNote}`;
+    const err = new Error(msg);
+    err.status = response.status;
+    err.statusText = response.statusText;
+    err.data = jsonData;
+    err.rawText = rawText;
+    throw err;
+  }
+
+  return isJson ? jsonData : rawText;
+}
+window.parseResponseSafely = parseResponseSafely;
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let ws = null;
@@ -76,11 +215,11 @@ const CyberGuardAudio = (() => {
     const btn = document.getElementById('sound-toggle-btn');
     if (btn) {
       if (enabled) {
-        btn.textContent = '🔊 SOUND ON';
+        btn.textContent = 'SOUND ON';
         btn.className = 'sound-toggle-btn sound-on';
         btn.setAttribute('aria-pressed', 'true');
       } else {
-        btn.textContent = '🔇 SOUND OFF';
+        btn.textContent = 'SOUND OFF';
         btn.className = 'sound-toggle-btn';
         btn.setAttribute('aria-pressed', 'false');
       }
@@ -214,7 +353,7 @@ function drawGauge(score) {
   const w = gaugeCanvas.width;
   const h = gaugeCanvas.height;
   const cx = w / 2;
-  const cy = h - 20;
+  const cy = h - 26;
   const r = 110;
   const startAngle = Math.PI;
   const endAngle = 2 * Math.PI;
@@ -328,6 +467,9 @@ function drawGauge(score) {
   const levelEl = document.getElementById('gauge-label');
   levelEl.textContent = level;
   levelEl.style.color = riskCol;
+  levelEl.style.borderColor = riskCol + '55';
+  levelEl.style.background = riskCol + '1a';
+  levelEl.style.boxShadow = `0 0 12px ${riskCol}33`;
 
   // Dynamically update DEFCON Defense Status
   const defconEl = document.getElementById('defcon-status');
@@ -532,7 +674,7 @@ function updateConsistencyDisplay(similarity) {
     status.style.color = 'var(--risk-safe)';
     bar.style.background = 'linear-gradient(90deg, #22c55e, #16a34a)';
   } else if (similarity >= 0.50) {
-    status.textContent = '⚠️ Partial identity match';
+    status.textContent = 'Partial identity match';
     status.style.color = 'var(--risk-low)';
     bar.style.background = 'linear-gradient(90deg, #f59e0b, #d97706)';
   } else {
@@ -591,13 +733,46 @@ function handleWsMessage(data) {
     return;
   }
 
+  if (data.type === 'status_update') {
+    const liveIndicator = document.getElementById('live-indicator');
+    if (liveIndicator) {
+      const span = liveIndicator.querySelector('span');
+      if (span) {
+        if (data.status === 'WAITING_FOR_SPEECH' || data.status === 'LISTENING') {
+          span.textContent = 'LIVE — Listening for voice input...';
+        } else if (data.status === 'INSUFFICIENT_AUDIO') {
+          span.textContent = 'LIVE — Insufficient speech duration...';
+        } else {
+          span.textContent = 'LIVE — Analyzing audio stream...';
+        }
+      }
+    }
+    if (chunkCount === 0) {
+      const gaugeLabel = document.getElementById('gauge-label');
+      if (gaugeLabel) {
+        gaugeLabel.textContent = 'WAITING FOR SPEECH';
+        gaugeLabel.style.color = '#38bdf8';
+        gaugeLabel.style.borderColor = 'rgba(0, 212, 255, 0.4)';
+        gaugeLabel.style.background = 'rgba(0, 212, 255, 0.08)';
+      }
+    }
+    return;
+  }
+
   if (data.type !== 'risk_update') return;
+
+  const liveIndicator = document.getElementById('live-indicator');
+  if (liveIndicator) {
+    const span = liveIndicator.querySelector('span');
+    if (span) span.textContent = 'LIVE — Analyzing audio stream...';
+  }
 
   const risk = data.risk_score;
   const level = data.alert_level;
   const chunk = data.chunk_id;
   const det = data.detection_score;
   const sim = data.speaker_similarity;
+  const voiceCls = data.voice_classification ? ` | Voice: ${data.voice_classification}` : '';
 
   // Gauge
   drawGauge(risk);
@@ -625,7 +800,7 @@ function handleWsMessage(data) {
 
   // Log
   addLog(
-    `Chunk #${chunk} | Risk: ${risk.toFixed(3)} | Level: ${level} | Det: ${det.toFixed(3)}`,
+    `Chunk #${chunk} | Risk: ${risk.toFixed(3)} | Level: ${level} | Det: ${det.toFixed(3)}${voiceCls}`,
     (level === 'CRITICAL' || level === 'HIGH') ? 'error' : level === 'MEDIUM' ? 'warn' : 'info'
   );
 
@@ -633,8 +808,8 @@ function handleWsMessage(data) {
   if (level !== currentAlertLevel) {
     if (['MEDIUM', 'HIGH', 'CRITICAL'].includes(level)) {
       showToast(
-        level === 'CRITICAL' ? '🔴 CRITICAL — Critical Synthetic-Speech Risk Detected (Verification Recommended)' :
-          level === 'HIGH' ? '🚨 HIGH RISK — Voice cloning likely detected!' : '⚠️ï¸ MEDIUM RISK — Possible voice cloning',
+        level === 'CRITICAL' ? 'CRITICAL — Critical Synthetic-Speech Risk Detected (Verification Recommended)' :
+          level === 'HIGH' ? 'HIGH RISK — Voice cloning likely detected!' : '️ï¸ MEDIUM RISK — Possible voice cloning',
         (level === 'CRITICAL' || level === 'HIGH') ? 'error' : 'warning',
         5000,
       );
@@ -646,6 +821,44 @@ function handleWsMessage(data) {
 // ── Live Session ──────────────────────────────────────────────────────────────
 async function startLiveSession() {
   if (liveSessionActive) return;
+
+  // Clean slate: reset session metrics, risk counters, sparkline and timeline
+  chunkCount = 0;
+  peakRisk = 0;
+  riskSum = 0;
+  currentAlertLevel = 'SAFE';
+  currentRiskScore = 0.0;
+  sparklineBuffer.length = 0;
+  if (typeof clearTimeline === 'function') clearTimeline();
+
+  // Reset visual displays to clean waiting state
+  drawGauge(0.0);
+  const gaugeVal = document.getElementById('gauge-value');
+  if (gaugeVal) gaugeVal.textContent = '0.00';
+  const gaugeLabel = document.getElementById('gauge-label');
+  if (gaugeLabel) {
+    gaugeLabel.textContent = 'WAITING FOR SPEECH';
+    gaugeLabel.style.color = '#38bdf8';
+    gaugeLabel.style.borderColor = 'rgba(0, 212, 255, 0.4)';
+    gaugeLabel.style.background = 'rgba(0, 212, 255, 0.08)';
+    gaugeLabel.style.boxShadow = 'none';
+  }
+  updateStatDisplay(0, 0, 0, null);
+  updateConsistencyDisplay(null);
+
+  const defconEl = document.getElementById('defcon-status');
+  if (defconEl) {
+    defconEl.innerHTML = '<span class="review-live-dot" style="background:#10b981; box-shadow:0 0 10px #10b981;"></span> DEFCON 5: NORMAL DEFENSE';
+    defconEl.style.color = '#34d399';
+    defconEl.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+    defconEl.style.background = 'rgba(16, 185, 129, 0.14)';
+  }
+
+  updateAlertDisplay('SAFE', {
+    title: 'Standby — Listening for Caller Voice',
+    message: 'Telemetry active. Speak clearly into the microphone to initiate neural analysis.',
+    actions: ['Awaiting voice activity before computing risk telemetry']
+  });
 
   // Request mic permission (Raw unfiltered audio is critical for detecting subtle vocoder artifacts)
   try {
@@ -665,8 +878,16 @@ async function startLiveSession() {
     return;
   }
 
-  // Connect WebSocket
-  ws = new WebSocket(WS_URL);
+  // Connect WebSocket dynamically
+  const currentWsUrl = _resolveWsUrl();
+  try {
+    ws = new WebSocket(currentWsUrl);
+  } catch (wsInitErr) {
+    showToast('Failed to initialize WebSocket: ' + wsInitErr.message, 'error');
+    addLog(`WebSocket connection error to endpoint ${currentWsUrl}: ${wsInitErr.message}`, 'error');
+    stopLiveSession();
+    return;
+  }
   ws.binaryType = 'arraybuffer';
 
   ws.onopen = () => {
@@ -686,16 +907,41 @@ async function startLiveSession() {
     if (audioContext.state === 'suspended') {
       audioContext.resume().catch(() => {});
     }
+    const inputSampleRate = audioContext.sampleRate || 16000;
+    if (inputSampleRate !== 16000) {
+      addLog(`Hardware audio clock: ${inputSampleRate}Hz (anti-aliased downsampling to 16000Hz active)`, 'info');
+    }
+
     audioSource = audioContext.createMediaStreamSource(mediaStream);
     audioProcessor = audioContext.createScriptProcessor(4096, 1, 1);
 
     audioProcessor.onaudioprocess = (e) => {
       if (!wsConnected || ws.readyState !== WebSocket.OPEN) return;
-      const float32 = e.inputBuffer.getChannelData(0);
+      const rawFloat32 = e.inputBuffer.getChannelData(0);
+
+      // Downsample to guaranteed 16,000 Hz if hardware audioContext runs at 44.1kHz or 48kHz (Windows WASAPI/Realtek)
+      let pcmFloat32 = rawFloat32;
+      if (inputSampleRate !== 16000) {
+        const ratio = inputSampleRate / 16000;
+        const newLen = Math.round(rawFloat32.length / ratio);
+        pcmFloat32 = new Float32Array(newLen);
+        for (let i = 0; i < newLen; i++) {
+          const start = Math.floor(i * ratio);
+          const end = Math.min(rawFloat32.length, Math.floor((i + 1) * ratio));
+          let sum = 0;
+          let count = 0;
+          for (let j = start; j < end; j++) {
+            sum += rawFloat32[j];
+            count++;
+          }
+          pcmFloat32[i] = count > 0 ? sum / count : rawFloat32[start];
+        }
+      }
+
       // Convert float32 → int16 for server
-      const int16 = new Int16Array(float32.length);
-      for (let i = 0; i < float32.length; i++) {
-        int16[i] = Math.max(-32768, Math.min(32767, float32[i] * 32768));
+      const int16 = new Int16Array(pcmFloat32.length);
+      for (let i = 0; i < pcmFloat32.length; i++) {
+        int16[i] = Math.max(-32768, Math.min(32767, pcmFloat32[i] * 32768));
       }
       ws.send(int16.buffer);
     };
@@ -718,9 +964,10 @@ async function startLiveSession() {
     }
   };
 
-  ws.onerror = () => {
-    addLog('WebSocket error occurred', 'error');
+  ws.onerror = (e) => {
+    addLog(`WebSocket connection error (target: ${currentWsUrl}). Ensure backend server is reachable and WebSocket upgrades are supported.`, 'error');
     updateSystemStatus('error');
+    showToast('Live stream connection failed — check backend status', 'error');
   };
 
   ws.onclose = () => {
@@ -756,6 +1003,14 @@ function stopLiveSession() {
   document.getElementById('start-live-btn').classList.remove('hidden');
   document.getElementById('stop-live-btn').classList.add('hidden');
   document.getElementById('live-indicator').classList.add('hidden');
+
+  const gaugeLabel = document.getElementById('gauge-label');
+  if (gaugeLabel && chunkCount === 0) {
+    gaugeLabel.textContent = 'STANDBY';
+    gaugeLabel.style.color = '#94a3b8';
+    gaugeLabel.style.borderColor = 'rgba(255, 255, 255, 0.1)';
+    gaugeLabel.style.background = 'rgba(255, 255, 255, 0.04)';
+  }
 
   addLog('Live session stopped.', 'info');
   updateSystemStatus('offline');
@@ -847,6 +1102,7 @@ function showTab(name) {
       if (typeof riskTimelineChart !== 'undefined' && riskTimelineChart) riskTimelineChart.resize();
       if (typeof drawGauge === 'function') drawGauge(currentRiskScore || 0);
     }
+    if (typeof syncGlitchButtonAttributes === 'function') syncGlitchButtonAttributes();
   });
 }
 
@@ -919,7 +1175,7 @@ function initAnalyzeAudioPlayer(file) {
   player.onloadedmetadata = () => {
     const durStr = formatVoiceTime(player.duration);
     if (durDisplay) durDisplay.textContent = durStr;
-    if (metaDur) metaDur.textContent = `⏱ ${durStr}`;
+    if (metaDur) metaDur.textContent = `${durStr}`;
     const totalScrub = document.getElementById('va-total-scrub-time');
     if (totalScrub) totalScrub.textContent = durStr;
   };
@@ -1066,9 +1322,9 @@ function drawAudioWaveform(file) {
 
       // Update sample rate badge
       const metaRate = document.getElementById('va-meta-rate');
-      if (metaRate) metaRate.textContent = `🎚 ${audioBuffer.sampleRate} Hz`;
+      if (metaRate) metaRate.textContent = `${audioBuffer.sampleRate} Hz`;
       const metaChn = document.getElementById('va-meta-chn');
-      if (metaChn) metaChn.textContent = `🎙 ${audioBuffer.numberOfChannels === 1 ? 'Mono PCM' : 'Stereo PCM'}`;
+      if (metaChn) metaChn.textContent = `${audioBuffer.numberOfChannels === 1 ? 'Mono PCM' : 'Stereo PCM'}`;
 
       redrawWaveformWithPlayhead(0);
       tempCtx.close().catch(() => {});
@@ -1205,17 +1461,7 @@ async function analyzeFile() {
     });
     clearTimeout(abortTimer);
 
-    if (!resp.ok) {
-      let errText = '';
-      try {
-        const errJson = await resp.json();
-        errText = errJson.detail || JSON.stringify(errJson);
-      } catch (_) {
-        errText = await resp.text();
-      }
-      throw new Error(errText || `Server returned error (${resp.status})`);
-    }
-    const data = await resp.json();
+    const data = await parseResponseSafely(resp, 'Voice Analysis');
     clearInterval(stageTimer);
     updatePipelineStepper(6); // All 5 stages completed
 
@@ -1267,7 +1513,7 @@ function renderAnalysisResults(data) {
   // Update engine badge if available
   const engBadge = document.getElementById('va-engine-badge');
   if (engBadge && data.detector_version) {
-    engBadge.innerHTML = `<span class="soc-pulse-dot"></span> AASIST // ${escapeHtml(data.detector_version)}`;
+    engBadge.innerHTML = `<span class="soc-pulse-dot"></span> AASIST: ${escapeHtml(data.detector_version)}`;
   }
 
   const peakRisk = typeof data.peak_risk === 'number' ? data.peak_risk : 0.0;
@@ -1411,7 +1657,7 @@ function renderAnalysisResults(data) {
           <span class="va-mitre-pill">MITRE ATT&CK T1656 // Synthetic Voice Cloning</span>
         </div>
         <div class="va-verdict-msg">${escapeHtml(rec.message)}</div>
-        ${data.calibration_notice ? `<div class="va-calib-notice">⚡ ${escapeHtml(data.calibration_notice)}</div>` : ''}
+        ${data.calibration_notice ? `<div class="va-calib-notice">${escapeHtml(data.calibration_notice)}</div>` : ''}
       </div>
     </div>
 
@@ -1509,13 +1755,13 @@ function renderAnalysisResults(data) {
     <div class="va-timeline-toolbar">
       <div class="va-mode-pills">
         <button type="button" class="va-mode-pill ${currentChunkViewMode === 'heatmap' ? 'active' : ''}" onclick="switchVoiceChunkView('heatmap', this)">
-          ⚡ Chrono-Heatmap
+          Chrono-Heatmap
         </button>
         <button type="button" class="va-mode-pill ${currentChunkViewMode === 'table' ? 'active' : ''}" onclick="switchVoiceChunkView('table', this)">
           ▤ Telemetry Grid
         </button>
         <button type="button" class="va-mode-pill ${currentChunkViewMode === 'radar' ? 'active' : ''}" onclick="switchVoiceChunkView('radar', this)">
-          ✦ Anomaly Dispersion
+          Anomaly Dispersion
         </button>
       </div>
       <div class="va-time-indicator">
@@ -1908,7 +2154,7 @@ function copyVoiceAnalysisSummary() {
     `- **Mean Risk**: ${(d.mean_risk * 100).toFixed(1)}% (${d.mean_risk.toFixed(3)})`,
     `- **Alert Level**: ${d.alert_level}`,
     `- **Total Chunks**: ${d.total_chunks} (${(d.total_chunks * 4.0).toFixed(1)}s speech analyzed)`,
-    `- **Engine**: AASIST Spectro-Temporal // ${d.detector_version}`,
+    `- **Engine**: AASIST Spectro-Temporal (${d.detector_version})`,
     `- **Verdict**: ${d.recommendation?.title || ''}`,
     `- **Reasoning**: ${d.recommendation?.message || ''}`,
     `
@@ -2025,8 +2271,7 @@ async function enrollSpeaker() {
       credentials: 'include',
       body: formData
     });
-    if (!resp.ok) throw new Error(await resp.text());
-    const data = await resp.json();
+    const data = await parseResponseSafely(resp, 'Speaker Enrollment');
     resultEl.className = 'enroll-result success';
     resultEl.textContent = data.message;
     resultEl.classList.remove('hidden');
@@ -2067,7 +2312,7 @@ async function loadSpeakers() {
       if (list) list.innerHTML = '<div class="speakers-empty">No speakers enrolled yet.</div>';
       return;
     }
-    const speakers = await resp.json();
+    const speakers = await parseResponseSafely(resp, 'Load Speakers');
     if (!speakers || !speakers.length) {
       if (list) list.innerHTML = '<div class="speakers-empty">No speakers enrolled yet.</div>';
       return;
@@ -2278,8 +2523,8 @@ async function checkSystemStatus() {
   try {
     const resp = await fetch(`${API_BASE}/api/config/status`);
     if (resp.ok) {
-      const data = await resp.json();
-      if (data.status === 'operational') {
+      const data = await parseResponseSafely(resp, 'System Status');
+      if (data && data.status === 'operational') {
         updateSystemStatus('online');
 
         // Update feature pill status
@@ -2303,7 +2548,11 @@ async function checkSystemStatus() {
         if (data.urlhaus_status && data.urlhaus_status !== 'UNKNOWN' && typeof renderURLhausBadge === 'function') {
           renderURLhausBadge({ status: data.urlhaus_status });
         }
+      } else {
+        updateSystemStatus('offline');
       }
+    } else {
+      updateSystemStatus('offline');
     }
   } catch (_) {
     updateSystemStatus('offline');
@@ -2510,7 +2759,7 @@ async function autoLinkThreatIntelPipeline(forceRefresh = false) {
       headers: { 'X-Threat-Scope': 'phishing_and_url' }
     });
     if (res.ok) {
-      const data = await res.json();
+      const data = await parseResponseSafely(res, 'Threat Pipeline Status');
       isVtReady = renderVirusTotalBadge(data.virustotal);
       isUhReady = renderURLhausBadge(data.urlhaus);
       if (data.enclave) {
@@ -2576,7 +2825,7 @@ window.refreshEnclaveMetrics = async function(showToastMsg = false) {
       headers: { 'X-Threat-Scope': 'phishing_and_url' }
     });
     if (res.ok) {
-      const data = await res.json();
+      const data = await parseResponseSafely(res, 'Enclave Metrics');
       renderEnclaveBadge(data);
       if (showToastMsg) showToast('Enclave token metrics refreshed', 'success');
     }
@@ -2608,7 +2857,7 @@ async function updateVirusTotalStatus(forceRefresh = false) {
       badge.title = 'VirusTotal service unreachable or backend error (Click to retry)';
       return false;
     }
-    const data = await res.json();
+    const data = await parseResponseSafely(res, 'VirusTotal Status');
     return renderVirusTotalBadge(data);
   } catch (err) {
     clearTimeout(timeoutId);
@@ -2642,7 +2891,7 @@ async function updateURLhausStatus(forceRefresh = false) {
       badge.title = 'URLhaus service unreachable or backend error (Click to retry)';
       return false;
     }
-    const data = await res.json();
+    const data = await parseResponseSafely(res, 'URLhaus Status');
     return renderURLhausBadge(data);
   } catch (err) {
     clearTimeout(timeoutId);
@@ -2902,13 +3151,10 @@ async function searchIOC() {
       signal: controller.signal
     });
     clearTimeout(searchTimeout);
-    const data = await res.json();
-    if (!res.ok) {
-      if (res.status === 503 || res.status === 401 || res.status === 429) {
-        autoLinkThreatIntelPipeline(true);
-      }
-      throw new Error(data.detail || 'Search failed');
+    if (!res.ok && (res.status === 503 || res.status === 401 || res.status === 429)) {
+      autoLinkThreatIntelPipeline(true);
     }
+    const data = await parseResponseSafely(res, 'Threat Intelligence Search');
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -2972,8 +3218,7 @@ async function scanQR() {
       body: formData,
       headers: qrHeaders
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'QR scan failed');
+    const data = await parseResponseSafely(res, 'QR Forensic Scanner');
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -3080,7 +3325,7 @@ window.filterVTEngines = function (verdict) {
   }
 
   if (!filtered.length) {
-    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:18px;font-family:var(--font-mono);"><span style="color:#f59e0b;">⚡ No engines match</span> query "${escapeHtml(query)}" with verdict "${escapeHtml(verdict)}".</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:18px;font-family:var(--font-mono);"><span style="color:#f59e0b;">No engines match</span> query "${escapeHtml(query)}" with verdict "${escapeHtml(verdict)}".</td></tr>`;
     return;
   }
 
@@ -3182,7 +3427,7 @@ async function emergencyBlockIOC(ioc, reason = 'Phishing/Threat Intelligence Hig
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || 'Block action failed');
 
-    showToast(`🛡️ EMERGENCY ENFORCEMENT ARMED: Blocked ${entityType} ${targetVal}`, 'success');
+    showToast(`EMERGENCY ENFORCEMENT ARMED: Blocked ${entityType} ${targetVal}`, 'success');
     if (window.CyberGuardAudio) window.CyberGuardAudio.playAlert();
     if (typeof loadEnforcementData === 'function') loadEnforcementData();
   } catch (err) {
@@ -3285,12 +3530,12 @@ function _corrStatusMeta(status) {
   switch (status) {
     case 'CORROBORATED': return { color: '#10b981', icon: '✓✓', label: 'CORROBORATED', cls: 'vt-banner-corroborated' };
     case 'PARTIALLY_CORROBORATED': return { color: '#38bdf8', icon: '✓~', label: 'PARTIALLY CORROBORATED', cls: 'vt-banner-info' };
-    case 'RELATED_EVIDENCE': return { color: '#a855f7', icon: '🔗', label: 'RELATED THREAT EVIDENCE FOUND', cls: 'vt-banner-info' };
+    case 'RELATED_EVIDENCE': return { color: '#a855f7', icon: '', label: 'RELATED THREAT EVIDENCE FOUND', cls: 'vt-banner-info' };
     case 'SINGLE_PROVIDER': return { color: '#f59e0b', icon: '①', label: 'SINGLE PROVIDER', cls: 'vt-banner-warning' };
-    case 'CONFLICTING': return { color: '#f97316', icon: '⚡', label: 'CONFLICTING PROVIDERS', cls: 'vt-banner-danger' };
+    case 'CONFLICTING': return { color: '#f97316', icon: '', label: 'CONFLICTING PROVIDERS', cls: 'vt-banner-danger' };
     case 'NO_MATCH': return { color: '#94a3b8', icon: '—', label: 'NO MATCH (BOTH)', cls: '' };
-    case 'INSUFFICIENT_DATA': return { color: '#ef4444', icon: '⚠', label: 'INSUFFICIENT DATA', cls: 'vt-banner-danger' };
-    case 'PROVIDER_UNAVAILABLE': return { color: '#f59e0b', icon: '⚠', label: 'PROVIDER UNAVAILABLE', cls: 'vt-banner-warning' };
+    case 'INSUFFICIENT_DATA': return { color: '#ef4444', icon: '', label: 'INSUFFICIENT DATA', cls: 'vt-banner-danger' };
+    case 'PROVIDER_UNAVAILABLE': return { color: '#f59e0b', icon: '', label: 'PROVIDER UNAVAILABLE', cls: 'vt-banner-warning' };
     case 'PENDING': return { color: '#f59e0b', icon: '⏳', label: 'EXTERNAL VERIFICATION PENDING', cls: 'vt-banner-warning' };
     default: return { color: '#94a3b8', icon: '?', label: status || 'UNKNOWN', cls: '' };
   }
@@ -3477,7 +3722,7 @@ function buildUrlhausSection(uhData, relatedIntel) {
           </div>
           ${p.sha256_hash ? `
             <button class="vt-btn-copy" onclick="fillPresetIOC('${escapeHtml(p.sha256_hash)}')" style="font-size:10.5px;padding:3px 10px;" title="Query payload SHA-256 in Threat Intelligence">
-              🔍 Inspect Payload
+              Inspect Payload
             </button>
           ` : ''}
         </div>
@@ -3588,7 +3833,7 @@ function buildLiveIntelligenceSection(liveIntel, urlSha256, qwenBriefing) {
         <div style="display:flex;flex-direction:column;gap:4px;">
           ${suspIndicators.map(ind => `
             <div style="color:#fca5a5;font-size:11.5px;background:rgba(239,68,68,0.08);border:1px solid rgba(239,68,68,0.2);padding:4px 8px;border-radius:4px;">
-              ⚠️ ${escapeHtml(ind)}
+              ${escapeHtml(ind)}
             </div>
           `).join('')}
         </div>
@@ -3632,7 +3877,7 @@ function buildLiveIntelligenceSection(liveIntel, urlSha256, qwenBriefing) {
         <div style="margin-bottom:10px;padding:6px 10px;background:rgba(0,0,0,0.3);border-radius:5px;display:flex;align-items:center;gap:8px;">
           <span style="font-size:10.5px;color:#94a3b8;font-weight:700;letter-spacing:0.5px;">URL SHA-256 HASH:</span>
           <code style="font-size:11px;color:#38bdf8;font-family:var(--font-mono);word-break:break-all;">${escapeHtml(sha)}</code>
-          <button class="vt-btn-copy" onclick="fillPresetIOC('${escapeHtml(sha)}')" style="font-size:9px;padding:1px 6px;margin-left:auto;">🔍 Hash Pivot</button>
+          <button class="vt-btn-copy" onclick="fillPresetIOC('${escapeHtml(sha)}')" style="font-size:9px;padding:1px 6px;margin-left:auto;">Hash Pivot</button>
         </div>
       ` : ''}
 
@@ -3650,7 +3895,7 @@ function buildLiveIntelligenceSection(liveIntel, urlSha256, qwenBriefing) {
         <div style="padding:8px 10px; background:rgba(0,0,0,0.25); border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
           <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;">Credential Harvesting</div>
           <div style="font-size:12px;font-weight:700;margin-top:2px;color:${hasCreds ? '#ef4444' : '#10b981'};">
-            ${hasCreds ? '⚠️ HARVESTING FORMS' : 'CLEAN / NO FORMS'}
+            ${hasCreds ? 'HARVESTING FORMS' : 'CLEAN / NO FORMS'}
           </div>
         </div>
         <div style="padding:8px 10px; background:rgba(0,0,0,0.25); border-radius:6px; border:1px solid rgba(255,255,255,0.06);">
@@ -3962,7 +4207,7 @@ function renderThreatIntelligenceReport(event) {
               <span class="vt-pill-badge vt-pill-terminal">TERMINAL DESTINATION</span>
               ${ti.terminal_status_code ? `<span class="vt-pill-badge" style="background:rgba(255,255,255,0.08);color:#f1f5f9;">HTTP ${escapeHtml(String(ti.terminal_status_code))}</span>` : ''}
               <button class="vt-btn-copy" onclick="fillPresetIOC('${escapeHtml(termUrl)}')" style="font-size:9.5px;padding:2px 7px;margin-left:8px;" title="Analyze terminal destination directly">
-                🔍 Inspect Target
+                Inspect Target
               </button>
             </div>
           </div>
@@ -4007,7 +4252,7 @@ function renderThreatIntelligenceReport(event) {
                     ${escapeHtml(ioc.value)}
                     <span class="vt-pill-badge ${pillClass}">${pillLabel}</span>
                     <button class="vt-btn-copy" onclick="fillPresetIOC('${escapeHtml(ioc.value)}')" style="font-size:9.5px;padding:2px 7px;margin-left:8px;" title="Search this IOC in Threat Intelligence">
-                      🔍 Pivot Query
+                      Pivot Query
                     </button>
                   </div>
                   <div style="font-size:11px;color:#64748b;">Source: ${escapeHtml(ioc.source || 'ThreatIntelligence')}</div>
@@ -4015,14 +4260,14 @@ function renderThreatIntelligenceReport(event) {
                 <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:11.5px;color:#94a3b8;margin-top:6px;">
                   ${ioc.threat ? `<div>Threat: <strong style="color:#f87171;">${escapeHtml(ioc.threat)}</strong></div>` : ''}
                   ${ioc.url_status ? `<div>Status: <strong style="color:#e2e8f0;">${escapeHtml(ioc.url_status)}</strong></div>` : ''}
-                  ${ioc.associated_host ? `<div>Host/IP: <span style="font-family:var(--font-mono);color:#38bdf8;cursor:pointer;text-decoration:underline;" onclick="pivotSearchHost('${escapeHtml(ioc.associated_host)}')">${escapeHtml(ioc.associated_host)} 🔍</span></div>` : ''}
-                  ${ioc.payload_sha256 ? `<div>Payload SHA-256: <span style="font-family:var(--font-mono);color:#cbd5e1;font-size:10.5px;cursor:pointer;text-decoration:underline;" onclick="fillPresetIOC('${escapeHtml(ioc.payload_sha256)}')">${escapeHtml(ioc.payload_sha256.substring(0, 16))}... 🔍</span></div>` : ''}
+                  ${ioc.associated_host ? `<div>Host/IP: <span style="font-family:var(--font-mono);color:#38bdf8;cursor:pointer;text-decoration:underline;" onclick="pivotSearchHost('${escapeHtml(ioc.associated_host)}')">${escapeHtml(ioc.associated_host)} </span></div>` : ''}
+                  ${ioc.payload_sha256 ? `<div>Payload SHA-256: <span style="font-family:var(--font-mono);color:#cbd5e1;font-size:10.5px;cursor:pointer;text-decoration:underline;" onclick="fillPresetIOC('${escapeHtml(ioc.payload_sha256)}')">${escapeHtml(ioc.payload_sha256.substring(0, 16))}... </span></div>` : ''}
                   ${vtSummary.malicious !== undefined ? `<div>VirusTotal: <strong style="color:${vtSummary.malicious > 0 ? '#f87171' : '#34d399'};">${vtSummary.malicious} malicious</strong> / ${vtSummary.total_engines || 0} engines</div>` : ''}
                 </div>
                 ${ioc.provider_report_url && ioc.value !== ioc.provider_report_url ? `
                   <div style="margin-top:8px;font-size:11px;">
                     <a href="${escapeHtml(ioc.provider_report_url)}" target="_blank" rel="noopener noreferrer" style="color:#c084fc;text-decoration:none;display:inline-flex;align-items:center;gap:4px;">
-                      <span>🔗 Open URLhaus Report</span>
+                      <span>Open URLhaus Report</span>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                     </a>
                   </div>
@@ -4263,20 +4508,20 @@ function renderThreatIntelligenceReport(event) {
       </div>
       <button class="vt-btn-action" onclick="emergencyBlockIOC('${escapeHtml(indicator)}')" style="color:#f87171; border-color:rgba(239,68,68,0.35); background:rgba(239,68,68,0.12);" title="Immediately enforce boundary firewall containment">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-        🛡️ Emergency Block
+        Emergency Block
       </button>
       <button class="vt-btn-action" onclick="exportThreatSTIX()" style="color:#38bdf8; border-color:rgba(56,189,248,0.35); background:rgba(56,189,248,0.12);" title="Download STIX 2.1 Threat Intel format">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        📋 Export STIX 2.1
+         Export STIX 2.1
       </button>
       <button class="vt-btn-action" onclick="openLLMCopilotWithCurrentThreat()" style="color:#c084fc; border-color:rgba(192,132,252,0.35); background:rgba(192,132,252,0.12);" title="Launch AI Forensic Copilot synthesis">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        ⚡ AI Threat Copilot
+        AI Threat Copilot
       </button>
       ${hostIpToPivot ? `
         <button class="vt-btn-action" onclick="pivotSearchHost('${escapeHtml(hostIpToPivot)}')" style="color:#34d399; border-color:rgba(52,211,153,0.35); background:rgba(52,211,153,0.12);" title="Pivot search Host IP in Threat Intelligence">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          🔍 Pivot Host (${escapeHtml(hostIpToPivot)})
+          Pivot Host (${escapeHtml(hostIpToPivot)})
         </button>
       ` : ''}
       <button class="vt-btn-action" onclick="copyIndicator('${escapeHtml(indicator)}')" style="margin-left:auto;">
@@ -4307,12 +4552,12 @@ function renderThreatIntelligenceReport(event) {
           <span class="badge ${badgeClass}" style="${isPending ? 'background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;' : ''}">${escapeHtml(severity)}</span>
           ${(ti.cached || ti.tokens_saved) ? `
             <span class="badge" style="background:rgba(16,185,129,0.18);color:#34d399;border:1px solid rgba(16,185,129,0.4);" title="Intelligence was retrieved from local enclave cache with 0 external API tokens consumed.">
-              🛡️ ZERO-TOKEN CACHED
+              ZERO-TOKEN CACHED
             </span>
           ` : ''}
           ${ti.deduplicated ? `
             <span class="badge" style="background:rgba(168,85,247,0.18);color:#c084fc;border:1px solid rgba(168,85,247,0.4);" title="Concurrent query was coalesced with in-flight request, saving 1 external API token.">
-              ⚡ COALESCED
+              COALESCED
             </span>
           ` : ''}
           <span class="vt-provenance">${escapeHtml(provenance)}</span>
@@ -4533,10 +4778,10 @@ async function loadSecurityCenterData() {
 
   try {
     const [incRes, altRes, evtRes, sumRes] = await Promise.allSettled([
-      fetch('/api/incidents/', { headers: getAuthHeaders(false), credentials: 'include' }),
-      fetch('/api/alerts/recent?limit=50', { headers: getAuthHeaders(false), credentials: 'include' }),
-      fetch('/api/incidents/events?limit=50', { headers: getAuthHeaders(false), credentials: 'include' }),
-      fetch('/api/incidents/dashboard/summary', { headers: getAuthHeaders(false), credentials: 'include' })
+      fetch(`${API_BASE}/api/incidents/`, { headers: getAuthHeaders(false), credentials: 'include' }),
+      fetch(`${API_BASE}/api/alerts/recent?limit=50`, { headers: getAuthHeaders(false), credentials: 'include' }),
+      fetch(`${API_BASE}/api/incidents/events?limit=50`, { headers: getAuthHeaders(false), credentials: 'include' }),
+      fetch(`${API_BASE}/api/incidents/dashboard/summary`, { headers: getAuthHeaders(false), credentials: 'include' })
     ]);
 
     const itemsMap = new Map();
@@ -4645,26 +4890,52 @@ function updateSCSummary(backendSummary) {
   const elCritical = document.getElementById('sc-stat-critical');
   const elPostureBadge = document.getElementById('sc-posture-badge');
   const elPostureDesc = document.getElementById('sc-posture-desc');
+  const elPostureTile = document.getElementById('sc-tile-posture');
+  const elPostureTileSub = document.getElementById('sc-tile-posture-sub');
 
   if (elThreats) elThreats.textContent = threats;
   if (elIncidents) elIncidents.textContent = incidents;
   if (elAlerts) elAlerts.textContent = alerts;
   if (elCritical) elCritical.textContent = criticalHigh;
 
-  if (elPostureBadge && elPostureDesc) {
-    if (criticalHigh >= 3 || threats >= 3) {
-      elPostureBadge.innerHTML = '<span class="badge badge-critical">HIGH ALERT</span>';
-      elPostureDesc.textContent = 'Multiple active threats detected across pipelines';
-    } else if (criticalHigh >= 1 || threats >= 1) {
-      elPostureBadge.innerHTML = '<span class="badge badge-critical">ELEVATED RISK</span>';
-      elPostureDesc.textContent = 'High priority threat requires immediate containment';
-    } else if (incidents > 0) {
-      elPostureBadge.innerHTML = '<span class="badge badge-medium">MONITORING</span>';
-      elPostureDesc.textContent = `${incidents} active incident(s) under observation`;
+  let postureStatus = 'NORMAL';
+  let postureSub = 'All pipelines operational';
+  let postureBadgeHtml = '<span class="badge badge-safe">NORMAL</span>';
+
+  if (criticalHigh >= 3 || threats >= 3) {
+    postureStatus = 'HIGH ALERT';
+    postureBadgeHtml = '<span class="badge badge-critical">HIGH ALERT</span>';
+    postureSub = 'Multiple active threats detected across pipelines';
+  } else if (criticalHigh >= 1 || threats >= 1) {
+    postureStatus = 'ELEVATED RISK';
+    postureBadgeHtml = '<span class="badge badge-critical">ELEVATED RISK</span>';
+    postureSub = 'High priority threat requires immediate containment';
+  } else if (incidents > 0) {
+    postureStatus = 'MONITORING';
+    postureBadgeHtml = '<span class="badge badge-medium">MONITORING</span>';
+    postureSub = `${incidents} active incident(s) under observation`;
+  }
+
+  if (elPostureBadge) elPostureBadge.innerHTML = postureBadgeHtml;
+  if (elPostureDesc) elPostureDesc.textContent = postureSub;
+  if (elPostureTile) {
+    elPostureTile.textContent = postureStatus;
+    if (postureStatus === 'HIGH ALERT' || postureStatus === 'ELEVATED RISK') {
+      elPostureTile.className = 'metric-tile-value text-critical overview-kpi-val reactor-status';
+    } else if (postureStatus === 'MONITORING') {
+      elPostureTile.className = 'metric-tile-value text-warning overview-kpi-val reactor-status';
     } else {
-      elPostureBadge.innerHTML = '<span class="badge badge-safe">NORMAL</span>';
-      elPostureDesc.textContent = 'All pipelines operational';
+      elPostureTile.className = 'metric-tile-value text-cyan overview-kpi-val reactor-status';
     }
+  }
+  if (elPostureTileSub) elPostureTileSub.textContent = postureSub;
+
+  // Render synchronized sparklines for Security Center
+  if (typeof drawSpark === 'function') {
+    drawSpark('sc-spark-threats', threats > 0 ? [1, 2, 3, threats, threats + 1, threats] : [0, 0, 0, 0, 0, 0, 0, 0], '#ef4444', 'rgba(239, 68, 68, 0.2)');
+    drawSpark('sc-spark-incidents', incidents > 0 ? [1, 1, 2, incidents, incidents, incidents] : [0, 0, 0, 0, 0, 0, 0, 0], '#f59e0b', 'rgba(245, 158, 11, 0.2)');
+    drawSpark('sc-spark-alerts', alerts > 0 ? [2, 3, alerts, alerts + 1, alerts, alerts] : [1, 2, 1, 2, 1, 2, 1, 1], '#06b6d4', 'rgba(6, 182, 212, 0.2)');
+    drawSpark('sc-spark-critical', criticalHigh > 0 ? [0, 1, criticalHigh, criticalHigh, criticalHigh] : [0, 0, 0, 0, 0, 0, 0, 0], '#ef4444', 'rgba(239, 68, 68, 0.25)');
   }
 }
 
@@ -4674,7 +4945,7 @@ function updateSCSummary(backendSummary) {
 // Called after every real-time WS event via mergeIncomingItem().
 async function updateSCSummaryFromAPI() {
   try {
-    const res = await fetch('/api/incidents/dashboard/summary', { headers: getAuthHeaders(false), credentials: 'include' });
+    const res = await fetch(`${API_BASE}/api/incidents/dashboard/summary`, { headers: getAuthHeaders(false), credentials: 'include' });
     if (!res.ok) {
       // On API failure, fall back to local computation so SC stays visible.
       // Do NOT zero out counts on failure — empty vs error distinction.
@@ -4781,7 +5052,7 @@ async function renderSecurityCenterCharts(items, backendSummary = null) {
     let threatData = [];
 
     try {
-      const res = await fetch('/api/incidents/activity/timeline?range=7D', { headers: getAuthHeaders(false), credentials: 'include' });
+      const res = await fetch(`${API_BASE}/api/incidents/activity/timeline?range=7D`, { headers: getAuthHeaders(false), credentials: 'include' });
       if (res.ok) {
         const tl = await res.json();
         labels = tl.labels || [];
@@ -5137,7 +5408,7 @@ async function openSCModal(itemId) {
   // If item is INCIDENT (or not yet loaded into cache), fetch fresh full forensic details from backend
   if (!item || item.type === 'INCIDENT') {
     try {
-      const res = await fetch(`/api/incidents/${encodeURIComponent(itemId)}`);
+      const res = await fetch(`${API_BASE}/api/incidents/${encodeURIComponent(itemId)}`);
       if (res.ok) {
         forensicData = await res.json();
         if (item) {
@@ -5557,8 +5828,8 @@ function renderQuantumMetadataExplorer(raw) {
         <!-- Toolbar with View Modes & Search -->
         <div class="sc-meta-toolbar">
           <div class="sc-meta-mode-group">
-            <button class="sc-meta-mode-pill ${currentMetadataMode === 'tree' ? 'active' : ''}" onclick="switchMetadataMode('tree', this)">✦ Interactive Tree</button>
-            <button class="sc-meta-mode-pill ${currentMetadataMode === 'spec' ? 'active' : ''}" onclick="switchMetadataMode('spec', this)">⚡ Decoded Spec Grid</button>
+            <button class="sc-meta-mode-pill ${currentMetadataMode === 'tree' ? 'active' : ''}" onclick="switchMetadataMode('tree', this)"> Interactive Tree</button>
+            <button class="sc-meta-mode-pill ${currentMetadataMode === 'spec' ? 'active' : ''}" onclick="switchMetadataMode('spec', this)">Decoded Spec Grid</button>
             <button class="sc-meta-mode-pill ${currentMetadataMode === 'raw' ? 'active' : ''}" onclick="switchMetadataMode('raw', this)">▤ Cyber Terminal</button>
           </div>
           <div style="display:flex; align-items:center; gap:6px;">
@@ -5625,7 +5896,7 @@ function buildInteractiveJsonTreeHtml(data, filterQuery = '') {
         <div class="sc-tree-node ${isMatch ? 'tree-match' : ''}">
           ${keyLabel ? `<span class="sc-tree-key" onclick="copyMetadataNode('${escapeHtml(String(key))}', 'Key')">${keyLabel}</span>: ` : ''}
           <span class="${typeClass}" onclick="copyMetadataNode('${escapeHtml(rawValStr)}', 'Value')">${valHtml}</span>${isLast ? '' : ','}
-          <span class="sc-tree-copy-btn" onclick="copyMetadataNode('${escapeHtml(rawValStr)}', 'Value')" title="Copy value">📋</span>
+          <span class="sc-tree-copy-btn" onclick="copyMetadataNode('${escapeHtml(rawValStr)}', 'Value')" title="Copy value"></span>
         </div>
       `;
     }
@@ -5897,7 +6168,7 @@ function switchThreatSubTab(mode, btn) {
 
 async function changeIncidentStatus(incidentId, newStatus) {
   try {
-    const res = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/status`, {
+    const res = await fetch(`${API_BASE}/api/incidents/${encodeURIComponent(incidentId)}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: newStatus }),
@@ -5922,7 +6193,7 @@ async function changeIncidentStatus(incidentId, newStatus) {
 async function saveAnalystNotes(incidentId) {
   const notes = document.getElementById('sc-modal-notes')?.value || '';
   try {
-    const res = await fetch(`/api/incidents/${encodeURIComponent(incidentId)}/status`, {
+    const res = await fetch(`${API_BASE}/api/incidents/${encodeURIComponent(incidentId)}/status`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status: 'INVESTIGATING', analyst_notes: notes }),
@@ -6306,7 +6577,7 @@ async function renderOverviewActivityChart(events, range = 'ALL') {
   let telemetryData = [];
 
   try {
-    const res = await fetch(`/api/incidents/activity/timeline?range=${encodeURIComponent(range)}`);
+    const res = await fetch(`${API_BASE}/api/incidents/activity/timeline?range=${encodeURIComponent(range)}`);
     if (res.ok) {
       const tl = await res.json();
       labels = tl.labels || [];
@@ -6493,10 +6764,15 @@ function renderKpiSparklines(events, summary) {
   }
 
   drawSpark('spark-threats', threatPts.some(v => v > 0) ? threatPts : [1, 2, 3, 2, 4, 3, 5, 4], '#ef4444', 'rgba(239, 68, 68, 0.2)');
+  drawSpark('sc-spark-threats', threatPts.some(v => v > 0) ? threatPts : [1, 2, 3, 2, 4, 3, 5, 4], '#ef4444', 'rgba(239, 68, 68, 0.2)');
   drawSpark('spark-incidents', incidentPts.some(v => v > 0) ? incidentPts : [1, 1, 2, 2, 3, 2, 3, 3], '#f59e0b', 'rgba(245, 158, 11, 0.2)');
+  drawSpark('sc-spark-incidents', incidentPts.some(v => v > 0) ? incidentPts : [1, 1, 2, 2, 3, 2, 3, 3], '#f59e0b', 'rgba(245, 158, 11, 0.2)');
   drawSpark('spark-events', eventPts.some(v => v > 0) ? eventPts : [2, 3, 4, 3, 5, 6, 5, 7], '#06b6d4', 'rgba(6, 182, 212, 0.2)');
+  drawSpark('sc-spark-alerts', eventPts.some(v => v > 0) ? eventPts : [2, 3, 4, 3, 5, 6, 5, 7], '#06b6d4', 'rgba(6, 182, 212, 0.2)');
   drawSpark('spark-critical', critPts.some(v => v > 0) ? critPts : [0, 1, 1, 0, 2, 1, 2, 2], '#ef4444', 'rgba(239, 68, 68, 0.25)');
+  drawSpark('sc-spark-critical', critPts.some(v => v > 0) ? critPts : [0, 1, 1, 0, 2, 1, 2, 2], '#ef4444', 'rgba(239, 68, 68, 0.25)');
   drawSpark('spark-engines', [10, 10, 10, 10, 10, 10, 10, 10], '#10b981', 'rgba(16, 185, 129, 0.2)');
+  drawSpark('sc-spark-engines', [10, 10, 10, 10, 10, 10, 10, 10], '#10b981', 'rgba(16, 185, 129, 0.2)');
 }
 
 function renderSeverityBreakdown(summary, events) {
@@ -6652,7 +6928,7 @@ function renderOverviewLiveFeed(events) {
 
 async function loadOverviewLiveFeed(showToastMsg = false) {
   try {
-    const res = await fetch('/api/incidents/events?limit=25', { headers: getAuthHeaders(false) });
+    const res = await fetch(`${API_BASE}/api/incidents/events?limit=25`, { headers: getAuthHeaders(false) });
     if (!res.ok) return;
     const evts = await res.json();
     rawOverviewEvents = evts;
@@ -7020,7 +7296,7 @@ function applyAutonomousDefcon(level, stats) {
 
   const autoIndicator = document.getElementById('defcon-auto-indicator');
   if (autoIndicator) {
-    autoIndicator.textContent = `⚡ AUTO · L${level}`;
+    autoIndicator.textContent = `AUTO · L${level}`;
   }
 
   // Synchronize Tactical Chroma Theme if level shifted
@@ -7048,7 +7324,7 @@ function handleDefconMatrixClick() {
     matrix.classList.add('show-hud');
     setTimeout(() => matrix.classList.remove('show-hud'), 4500);
   }
-  showToast("🔒 AUTONOMOUS DEFENSE POSTURE: DEFCON is managed dynamically based on today's Medium+ threat telemetry. Manual override is locked.", "warning");
+  showToast("AUTONOMOUS DEFENSE POSTURE: DEFCON is managed dynamically based on today's Medium+ threat telemetry. Manual override is locked.", "warning");
 }
 
 function setOverviewDefcon(level, btnEl, isAutonomous = false) {
@@ -7106,7 +7382,7 @@ async function triggerEmergencyThreatContainment() {
   }
 
   try {
-    const res = await fetch('/api/incidents/containment/emergency', {
+    const res = await fetch(`${API_BASE}/api/incidents/containment/emergency`, {
       method: 'POST',
       headers: getAuthHeaders(true)
     });
@@ -7303,9 +7579,9 @@ async function updateOverview(forceRefresh = false) {
     }
 
     const [summaryRes, statusRes, eventsRes] = await Promise.allSettled([
-      fetch('/api/incidents/dashboard/summary', { headers: getAuthHeaders(false), credentials: 'include' }),
-      fetch('/api/config/status'),
-      fetch('/api/incidents/events?limit=40', { headers: getAuthHeaders(false), credentials: 'include' })
+      fetch(`${API_BASE}/api/incidents/dashboard/summary`, { headers: getAuthHeaders(false), credentials: 'include' }),
+      fetch(`${API_BASE}/api/config/status`),
+      fetch(`${API_BASE}/api/incidents/events?limit=40`, { headers: getAuthHeaders(false), credentials: 'include' })
     ]);
 
     if (summaryRes.status !== 'fulfilled' || !summaryRes.value.ok) return;
@@ -7667,7 +7943,7 @@ function calibrateAuthReticle() {
     banner.classList.add('calibrating');
   }
   if (reticleStatus) {
-    reticleStatus.innerHTML = '<span class="pulse-indicator"></span> BIOMETRIC RETICLE // CALIBRATING...';
+    reticleStatus.innerHTML = '<span class="pulse-indicator"></span> BIOMETRIC RETICLE';
     reticleStatus.style.color = '#00f0ff';
   }
   if (reticleDesc) {
@@ -7680,7 +7956,7 @@ function calibrateAuthReticle() {
   setTimeout(() => {
     if (banner) banner.classList.remove('calibrating');
     if (reticleStatus) {
-      reticleStatus.textContent = currentAuthTab === 'login' ? 'AI IDENTITY CORE // ACTIVE' : 'OPERATOR REGISTRATION // READY';
+      reticleStatus.textContent = currentAuthTab === 'login' ? 'AI IDENTITY CORE' : 'OPERATOR REGISTRATION';
       reticleStatus.style.color = '';
     }
     if (reticleDesc) {
@@ -7720,11 +7996,11 @@ function togglePasswordVisibility() {
 
   if (pInput.type === 'password') {
     pInput.type = 'text';
-    if (opticIcon) opticIcon.textContent = '🔒';
+    if (opticIcon) opticIcon.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
     if (opticBtn) opticBtn.title = 'Conceal Passkey';
   } else {
     pInput.type = 'password';
-    if (opticIcon) opticIcon.textContent = '👁️';
+    if (opticIcon) opticIcon.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
     if (opticBtn) opticBtn.title = 'Reveal Passkey';
   }
 }
@@ -7856,7 +8132,7 @@ function openAuthModal(forcedTab = null) {
   const opticIcon = document.getElementById('auth-optic-icon');
   const opticBtn = document.getElementById('auth-optic-toggle');
   if (pInput) pInput.type = 'password';
-  if (opticIcon) opticIcon.textContent = '👁️';
+  if (opticIcon) opticIcon.textContent = '️';
   if (opticBtn) opticBtn.title = 'Reveal Passkey';
 
   const profileView = document.getElementById('auth-profile-view');
@@ -7893,11 +8169,11 @@ function openAuthModal(forcedTab = null) {
     if (rEl) rEl.textContent = roleUpper;
     if (cEl) {
       if (currentUser.role === 'admin') {
-        cEl.textContent = 'CLEARANCE: ROOT COMMANDER // FULL ADMINISTRATIVE DEFENSE AUTHORITY';
+        cEl.textContent = 'CLEARANCE: ROOT COMMANDER';
       } else if (currentUser.role === 'analyst') {
-        cEl.textContent = 'CLEARANCE: TACTICAL SPECIALIST // INCIDENT ANALYSIS & INTELLIGENCE';
+        cEl.textContent = 'CLEARANCE: TACTICAL SPECIALIST';
       } else {
-        cEl.textContent = 'CLEARANCE: DEFENSE OPERATOR // GENERAL TELEMETRY & MONITORING';
+        cEl.textContent = 'CLEARANCE: DEFENSE OPERATOR';
       }
     }
     if (aEl) {
@@ -7947,9 +8223,9 @@ function switchAuthTab(tab) {
     }
     if (emailGroup) emailGroup.classList.add('hidden');
     if (submitBtn) {
-      submitBtn.innerHTML = '<span class="btn-laser-sweep" aria-hidden="true"></span><span class="btn-content-wrap"><span class="btn-icon">⚡</span><span class="btn-label" id="auth-submit-text">AUTHORIZE ACCESS</span><span class="btn-arrow">➔</span></span>';
+      submitBtn.innerHTML = '<span class="btn-laser-sweep" aria-hidden="true"></span><span class="btn-content-wrap"><span class="btn-icon"></span><span class="btn-label" id="auth-submit-text">AUTHORIZE ACCESS</span><span class="btn-arrow">➔</span></span>';
     }
-    if (reticleStatus) reticleStatus.textContent = 'AI IDENTITY CORE // ACTIVE';
+    if (reticleStatus) reticleStatus.textContent = 'AI IDENTITY CORE';
     if (reticleDesc) reticleDesc.textContent = 'Continuous biometric posture & hardware cryptographic enclave';
     if (subStatus) subStatus.textContent = 'Universal defensive intelligence grid • Authenticate operator credentials';
   } else {
@@ -7965,7 +8241,7 @@ function switchAuthTab(tab) {
     if (submitBtn) {
       submitBtn.innerHTML = '<span class="btn-laser-sweep" aria-hidden="true"></span><span class="btn-content-wrap"><span class="btn-icon">⊕</span><span class="btn-label" id="auth-submit-text">CREATE OPERATOR ACCOUNT</span><span class="btn-arrow">➔</span></span>';
     }
-    if (reticleStatus) reticleStatus.textContent = 'COMMISSIONING // REGISTRATION';
+    if (reticleStatus) reticleStatus.textContent = 'COMMISSIONING';
     if (reticleDesc) reticleDesc.textContent = 'Enrolling new operator identity into defense network';
     if (subStatus) subStatus.textContent = 'Enter new operator details to establish neural access clearance';
   }
@@ -8124,7 +8400,7 @@ async function handleAuthSubmit(e) {
     if (submitBtn) {
       submitBtn.disabled = false;
       if (currentAuthTab === 'login') {
-        submitBtn.innerHTML = '<span class="btn-laser-sweep" aria-hidden="true"></span><span class="btn-content-wrap"><span class="btn-icon">⚡</span><span class="btn-label" id="auth-submit-text">AUTHORIZE ACCESS</span><span class="btn-arrow">➔</span></span>';
+        submitBtn.innerHTML = '<span class="btn-laser-sweep" aria-hidden="true"></span><span class="btn-content-wrap"><span class="btn-icon"></span><span class="btn-label" id="auth-submit-text">AUTHORIZE ACCESS</span><span class="btn-arrow">➔</span></span>';
       } else {
         submitBtn.innerHTML = '<span class="btn-laser-sweep" aria-hidden="true"></span><span class="btn-content-wrap"><span class="btn-icon">⊕</span><span class="btn-label" id="auth-submit-text">CREATE OPERATOR ACCOUNT</span><span class="btn-arrow">➔</span></span>';
       }
@@ -8546,10 +8822,10 @@ function renderQueueAuthGate(tbody, reason = 'EXPIRED') {
       <td colspan="11" style="text-align:center; padding:48px 24px;">
         <div style="display:inline-flex; flex-direction:column; align-items:center; max-width:540px; margin:0 auto; padding:28px 32px; background:rgba(4,8,22,0.88); border:1px solid rgba(239,68,68,0.35); border-radius:12px; box-shadow:0 0 35px rgba(239,68,68,0.12); backdrop-filter:blur(16px);">
           <div style="width:48px; height:48px; border-radius:50%; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.3); display:flex; align-items:center; justify-content:center; font-size:22px; margin-bottom:14px; box-shadow:0 0 15px rgba(239,68,68,0.25);">
-            🔒
+            
           </div>
           <div style="font-family:var(--font-mono); font-size:11px; color:#f43f5e; letter-spacing:1.5px; font-weight:700; margin-bottom:6px;">
-            ${isForbidden ? 'INSUFFICIENT CLEARANCE // ADMIN ROLE REQUIRED' : 'AUTHORIZATION REQUIRED // SESSION EXPIRED'}
+            ${isForbidden ? 'INSUFFICIENT CLEARANCE' : 'AUTHORIZATION REQUIRED'}
           </div>
           <div style="font-size:15px; font-weight:700; color:#f8fafc; margin-bottom:8px;">
             ${isForbidden ? 'Administrator Privileges Required' : 'Forensic Lineage Access Requires Active Admin Authentication'}
@@ -8561,10 +8837,10 @@ function renderQueueAuthGate(tbody, reason = 'EXPIRED') {
           </div>
           <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap;">
             <button class="btn btn-sm btn-primary" onclick="openAuthModal('login')" style="font-family:var(--font-mono); font-size:11.5px; padding:8px 20px; letter-spacing:0.5px; box-shadow:0 0 16px rgba(0,240,255,0.3);">
-              ⚡ SIGN IN AS ADMIN
+              SIGN IN AS ADMIN
             </button>
             <button class="btn btn-sm btn-secondary" onclick="quickAdminLogin()" style="font-family:var(--font-mono); font-size:11.5px; padding:8px 16px; border-color:rgba(0,240,255,0.25); color:#00f0ff;">
-              🔑 QUICK ADMIN RESTORE
+              QUICK ADMIN RESTORE
             </button>
           </div>
         </div>
@@ -8760,11 +9036,11 @@ async function loadReviewQueue(retryCount = 0) {
 
         let gtBadge = `<span class="badge" style="background:rgba(148,163,184,0.12); color:#94a3b8; border:1px solid rgba(148,163,184,0.25);">UNVERIFIED</span>`;
         if (item.ground_truth_label === 'BONAFIDE') {
-          gtBadge = `<span class="badge" style="background:rgba(16,185,129,0.14); color:#10b981; border:1px solid rgba(16,185,129,0.35);">👤 HUMAN</span>`;
+          gtBadge = `<span class="badge" style="background:rgba(16,185,129,0.14); color:#10b981; border:1px solid rgba(16,185,129,0.35);">HUMAN</span>`;
         } else if (item.ground_truth_label === 'SPOOF') {
-          gtBadge = `<span class="badge" style="background:rgba(239,68,68,0.14); color:#ef4444; border:1px solid rgba(239,68,68,0.35);">🤖 CLONED</span>`;
+          gtBadge = `<span class="badge" style="background:rgba(239,68,68,0.14); color:#ef4444; border:1px solid rgba(239,68,68,0.35);">CLONED</span>`;
         } else if (item.ground_truth_label === 'INCONCLUSIVE') {
-          gtBadge = `<span class="badge" style="background:rgba(148,163,184,0.2); color:#cbd5e1; border:1px solid rgba(148,163,184,0.4);">❓ INCONCLUSIVE</span>`;
+          gtBadge = `<span class="badge" style="background:rgba(148,163,184,0.2); color:#cbd5e1; border:1px solid rgba(148,163,184,0.4);"> INCONCLUSIVE</span>`;
         }
 
         const dateStr = item.created_at ? new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : 'N/A';
@@ -8799,7 +9075,7 @@ async function loadReviewQueue(retryCount = 0) {
             <td>${statusBadge}</td>
             <td style="text-align:right;">
               <button class="btn btn-xs btn-primary btn-inspect-row" onclick="event.stopPropagation(); openReviewDrawer('${safeId}')" style="font-size:11px; padding:4px 8px; font-family:var(--font-mono);">
-                ⚡ Inspect &amp; Verify
+                Inspect &amp; Verify
               </button>
             </td>
           </tr>
@@ -8947,10 +9223,10 @@ function toggleDrawerLayout(forcedMode) {
   const textEl = document.getElementById('drawer-layout-text');
   if (iconEl && textEl) {
     if (newMode === 'panoramic') {
-      iconEl.textContent = '🗖';
+      iconEl.textContent = '';
       textEl.textContent = 'PANORAMIC COMMAND';
     } else {
-      iconEl.textContent = '🗕';
+      iconEl.textContent = '';
       textEl.textContent = 'DOCKED HUD VIEW';
     }
   }
@@ -8978,7 +9254,7 @@ function stampDrawerTimestamp() {
   if (!notesEl) return;
   const now = new Date();
   const utcStr = now.toISOString().replace('T', ' ').substring(0, 19) + ' UTC';
-  const stamp = `[${utcStr} // ANALYST STAMP]: `;
+  const stamp = `[${utcStr} • ANALYST STAMP]: `;
   notesEl.value = notesEl.value ? `${notesEl.value}\n${stamp}` : stamp;
   notesEl.focus();
 }
@@ -9144,7 +9420,7 @@ async function openReviewDrawer(reviewId) {
   const iconEl = document.getElementById('drawer-layout-icon');
   const textEl = document.getElementById('drawer-layout-text');
   if (iconEl && textEl) {
-    iconEl.textContent = preferredLayout === 'panoramic' ? '🗖' : '🗕';
+    iconEl.textContent = preferredLayout === 'panoramic' ? '' : '';
     textEl.textContent = preferredLayout === 'panoramic' ? 'PANORAMIC COMMAND' : 'DOCKED HUD VIEW';
   }
 
@@ -9289,7 +9565,7 @@ async function openReviewDrawer(reviewId) {
       auditWrap.innerHTML = audits.map(a => `
         <div style="padding:8px 10px; background:rgba(4,8,22,0.85); border:1px solid rgba(0,240,255,0.15); border-radius:5px; font-size:11px; margin-bottom:6px; font-family:var(--font-mono);">
           <div style="display:flex; justify-content:space-between; color:#00f0ff; font-weight:700;">
-            <span>⚡ ${escapeHtml(a.action)}</span>
+            <span>${escapeHtml(a.action)}</span>
             <span style="color:var(--text-muted); font-size:10px;">${a.timestamp ? new Date(a.timestamp).toLocaleTimeString() : ''}</span>
           </div>
           <div style="color:#94a3b8; margin-top:3px;">Author: <strong style="color:#f8fafc;">${escapeHtml(a.actor)}</strong></div>
@@ -9416,7 +9692,7 @@ async function setupAudioPlayer(audioUrl) {
     if (errBanner) {
       errBanner.classList.remove('hidden');
       const span = errBanner.querySelector('span');
-      if (span) span.textContent = `⚠️ Audio stream notice: ${err.message}`;
+      if (span) span.textContent = `Audio stream notice: ${err.message}`;
     }
   }
 }
@@ -9715,7 +9991,7 @@ function drawMelSpectrogram(progressFraction = 0) {
     ctx.setLineDash([]);
     ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
     ctx.font = '9px JetBrains Mono, monospace';
-    ctx.fillText('⚠ HIGH-FREQ VOCODER ANOMALY (6.4 - 8.0 kHz ROLL-OFF)', width * 0.2 + 8, 18);
+    ctx.fillText(' HIGH-FREQ VOCODER ANOMALY (6.4 - 8.0 kHz ROLL-OFF)', width * 0.2 + 8, 18);
   }
 
   // Frequency Axis Labels
@@ -9877,14 +10153,14 @@ function toggleDrawerABLoop() {
     drawerABLoopEnd = Math.min(player.duration, drawerABLoopStart + 3.0);
     if (loopBtn) {
       loopBtn.classList.add('active');
-      loopBtn.textContent = '🔁 Looping 3s';
+      loopBtn.textContent = ' Looping 3s';
     }
     showToast(`Forensic 3-second loop active: [${drawerABLoopStart.toFixed(1)}s - ${drawerABLoopEnd.toFixed(1)}s]`, 'info');
   } else {
     isDrawerABLoopActive = false;
     if (loopBtn) {
       loopBtn.classList.remove('active');
-      loopBtn.textContent = '🔁 Loop 3s';
+      loopBtn.textContent = ' Loop 3s';
     }
     showToast('Forensic region loop disabled', 'info');
   }
@@ -9900,12 +10176,12 @@ function toggleAudioMute() {
     player.dataset.prevVol = player.volume;
     player.volume = 0;
     if (volSlider) volSlider.value = 0;
-    if (muteBtn) muteBtn.textContent = '🔇';
+    if (muteBtn) muteBtn.textContent = '';
   } else {
     const restore = parseFloat(player.dataset.prevVol || 1.0);
     player.volume = restore;
     if (volSlider) volSlider.value = restore;
-    if (muteBtn) muteBtn.textContent = '🔊';
+    if (muteBtn) muteBtn.textContent = '';
   }
 }
 
@@ -10088,7 +10364,7 @@ function handleApproveForRetrainingClick() {
     return;
   }
   if (!currentSelectedGroundTruth || currentSelectedGroundTruth === 'INCONCLUSIVE') {
-    showToast('⚠️ Please verify this audio as Human / Bonafide or Cloned / Spoof before approving for retraining.', 'warning');
+    showToast('Please verify this audio as Human / Bonafide or Cloned / Spoof before approving for retraining.', 'warning');
     pulseGroundTruthButtons();
     return;
   }
@@ -10113,8 +10389,8 @@ function openApprovalConfirmation() {
 
   document.getElementById('confirm-modal-filename').textContent = currentReviewItem.filename || 'unknown';
   document.getElementById('confirm-modal-gt').textContent = currentSelectedGroundTruth === 'BONAFIDE' 
-    ? '👤 HUMAN / BONAFIDE (Target: 0.0)' 
-    : '🤖 CLONED / SPOOF (Target: 1.0)';
+    ? 'HUMAN / BONAFIDE (Target: 0.0)' 
+    : 'CLONED / SPOOF (Target: 1.0)';
   document.getElementById('confirm-modal-gt').style.color = currentSelectedGroundTruth === 'BONAFIDE' ? '#10b981' : '#ef4444';
 
   const synProb = currentReviewItem.native_probability !== undefined && currentReviewItem.native_probability !== null 
@@ -10157,7 +10433,7 @@ async function executeApprovedTrainingDecision() {
   }
 
   const drawerApproveBtn = document.getElementById('btn-drawer-approve');
-  const origDrawerHtml = drawerApproveBtn ? drawerApproveBtn.innerHTML : '⚡ Approve for Retraining';
+  const origDrawerHtml = drawerApproveBtn ? drawerApproveBtn.innerHTML : 'Approve for Retraining';
   if (drawerApproveBtn) {
     drawerApproveBtn.disabled = true;
     drawerApproveBtn.innerHTML = '<span class="spinner" style="display:inline-block; width:12px; height:12px; border:2px solid rgba(255,255,255,0.3); border-top-color:#fff; border-radius:50%; animation:spin 0.6s linear infinite; vertical-align:middle; margin-right:6px;"></span> Authorizing &amp; Retraining...';
@@ -10243,7 +10519,7 @@ async function executeApprovedTrainingDecision() {
     const drawerApproveBtn = document.getElementById('btn-drawer-approve');
     if (drawerApproveBtn) {
       drawerApproveBtn.disabled = false;
-      drawerApproveBtn.innerHTML = '⚡ Approve for Retraining';
+      drawerApproveBtn.innerHTML = 'Approve for Retraining';
     }
   }
 }
@@ -10296,7 +10572,7 @@ function pollRetrainingRun(runId) {
         if (feedbackEl) {
           feedbackEl.classList.remove('hidden');
           feedbackEl.style.color = '#ef4444';
-          feedbackEl.textContent = `⚠️ Retraining run failed: ${targetRun.failure_reason || 'Unknown error'}. Active detector preserved.`;
+          feedbackEl.textContent = `Retraining run failed: ${targetRun.failure_reason || 'Unknown error'}. Active detector preserved.`;
         }
         clearInterval(activeRetrainPollInterval);
         activeRetrainPollInterval = null;
@@ -10356,7 +10632,7 @@ const RetrainNotificationManager = {
     if (promoteBtn) {
       promoteBtn.style.display = 'block';
       promoteBtn.disabled = false;
-      promoteBtn.textContent = '⚡ Promote Candidate to Active Detector';
+      promoteBtn.textContent = 'Promote Candidate to Active Detector';
     }
 
     const lossChip = document.getElementById('retrain-hud-loss-chip');
@@ -10525,13 +10801,13 @@ const RetrainNotificationManager = {
       } else {
         promoteBtn.style.display = 'block';
         promoteBtn.disabled = false;
-        promoteBtn.textContent = '⚡ Promote Candidate to Active Detector';
+        promoteBtn.textContent = 'Promote Candidate to Active Detector';
       }
     }
 
     const hintEl = document.getElementById('retrain-hud-dismiss-hint');
     if (hintEl) {
-      hintEl.textContent = '👆 Click anywhere on this notification or click Dismiss to close';
+      hintEl.textContent = ' Click anywhere on this notification or click Dismiss to close';
     }
 
     // Mirror to drawer stepper
@@ -10597,14 +10873,14 @@ const RetrainNotificationManager = {
 
     const hintEl = document.getElementById('retrain-hud-dismiss-hint');
     if (hintEl) {
-      hintEl.textContent = '👆 Click anywhere on this notification or click Dismiss to close';
+      hintEl.textContent = ' Click anywhere on this notification or click Dismiss to close';
     }
 
     const feedbackEl = document.getElementById('drawer-decision-feedback');
     if (feedbackEl) {
       feedbackEl.classList.remove('hidden');
       feedbackEl.style.color = '#ef4444';
-      feedbackEl.textContent = `⚠️ Retraining halted: ${reason}. Active detector preserved.`;
+      feedbackEl.textContent = `Retraining halted: ${reason}. Active detector preserved.`;
     }
   },
 
@@ -10670,7 +10946,7 @@ const RetrainNotificationManager = {
       showToast('Promotion Error: ' + err.message, 'error');
       if (btn) {
         btn.disabled = false;
-        btn.textContent = '⚡ Promote Candidate to Active Detector';
+        btn.textContent = 'Promote Candidate to Active Detector';
       }
     }
   }
@@ -10804,7 +11080,7 @@ function setManualDetectorLabel(label) {
   if (clonedBtn) clonedBtn.style.background = label === 'CLONED' ? 'rgba(239, 68, 68, 0.35)' : '';
   const statusEl = document.getElementById('manual-detector-status');
   if (statusEl) {
-    statusEl.innerHTML = `<span style="color:${label === 'HUMAN' ? 'var(--accent-green)' : 'var(--accent-red)'}; font-weight:600;">Selected: ${label === 'HUMAN' ? '👤 Human Voice (Target: 0.0)' : '🤖 Cloned Voice (Target: 1.0)'}</span>`;
+    statusEl.innerHTML = `<span style="color:${label === 'HUMAN' ? 'var(--accent-green)' : 'var(--accent-red)'}; font-weight:600;">Selected: ${label === 'HUMAN' ? 'Human Voice (Target: 0.0)' : 'Cloned Voice (Target: 1.0)'}</span>`;
   }
 }
 
@@ -11610,7 +11886,7 @@ function renderFilteredAuditLogs() {
         <td style="font-size:11px; color:var(--text-muted); font-family:var(--font-mono);">${escapeHtml(l.target_entity || l.target_type || 'N/A')}</td>
         <td style="font-size:11px; color:#cbd5e1; max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(l.details || '')}">
           ${escapeHtml(l.details || '')}
-          <span style="color:#00d4ff; font-size:10px; margin-left:6px;">🔍 Inspect</span>
+          <span style="color:#00d4ff; font-size:10px; margin-left:6px;">Inspect</span>
         </td>
       </tr>
     `;
@@ -11717,7 +11993,7 @@ function renderAdminAuthRequired() {
     usersTbody.innerHTML = `
       <tr>
         <td colspan="8" style="text-align:center; padding:32px 16px;">
-          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Administrator Authentication Required</div>
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">Administrator Authentication Required</div>
           <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">User management and RBAC access require an active administrator session.</div>
           <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
         </td>
@@ -11730,7 +12006,7 @@ function renderAdminAuthRequired() {
     quarTbody.innerHTML = `
       <tr>
         <td colspan="7" style="text-align:center; padding:24px 16px;">
-          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Quarantine Registry Protected</div>
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">Quarantine Registry Protected</div>
           <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:12px;">Zero-trust quarantine management requires administrator privileges.</div>
           <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
         </td>
@@ -11743,7 +12019,7 @@ function renderAdminAuthRequired() {
     emailTbody.innerHTML = `
       <tr>
         <td colspan="7" style="text-align:center; padding:24px 16px;">
-          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Alert Notification Journal Protected</div>
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">Alert Notification Journal Protected</div>
           <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:12px;">Accessing email journals requires administrator privileges.</div>
           <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
         </td>
@@ -11756,7 +12032,7 @@ function renderAdminAuthRequired() {
     auditTbody.innerHTML = `
       <tr>
         <td colspan="6" style="text-align:center; padding:32px 16px;">
-          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Administrator Authentication Required</div>
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">Administrator Authentication Required</div>
           <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">Tamper-evident audit trails require an active administrator session.</div>
           <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
         </td>
@@ -11769,7 +12045,7 @@ function renderAdminAuthRequired() {
     runsTbody.innerHTML = `
       <tr>
         <td colspan="8" style="text-align:center; padding:32px 16px;">
-          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">🔒 Retraining Runs Protected</div>
+          <div style="font-size:13px; font-weight:600; color:#f87171; margin-bottom:8px;">Retraining Runs Protected</div>
           <div style="font-size:11.5px; color:var(--text-secondary); margin-bottom:14px;">Model versioning and candidate promotions require administrator privileges.</div>
           <button class="btn btn-sm btn-primary" onclick="openAuthModal()" style="font-size:11px; padding:6px 14px;">Sign In as Admin</button>
         </td>
@@ -11875,9 +12151,9 @@ async function loadAdminTrainingStatus() {
     } else if (runsTbody) {
       const code = statusSettled.status === 'fulfilled' ? statusSettled.value.status : 0;
       if (code === 401 || code === 403) {
-        runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Access Denied: Administrator privileges required to inspect retraining status.</td></tr>';
+        runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Access Denied: Administrator privileges required to inspect retraining status.</td></tr>';
       } else {
-        runsTbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Failed to load retraining status${code ? ` (HTTP ${code})` : ''}. <button class="btn btn-xs btn-secondary" onclick="loadAdminTrainingStatus()" style="margin-left:8px;">Retry</button></td></tr>`;
+        runsTbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Failed to load retraining status${code ? ` (HTTP ${code})` : ''}. <button class="btn btn-xs btn-secondary" onclick="loadAdminTrainingStatus()" style="margin-left:8px;">Retry</button></td></tr>`;
       }
     }
 
@@ -11899,7 +12175,7 @@ async function loadAdminTrainingStatus() {
   } catch (err) {
     console.warn('Error loading admin training status:', err);
     if (runsTbody) {
-      runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Error loading training runs. <button class="btn btn-xs btn-secondary" onclick="loadAdminTrainingStatus()" style="margin-left:8px;">Retry</button></td></tr>';
+      runsTbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Error loading training runs. <button class="btn btn-xs btn-secondary" onclick="loadAdminTrainingStatus()" style="margin-left:8px;">Retry</button></td></tr>';
     }
   }
 }
@@ -11910,7 +12186,7 @@ async function loadAdminUsers() {
 
   const token = getAuthToken();
   if (!token) {
-    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Authentication required: Please log in with administrator privileges.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Authentication required: Please log in with administrator privileges.</td></tr>';
     return;
   }
 
@@ -11930,7 +12206,7 @@ async function loadAdminUsers() {
       }
       lastStatus = res.status;
       if (res.status === 401 || res.status === 403) {
-        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Access Denied (${res.status}): Administrator privileges required to manage users.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Access Denied (${res.status}): Administrator privileges required to manage users.</td></tr>`;
         return;
       }
       if (attempt < 2) await new Promise(r => setTimeout(r, 200));
@@ -11940,7 +12216,7 @@ async function loadAdminUsers() {
     }
   }
 
-  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Failed to load users${lastStatus ? ` (HTTP ${lastStatus})` : ''}. <button class="btn btn-xs btn-secondary" onclick="loadAdminUsers()" style="margin-left:8px;">Retry</button></td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Failed to load users${lastStatus ? ` (HTTP ${lastStatus})` : ''}. <button class="btn btn-xs btn-secondary" onclick="loadAdminUsers()" style="margin-left:8px;">Retry</button></td></tr>`;
 }
 
 async function loadAdminAuditLogs() {
@@ -11952,7 +12228,7 @@ async function loadAdminAuditLogs() {
 
   const token = getAuthToken();
   if (!token) {
-    bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Authentication required: Please log in with administrator privileges.</td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Authentication required: Please log in with administrator privileges.</td></tr>';
     return;
   }
 
@@ -11963,9 +12239,9 @@ async function loadAdminAuditLogs() {
     });
     if (!res.ok) {
       if (res.status === 401 || res.status === 403) {
-        bodyEl.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">🔒 Access Denied (${res.status}): Administrator privileges required to view audit trail.</td></tr>`;
+        bodyEl.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Access Denied (${res.status}): Administrator privileges required to view audit trail.</td></tr>`;
       } else {
-        bodyEl.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Failed to load audit events (HTTP ${res.status}). <button class="btn btn-xs btn-secondary" onclick="loadAdminAuditLogs()" style="margin-left:8px;">Retry</button></td></tr>`;
+        bodyEl.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Failed to load audit events (HTTP ${res.status}). <button class="btn btn-xs btn-secondary" onclick="loadAdminAuditLogs()" style="margin-left:8px;">Retry</button></td></tr>`;
       }
       return;
     }
@@ -11976,7 +12252,7 @@ async function loadAdminAuditLogs() {
     renderFilteredAuditLogs();
   } catch (err) {
     console.warn('Error loading audit logs:', err);
-    bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">⚠️ Error loading audit logs. Network error or service unreachable. <button class="btn btn-xs btn-secondary" onclick="loadAdminAuditLogs()" style="margin-left:8px;">Retry</button></td></tr>';
+    bodyEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:16px; color:#f87171; font-family:var(--font-mono); font-size:11px;">Error loading audit logs. Network error or service unreachable. <button class="btn btn-xs btn-secondary" onclick="loadAdminAuditLogs()" style="margin-left:8px;">Retry</button></td></tr>';
   }
 }
 
@@ -12188,7 +12464,7 @@ async function executeAccountPurge() {
       statusEl.style.background = 'rgba(239, 68, 68, 0.15)';
       statusEl.style.border = '1px solid rgba(239, 68, 68, 0.4)';
       statusEl.style.color = '#f87171';
-      statusEl.innerHTML = `⚠️ <strong>Purge Failed:</strong> ${escapeHtml(err.message)}`;
+      statusEl.innerHTML = `<strong>Purge Failed:</strong> ${escapeHtml(err.message)}`;
     }
     showToast(`Purge failed: ${err.message}`, 'error');
     if (submitBtn) {
@@ -12540,8 +12816,7 @@ async function scanImageForensics() {
       method: 'POST',
       body: formData
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Image forensic scan failed');
+    const data = await parseResponseSafely(res, 'Image Forensic Scan');
 
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
@@ -12593,11 +12868,11 @@ function renderImageForensicsReport(data) {
   const provStatus = metadata.provenance_status || metrics.metadata_profile || 'METADATA_STRIPPED_OR_ABSENT';
   let provBadge = '';
   if (provStatus === 'CAMERA_PROVENANCE_CONFIRMED') {
-    provBadge = `<span class="badge badge-safe" style="font-size:11px;">📷 Camera Hardware Verified</span>`;
+    provBadge = `<span class="badge badge-safe" style="font-size:11px;">Camera Hardware Verified</span>`;
   } else if (provStatus === 'AI_GENERATOR_METADATA_CONFIRMED') {
-    provBadge = `<span class="badge badge-critical" style="font-size:11px;">🤖 Generative AI Software Tag</span>`;
+    provBadge = `<span class="badge badge-critical" style="font-size:11px;">Generative AI Software Tag</span>`;
   } else {
-    provBadge = `<span class="badge" style="background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.3); font-size:11px;">📄 Web/Stripped Metadata (Neutral)</span>`;
+    provBadge = `<span class="badge" style="background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.3); font-size:11px;">Web/Stripped Metadata (Neutral)</span>`;
   }
 
   const shaFull = mediaInfo.sha256 || '';
@@ -12727,7 +13002,7 @@ function renderImageForensicsReport(data) {
         <div class="img-telemetry-block">
           <div class="img-header-title-row">
             <div class="img-header-title">
-              <span style="font-size:22px;">🖼️</span>
+              <span style="font-size:22px;">️</span>
               <div>
                 <h3 style="display:flex; align-items:center; gap:8px;">
                   Visual Forensics: ${escapeHtml(classification)}
@@ -12784,27 +13059,27 @@ function renderImageForensicsReport(data) {
       <div class="img-actions-bar">
         <button class="img-action-btn img-btn-spectral" onclick="openImageSpectralModal('fft')" title="Open Interactive 2D FFT Radial Spectrum & Spatial ELA Visualizer">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-          <span>🔬 Deep Spectral &amp; FFT Inspector</span>
+          <span>Deep Spectral &amp; FFT Inspector</span>
         </button>
         <button class="img-action-btn img-btn-exif" onclick="openImageExifModal()" title="Inspect Camera Sensor, Lens, Exposure, and Generative Software Markers">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-          <span>📷 Hardware &amp; EXIF Tree</span>
+          <span>Hardware &amp; EXIF Tree</span>
         </button>
         <button class="img-action-btn img-btn-dossier" onclick="exportImageForensicJSON()" title="Download structured cryptographic JSON report for SOC incident handling">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-          <span>📋 Export Forensic Dossier</span>
+          <span> Export Forensic Dossier</span>
         </button>
         <button class="img-action-btn img-btn-quarantine" id="btn-quarantine-img" onclick="quarantineMediaAsset('${escapeHtml(shaFull)}')" title="Quarantine file SHA-256 in CyberGuard Enforcement policy">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          <span>🛡️ Quarantine Asset SHA</span>
+          <span>Quarantine Asset SHA</span>
         </button>
         <button class="img-action-btn img-btn-copilot" onclick="openLLMCopilotWithCurrentThreat()" title="Invoke LLM Security Analyst with full grounded image telemetry">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-          <span>⚡ AI Threat Copilot</span>
+          <span>AI Threat Copilot</span>
         </button>
         <button class="img-action-btn" onclick="copyMediaHash('${escapeHtml(shaFull)}')" title="Copy SHA-256 to clipboard">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
-          <span>📋 Copy SHA-256</span>
+          <span>Copy SHA-256</span>
         </button>
       </div>
 
@@ -12815,7 +13090,7 @@ function renderImageForensicsReport(data) {
           <div>
             <div class="channel-card-header">
               <span class="channel-card-title">Error Level (ELA)</span>
-              <span class="channel-card-icon">🔬</span>
+              <span class="channel-card-icon"></span>
             </div>
             <div class="channel-card-main" style="color:${metrics.ela_status === 'CRITICAL' ? '#ef4444' : (metrics.ela_status === 'MODERATE' ? '#f59e0b' : '#38bdf8')};">
               Mean: ${elaMean}
@@ -12835,7 +13110,7 @@ function renderImageForensicsReport(data) {
           <div>
             <div class="channel-card-header">
               <span class="channel-card-title">2D FFT Harmonics</span>
-              <span class="channel-card-icon">⚡</span>
+              <span class="channel-card-icon"></span>
             </div>
             <div class="channel-card-main" style="color:${metrics.fft_status === 'CRITICAL' ? '#ef4444' : (metrics.fft_status === 'MODERATE' ? '#f59e0b' : '#10b981')};">
               ${fftSpike}
@@ -12855,7 +13130,7 @@ function renderImageForensicsReport(data) {
           <div>
             <div class="channel-card-header">
               <span class="channel-card-title">Sensor Noise (PRNU)</span>
-              <span class="channel-card-icon">📡</span>
+              <span class="channel-card-icon"></span>
             </div>
             <div class="channel-card-main" style="color:${metrics.noise_status === 'CRITICAL' ? '#ef4444' : (metrics.noise_status === 'MODERATE' ? '#f59e0b' : '#38bdf8')};">
               Kurt: ${noiseKurt}
@@ -12875,7 +13150,7 @@ function renderImageForensicsReport(data) {
           <div>
             <div class="channel-card-header">
               <span class="channel-card-title">Edge Sharpness</span>
-              <span class="channel-card-icon">📐</span>
+              <span class="channel-card-icon"></span>
             </div>
             <div class="channel-card-main" style="color:#c084fc;">
               Var: ${edgeVar}
@@ -12893,7 +13168,7 @@ function renderImageForensicsReport(data) {
           <div>
             <div class="channel-card-header">
               <span class="channel-card-title">Facial Biometrics</span>
-              <span class="channel-card-icon">👤</span>
+              <span class="channel-card-icon"></span>
             </div>
             <div class="channel-card-main" style="font-size:12px; line-height:1.3; color:${metrics.facial_status_level === 'CRITICAL' ? '#ef4444' : '#f8fafc'};">
               ${escapeHtml(facialStatus)}
@@ -12913,7 +13188,7 @@ function renderImageForensicsReport(data) {
           <div>
             <div class="channel-card-header">
               <span class="channel-card-title">Hardware Provenance</span>
-              <span class="channel-card-icon">📷</span>
+              <span class="channel-card-icon"></span>
             </div>
             <div class="channel-card-main" style="font-size:13px; color:${provStatus === 'CAMERA_PROVENANCE_CONFIRMED' ? '#10b981' : (provStatus === 'AI_GENERATOR_METADATA_CONFIRMED' ? '#ef4444' : '#cbd5e1')};">
               ${escapeHtml(metadata.camera_make ? `${metadata.camera_make} ${metadata.camera_model || ''}`.trim() : (metadata.ai_generator_tags && metadata.ai_generator_tags[0]) || 'Web / Standard')}
@@ -12935,10 +13210,10 @@ function renderImageForensicsReport(data) {
       <!-- Bottom Engine Attribution & Copilot Trigger -->
       <div style="margin-top:16px; padding-top:12px; border-top:1px solid rgba(255,255,255,0.06); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <span style="font-size:11px; color:#64748b; font-family:var(--font-mono);">
-          ⚡ Engine: Heuristic Multi-Signal DSP &amp; Forensics (Calibrated • Grounded)
+          Engine: Heuristic Multi-Signal DSP &amp; Forensics (Calibrated • Grounded)
         </span>
         <button class="btn btn-xs btn-secondary" onclick="openLLMCopilotWithCurrentThreat()" style="border-color:rgba(6,182,212,0.4); color:#38bdf8;">
-          ⚡ Reason on Evidence with Threat Copilot
+          Reason on Evidence with Threat Copilot
         </button>
       </div>
     </div>
@@ -13783,7 +14058,7 @@ function renderLLMAnalysisResults(data) {
     const actText = (typeof act === 'object' && act !== null) ? `${act.action || act.step || ''}` : String(act);
     return `
       <div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.25); border-radius:6px; padding:8px 12px; margin-bottom:6px; font-size:12px; color:#fca5a5; display:flex; align-items:center; gap:8px;">
-        <span>🛡️</span>
+        <span>️</span>
         <span>${escapeHtml(actText)}</span>
       </div>
     `;
@@ -13882,7 +14157,7 @@ async function generateThreatReport() {
   } finally {
     if (btn) {
       btn.disabled = false;
-      btn.innerHTML = `📄 Generate &amp; Download Report`;
+      btn.innerHTML = `Generate &amp; Download Report`;
     }
   }
 }
@@ -15063,25 +15338,13 @@ function updateThreatAlertCircular(categories = {}) {
 window.updateThreatAlertCircular = updateThreatAlertCircular;
 window.renderOverviewCircularHUD = function() {}; // Safe no-op backward compatibility stub
 
-// ── 6. 3D Holographic Card Parallax & Specular Light Sheen ─────────────────
+// ── 6. Universal Card Interactive Transitions (Smooth Mini Pop-Up) ──────────
 function init3DCardParallax() {
+  // Waver interactive animation completely removed across the entire frontend.
+  // Reset any stale inline transforms so clean CSS mini pop-up transitions take full effect.
   const cards = document.querySelectorAll('.card');
   cards.forEach((card) => {
-    card.addEventListener('mousemove', function (e) {
-      const rect = card.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      const rotX = ((y - cy) / cy) * -4.5;
-      const rotY = ((x - cx) / cx) * 4.5;
-
-      card.style.transform = `perspective(1000px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg) scale3d(1.012, 1.012, 1.012)`;
-    });
-
-    card.addEventListener('mouseleave', function () {
-      card.style.transform = 'perspective(1000px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
-    });
+    card.style.transform = '';
   });
 }
 
@@ -15162,21 +15425,26 @@ function initNavInteractiveAnimations() {
     if (active) updateNavLaserRail(active, false);
   });
 
-  // 3D Perspective Tilt & Holographic Reflection on Logo
-  if (navLogo) {
-    navLogo.addEventListener('mousemove', (e) => {
-      const rect = navLogo.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const cx = rect.width / 2;
-      const cy = rect.height / 2;
-      const rotX = ((y - cy) / cy) * -9;
-      const rotY = ((x - cx) / cx) * 9;
-      navLogo.style.transform = `perspective(600px) rotateX(${rotX.toFixed(2)}deg) rotateY(${rotY.toFixed(2)}deg) scale(1.04)`;
+  // Interactive 3D Parallax Tilt & Cyber Glitch on Nav Logo
+  const logoWrap = document.getElementById('brand-logo-interactive') || navLogo;
+  if (logoWrap) {
+    logoWrap.addEventListener('mousemove', (e) => {
+      const rect = logoWrap.getBoundingClientRect();
+      const x = e.clientX - rect.left - rect.width / 2;
+      const y = e.clientY - rect.top - rect.height / 2;
+      const rotateX = -(y / (rect.height / 2)) * 12;
+      const rotateY = (x / (rect.width / 2)) * 14;
+      logoWrap.style.transform = `perspective(400px) rotateX(${rotateX.toFixed(1)}deg) rotateY(${rotateY.toFixed(1)}deg) scale3d(1.06, 1.06, 1.06)`;
     });
-
-    navLogo.addEventListener('mouseleave', () => {
-      navLogo.style.transform = 'perspective(600px) rotateX(0deg) rotateY(0deg) scale(1)';
+    logoWrap.addEventListener('mouseleave', () => {
+      logoWrap.style.transform = 'perspective(400px) rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)';
+    });
+    logoWrap.addEventListener('click', () => {
+      if (typeof playCyberActivationClickSound === 'function') {
+        playCyberActivationClickSound();
+      }
+      logoWrap.classList.add('cg-glitching');
+      setTimeout(() => logoWrap.classList.remove('cg-glitching'), 350);
     });
   }
 }
@@ -15205,6 +15473,10 @@ document.addEventListener('DOMContentLoaded', function () {
     init3DCardParallax();
   }, 100);
 
+  // Universal Shared Button Interaction: Frame-Accurate Glitch + Activation Sound
+  syncGlitchButtonAttributes();
+  initCyberButtonInteractionEngine();
+
   // Recurring real-time autonomous daily DEFCON arbitration check (every 30 seconds)
   setInterval(() => {
     if (typeof evaluateAutonomousDailyDefcon === 'function') {
@@ -15213,4 +15485,170 @@ document.addEventListener('DOMContentLoaded', function () {
   }, 30000);
 });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CYBERPUNK GLITCH INTERACTION & DIGITAL CLICK SOUND ENGINE (PHASE 3 & 4)
+// Sourced & calibrated from button.mp4: crisp 45ms electronic activation click
+// Replayable 2.0s multi-streak & text-slicing glitch across ALL website buttons
+// ═══════════════════════════════════════════════════════════════════════════
+let _cyberAudioCtx = null;
+let _lastClickSoundTime = 0;
 
+function getCyberAudioContext() {
+  try {
+    if (!_cyberAudioCtx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        _cyberAudioCtx = new AudioCtx();
+      }
+    }
+    if (_cyberAudioCtx && _cyberAudioCtx.state === 'suspended') {
+      _cyberAudioCtx.resume().catch(() => {});
+    }
+  } catch (e) {}
+  return _cyberAudioCtx;
+}
+
+// Crisp, restrained 45ms electronic click played on genuine enabled button activation
+function playCyberActivationClickSound() {
+  const nowMs = Date.now();
+  if (nowMs - _lastClickSoundTime < 50) return; // Prevent duplicate clicks from touch/mouse
+  _lastClickSoundTime = nowMs;
+
+  const ctx = getCyberAudioContext();
+  if (!ctx) return;
+
+  const t = ctx.currentTime;
+
+  try {
+    // 1. Digital Click Transient Impulse (15ms high-frequency filtered micro-burst)
+    const impulseLen = Math.floor(ctx.sampleRate * 0.015);
+    const impulseBuf = ctx.createBuffer(1, impulseLen, ctx.sampleRate);
+    const impData = impulseBuf.getChannelData(0);
+    for (let i = 0; i < impulseLen; i++) {
+      impData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / impulseLen, 2);
+    }
+
+    const impSource = ctx.createBufferSource();
+    impSource.buffer = impulseBuf;
+
+    const impFilter = ctx.createBiquadFilter();
+    impFilter.type = 'bandpass';
+    impFilter.frequency.setValueAtTime(2800, t);
+    impFilter.Q.setValueAtTime(4.0, t);
+
+    const impGain = ctx.createGain();
+    impGain.gain.setValueAtTime(0.07, t);
+    impGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.015);
+
+    impSource.connect(impFilter);
+    impFilter.connect(impGain);
+    impGain.connect(ctx.destination);
+
+    // 2. Restrained Electronic Body Click (35ms pitch drop from 480Hz to 110Hz)
+    const osc = ctx.createOscillator();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(480, t);
+    osc.frequency.exponentialRampToValueAtTime(110, t + 0.035);
+
+    const toneGain = ctx.createGain();
+    toneGain.gain.setValueAtTime(0.06, t);
+    toneGain.gain.exponentialRampToValueAtTime(0.0001, t + 0.04);
+
+    osc.connect(toneGain);
+    toneGain.connect(ctx.destination);
+
+    impSource.start(t);
+    osc.start(t);
+    osc.stop(t + 0.045);
+  } catch (err) {}
+}
+
+// Trigger 2.0s finite glitch sequence on an actionable button
+function triggerButtonGlitchSequence(btn) {
+  if (!btn || btn.disabled || btn.classList.contains('disabled') || btn.classList.contains('nav-link')) return;
+  
+  // Sync data-text for chromatic slicing
+  const text = btn.innerText || btn.textContent || '';
+  const clean = text.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+  const label = clean || btn.getAttribute('title') || btn.getAttribute('aria-label') || '';
+  if (label && btn.getAttribute('data-text') !== label) {
+    btn.setAttribute('data-text', label);
+  }
+
+  // Reset and trigger finite 2.0s animation class
+  btn.classList.remove('cg-glitching');
+  void btn.offsetWidth; // Force reflow for immediate replay
+  btn.classList.add('cg-glitching');
+
+  if (btn._cgGlitchTimer) clearTimeout(btn._cgGlitchTimer);
+  btn._cgGlitchTimer = setTimeout(() => {
+    btn.classList.remove('cg-glitching');
+    btn._cgGlitchTimer = null;
+  }, 2000);
+}
+
+// Universal Button Interaction Initialization
+function initCyberButtonInteractionEngine() {
+  const btnSelector = 'button, .btn, .nexus-btn, [role="button"], .overview-filter-pill, .review-pill-btn, .nexus-pill-btn, .quick-tag-chip, .speed-btn';
+
+  // Unlock AudioContext on first user interaction
+  ['pointerdown', 'click', 'keydown'].forEach(evt => {
+    document.addEventListener(evt, () => getCyberAudioContext(), { once: true, passive: true });
+  });
+
+  // 1. Pointer Entry: Trigger Frame-Accurate Glitch Burst (Once per hover entry)
+  document.addEventListener('mouseover', function (e) {
+    const btn = e.target.closest(btnSelector);
+    if (btn && !btn.disabled && !btn.classList.contains('disabled') && !btn.classList.contains('nav-link')) {
+      if (!btn.classList.contains('cg-glitching')) {
+        triggerButtonGlitchSequence(btn);
+      }
+    }
+  }, { passive: true });
+
+  // 2. Pointer Leave: Clean up timer so re-entry replays cleanly
+  document.addEventListener('mouseout', function (e) {
+    const btn = e.target.closest(btnSelector);
+    if (btn && (!e.relatedTarget || !btn.contains(e.relatedTarget))) {
+      btn.classList.remove('cg-glitching');
+      if (btn._cgGlitchTimer) {
+        clearTimeout(btn._cgGlitchTimer);
+        btn._cgGlitchTimer = null;
+      }
+    }
+  }, { passive: true });
+
+  // 3. Genuine Enabled Activation (Click / Touch / Enter / Space): Click Sound + Visual Accent
+  document.addEventListener('click', function (e) {
+    const btn = e.target.closest(btnSelector);
+    if (btn && !btn.disabled && !btn.classList.contains('disabled') && !btn.classList.contains('nav-link')) {
+      playCyberActivationClickSound();
+      triggerButtonGlitchSequence(btn);
+    }
+  }, { capture: true, passive: true });
+
+  // Keyboard activation (Enter / Space)
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      const btn = document.activeElement ? document.activeElement.closest(btnSelector) : null;
+      if (btn && !btn.disabled && !btn.classList.contains('disabled') && !btn.classList.contains('nav-link')) {
+        playCyberActivationClickSound();
+        triggerButtonGlitchSequence(btn);
+      }
+    }
+  }, { passive: true });
+}
+
+// Auto-stamp data-text on ALL buttons across the entire website
+function syncGlitchButtonAttributes() {
+  const selector = 'button, .btn, .nexus-btn, [role="button"], .overview-filter-pill, .review-pill-btn, .nexus-pill-btn, .quick-tag-chip, .speed-btn';
+  document.querySelectorAll(selector).forEach(btn => {
+    if (btn.classList.contains('disabled') || btn.disabled || btn.classList.contains('nav-link')) return;
+    const text = btn.innerText || btn.textContent || '';
+    const clean = text.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').trim();
+    const label = clean || btn.getAttribute('title') || btn.getAttribute('aria-label') || '';
+    if (label && btn.getAttribute('data-text') !== label) {
+      btn.setAttribute('data-text', label);
+    }
+  });
+}

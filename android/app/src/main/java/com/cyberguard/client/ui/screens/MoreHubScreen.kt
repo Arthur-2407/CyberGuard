@@ -154,7 +154,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = if (isConnected) "ONLINE // ACTIVE" else "STANDBY // LOCAL",
+                        text = if (isConnected) "ONLINE" else "STANDBY",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
@@ -229,9 +229,9 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
                                 text = if (currentUser != null) {
-                                    "COMMANDER // ${currentUser?.username?.uppercase() ?: "OPERATOR"}"
+                                    "COMMANDER: ${currentUser?.username?.uppercase() ?: "OPERATOR"}"
                                 } else {
-                                    "COMMANDER IN CHARGE //"
+                                    "COMMANDER IN CHARGE"
                                 },
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
@@ -349,7 +349,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "NEURAL CORE // ACTIVE DEFENSE MATRIX",
+                            text = "NEURAL CORE",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
@@ -451,7 +451,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                             border = BorderStroke(1.dp, HologramTeal)
                         ) {
                             Text(
-                                text = "CORE SYNAPSE STABILIZED // ALL ARRAYS SYNCHRONIZED",
+                                text = "CORE SYNAPSE STABILIZED",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,
@@ -490,7 +490,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
             FuturisticSubsystemCard(
                 title = "Device Security",
                 subtitle = "App installations, removals, updates, and risk findings",
-                telemetryTag = "KERNEL INTEGRITY: 100% // CONTINUOUS APP WATCHDOG",
+                telemetryTag = "KERNEL INTEGRITY: 100%",
                 icon = Icons.Default.PhoneAndroid,
                 accentColor = CyberBlue,
                 pulseFactor = 1.0f,
@@ -502,7 +502,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
             FuturisticSubsystemCard(
                 title = "Security Alerts",
                 subtitle = "Incident notifications and investigation status",
-                telemetryTag = "AI SOC RADAR // REAL-TIME THREAT LOGS",
+                telemetryTag = "AI SOC RADAR",
                 icon = Icons.Default.Warning,
                 accentColor = StatusCritical,
                 pulseFactor = beaconPulse,
@@ -514,7 +514,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
             FuturisticSubsystemCard(
                 title = "Speaker Profiles",
                 subtitle = "Voice identity enrollment and management",
-                telemetryTag = "ACOUSTIC BIOMETRICS // CLONE DEFENSE ENGINE",
+                telemetryTag = "ACOUSTIC BIOMETRICS",
                 icon = Icons.Default.GraphicEq,
                 accentColor = ElectricCyan,
                 pulseFactor = 1.0f,
@@ -526,7 +526,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
             FuturisticSubsystemCard(
                 title = "File Analysis",
                 subtitle = "Offline audio inspection and deepfake forensics",
-                telemetryTag = "SPECTROGRAM FORENSICS // ZERO-DAY HEURISTICS",
+                telemetryTag = "SPECTROGRAM FORENSICS",
                 icon = Icons.Default.Search,
                 accentColor = StatusWarning,
                 pulseFactor = 1.0f,
@@ -630,7 +630,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                     FuturisticSubsystemCard(
                         title = "Admin Console",
                         subtitle = "Tenant management, audit trail & active model engines",
-                        telemetryTag = "MULTI-TENANT ORCHESTRATOR // CORE SERVER DIRECTIVE",
+                        telemetryTag = "MULTI-TENANT ORCHESTRATOR",
                         icon = Icons.Default.AdminPanelSettings,
                         accentColor = CyberNeonCyan,
                         pulseFactor = 1.0f,
@@ -641,7 +641,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                     FuturisticSubsystemCard(
                         title = "Training Review",
                         subtitle = "Ground-truth review queue & continuous retraining approvals",
-                        telemetryTag = "NEURAL GROUND-TRUTH PIPELINE // WEIGHT CALIBRATION",
+                        telemetryTag = "NEURAL GROUND-TRUTH PIPELINE",
                         icon = Icons.Default.Psychology,
                         accentColor = QuantumViolet,
                         pulseFactor = 1.0f,
@@ -722,7 +722,7 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = "DISENGAGE OPERATOR SESSION // LOG OUT",
+                            text = "DISENGAGE OPERATOR SESSION",
                             style = MaterialTheme.typography.labelSmall.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,

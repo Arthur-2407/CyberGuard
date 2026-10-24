@@ -99,11 +99,11 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
         viewModel.checkScreeningRoleStatus()
         isRequestingRole = false
         if (viewModel.isCallScreeningRoleHeld.value) {
-            screeningFeedbackMessage = "SYSTEM CALL SCREENING ROLE GRANTED // ACTIVE SHIELD"
+            screeningFeedbackMessage = "SYSTEM CALL SCREENING ROLE GRANTED"
         } else {
             // Xiaomi/HyperOS or OEM fallback
             viewModel.forceArmCallScreening(true)
-            screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED // HYPEROS DEFENSE ACTIVE"
+            screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED"
         }
     }
 
@@ -388,7 +388,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                         if (!serverUrl.isNullOrBlank()) {
                             StatusRow(
                                 "NODE ADDRESS",
-                                serverUrl!!.removePrefix("http://").trimEnd('/'),
+                                serverUrl!!.removePrefix("https://").removePrefix("http://").trimEnd('/'),
                                 TextSecondary
                             )
                         }
@@ -516,7 +516,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "CONTINUOUS CELLULAR WATCHDOG // ZERO DEFECT PIPELINE",
+                                text = "CONTINUOUS CELLULAR WATCHDOG",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 8.5.sp,
@@ -602,7 +602,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                         }
                         Spacer(modifier = Modifier.width(8.dp))
                         StatusBadge(
-                            text = if (isCallScreeningRoleHeld) "ACTIVE // ARMED" else "ROLE NEEDED",
+                            text = if (isCallScreeningRoleHeld) "ACTIVE" else "ROLE NEEDED",
                             color = if (isCallScreeningRoleHeld) StatusOnline else StatusWarning
                         )
                     }
@@ -688,7 +688,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                                     } else {
                                                         viewModel.forceArmCallScreening(true)
                                                         isRequestingRole = false
-                                                        screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED // HYPEROS DEFENSE ACTIVE"
+                                                        screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED"
                                                     }
                                                 } else {
                                                     viewModel.forceArmCallScreening(true)
@@ -698,7 +698,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                             } catch (e: Exception) {
                                                 viewModel.forceArmCallScreening(true)
                                                 isRequestingRole = false
-                                                screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED // HYPEROS DEFENSE ACTIVE"
+                                                screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED"
                                             }
                                         },
                                         colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
@@ -737,7 +737,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                     OutlinedButton(
                                         onClick = {
                                             viewModel.forceArmCallScreening(true)
-                                            screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED // ZERO-DEFECT ENGINE ARMED"
+                                            screeningFeedbackMessage = "DIRECT TELECOM HOOK ENGAGED"
                                         },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = StatusOnline),
                                         border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.8f)),
@@ -773,7 +773,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                 Box(modifier = Modifier.size(6.dp).clip(CircleShape).background(StatusOnline))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    "TELECOM HOOK ARMED // 5-SEC LOCAL-FIRST ENGINE READY",
+                                    "TELECOM HOOK ARMED",
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 8.5.sp,
@@ -790,7 +790,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                 Button(
                                     onClick = {
                                         viewModel.simulateTestScreenedCall()
-                                        screeningFeedbackMessage = "SIMULATION LOGGED // THREAT CLASSIFIED (<38ms)"
+                                        screeningFeedbackMessage = "SIMULATION LOGGED"
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
                                     shape = CutCornerShape(4.dp),
@@ -1112,7 +1112,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                     ) {
                         StatusRow(
                             "SMS WATCHDOG",
-                            if (isSmsArmed) "ARMED // BACKGROUND ACTIVE" else "DISARMED",
+                            if (isSmsArmed) "ARMED" else "DISARMED",
                             if (isSmsArmed) StatusOnline else StatusWarning
                         )
                         StatusRow(
@@ -1221,7 +1221,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
 
                         Column {
                             Text(
-                                text = if (isSmsArmed) "BACKGROUND SMS DAEMON: ACTIVE // LISTENING" else "BACKGROUND SMS DAEMON: STANDBY",
+                                text = if (isSmsArmed) "BACKGROUND SMS DAEMON: ACTIVE" else "BACKGROUND SMS DAEMON: STANDBY",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold,

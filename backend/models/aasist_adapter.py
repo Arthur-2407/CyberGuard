@@ -118,10 +118,11 @@ class AASISTDetector:
         with torch.no_grad():
             _, output = self._model(tensor)
             # Clova AI AASIST specification:
-            # Class index 0 = bonafide (authentic human speech)
-            # Class index 1 = spoof (AI-synthesized / cloned speech)
+            # Class index 0 = spoof (AI-synthesized / cloned speech)
+            # Class index 1 = bonafide (authentic human speech)
             probs = torch.softmax(output, dim=-1)
-            spoof_prob = float(probs[0, 1].cpu().item())
+            spoof_prob = float(probs[0, 0].cpu().item())
+            del tensor, output, probs
 
         return float(np.clip(spoof_prob, 0.0, 1.0))
 

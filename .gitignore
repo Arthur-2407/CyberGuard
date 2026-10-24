@@ -9,6 +9,7 @@
 .env.*
 *.env
 !.env.example
+!.env.docker.example
 .admin_bootstrap_credentials
 *.admin_bootstrap_credentials
 local.properties
@@ -82,6 +83,10 @@ test_out.mp3
 # ------------------------------------------------------------------------------
 backend/models/weights/*
 !backend/models/weights/.gitkeep
+!backend/models/weights/detector.pt
+!backend/models/weights/detector_manifest.json
+!backend/models/weights/aasist/
+!backend/models/weights/aasist/AASIST.pth
 
 # Machine Learning weights & checkpoints
 *.pt
@@ -93,6 +98,11 @@ backend/models/weights/*
 *.tflite
 *.h5
 *.gguf
+
+# Production baseline detector model weights & manifest
+!backend/models/weights/detector.pt
+!backend/models/weights/detector_manifest.json
+!backend/models/weights/aasist/AASIST.pth
 
 # ------------------------------------------------------------------------------
 # 5. Python Builds, Caches & Virtual Environments

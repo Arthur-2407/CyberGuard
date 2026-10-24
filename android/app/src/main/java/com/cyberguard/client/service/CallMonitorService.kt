@@ -281,17 +281,23 @@ class CallMonitorService : Service() {
     private fun startMonitoring() {
         val detectedUrl = repository.connectionManager.serverUrl.value ?: run {
             val prefs = applicationContext.getSharedPreferences("cyberguard_prefs", Context.MODE_PRIVATE)
-            val lastHost = prefs.getString("last_host_ip", null)
-            val lastPort = prefs.getInt("last_host_port", 3000)
-            if (!lastHost.isNullOrBlank()) {
-                repository.connectionManager.connectManually(lastHost, lastPort)
-                "http://$lastHost:$lastPort/"
+            val savedUrl = prefs.getString("server_url", null)
+            if (!savedUrl.isNullOrBlank()) {
+                repository.connectionManager.connectManually(savedUrl, 3000)
+                savedUrl
             } else {
-                val gateway = repository.connectionManager.getDetectedGatewayOrHostIp()
-                if (!gateway.isNullOrBlank()) {
-                    repository.connectionManager.connectManually(gateway, 3000)
-                    "http://$gateway:3000/"
-                } else null
+                val lastHost = prefs.getString("last_host_ip", null)
+                val lastPort = prefs.getInt("last_host_port", 3000)
+                if (!lastHost.isNullOrBlank()) {
+                    repository.connectionManager.connectManually(lastHost, lastPort)
+                    repository.connectionManager.formatEndpointUrl(lastHost, lastPort)
+                } else {
+                    val gateway = repository.connectionManager.getDetectedGatewayOrHostIp()
+                    if (!gateway.isNullOrBlank()) {
+                        repository.connectionManager.connectManually(gateway, 3000)
+                        "http://$gateway:3000/"
+                    } else null
+                }
             }
         }
 
@@ -302,7 +308,7 @@ class CallMonitorService : Service() {
                     monitorState = MonitorState.ANALYZING,
                     diagnosticReason = null
                 ) }
-                updateStatusNotification("CyberGuard Defense Matrix Active // Telecommunications Armed")
+                updateStatusNotification("CyberGuard Defense Matrix Active")
                 
                 // Configure audio mode for duplex in-call audio capture
                 try {
@@ -780,7 +786,7 @@ class CallMonitorService : Service() {
                 sensitivePermissions = emptyList(),
                 threatCategory = "IN_FLIGHT_SIDELOAD_INTERCEPT",
                 virusScanResult = "ACTIVE_INSTALLATION_INTERCEPTED",
-                playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT // BYPASSED STORE SIGNING",
+                playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT",
                 aiAutonomousRecommendation = "Forced quarantine active. Installation paused. User authorization required to proceed or purge threat.",
                 sessionId = sessionId,
                 isPreInstall = true,
@@ -802,7 +808,7 @@ class CallMonitorService : Service() {
                 putExtra("threat_details", threatDetails)
                 putExtra("threat_category", "IN_FLIGHT_SIDELOAD_INTERCEPT")
                 putExtra("virus_scan_result", "ACTIVE_INSTALLATION_INTERCEPTED")
-                putExtra("play_protect_status", "NOT VERIFIED BY GOOGLE PLAY PROTECT // BYPASSED STORE SIGNING")
+                putExtra("play_protect_status", "NOT VERIFIED BY GOOGLE PLAY PROTECT")
                 putExtra("ai_recommendation", "Forced quarantine active. Installation paused. User authorization required to proceed or purge threat.")
                 putExtra("session_id", sessionId)
                 putExtra("is_pre_install", true)
@@ -953,8 +959,8 @@ class CallMonitorService : Service() {
                 detectedThreatDetails = threatDetails,
                 sensitivePermissions = sensitivePermissions,
                 threatCategory = "UNOFFICIAL_SIDELOAD_MALWARE",
-                virusScanResult = "HIGH_ENTROPY_EXECUTABLE // OBFUSCATED_DEX_SUSPECTED",
-                playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT // BYPASSED STORE SIGNING",
+                virusScanResult = "HIGH_ENTROPY_EXECUTABLE",
+                playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT",
                 aiAutonomousRecommendation = "Forced quarantine active. Installation temporarily frozen. Choose to delete/uninstall or authorize installation.",
                 apkPath = detectedApkPath
             )
@@ -975,8 +981,8 @@ class CallMonitorService : Service() {
                 putExtra("threat_details", threatDetails)
                 putStringArrayListExtra("sensitive_permissions", ArrayList(sensitivePermissions))
                 putExtra("threat_category", "UNOFFICIAL_SIDELOAD_MALWARE")
-                putExtra("virus_scan_result", "HIGH_ENTROPY_EXECUTABLE // OBFUSCATED_DEX_SUSPECTED")
-                putExtra("play_protect_status", "NOT VERIFIED BY GOOGLE PLAY PROTECT // BYPASSED STORE SIGNING")
+                putExtra("virus_scan_result", "HIGH_ENTROPY_EXECUTABLE")
+                putExtra("play_protect_status", "NOT VERIFIED BY GOOGLE PLAY PROTECT")
                 putExtra("ai_recommendation", "Forced quarantine active. Installation temporarily frozen. Choose to delete/uninstall or authorize installation.")
                 if (detectedApkPath != null) {
                     putExtra("apk_path", detectedApkPath)

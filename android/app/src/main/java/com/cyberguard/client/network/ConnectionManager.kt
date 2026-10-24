@@ -34,6 +34,39 @@ enum class ConnectionState {
 }
 
 class ConnectionManager(private val context: Context) {
+    companion object {
+        const val DEFAULT_CLOUD_BACKEND_URL = "https://cyber-guard-backend-ashen.vercel.app"
+        val CLOUD_BACKEND_FALLBACKS = listOf(
+            "https://cyber-guard-backend-ashen.vercel.app",
+            "https://cyber-guard-backend-j3bo9l8hm-arthur-03fc.vercel.app",
+            "https://arthur-2407.github.io/CyberGuard"
+        )
+
+        fun isCloudUrl(hostOrUrl: String): Boolean {
+            val trimmed = hostOrUrl.trim().lowercase()
+            return trimmed.startsWith("https://") ||
+                    trimmed.contains(".vercel.app") ||
+                    trimmed.contains(".pages.dev") ||
+                    trimmed.contains(".github.io") ||
+                    trimmed.contains(".render.com")
+        }
+
+        fun formatEndpointUrl(hostOrUrl: String, port: Int = 3000): String {
+            val trimmed = hostOrUrl.trim()
+            return when {
+                trimmed.startsWith("http://") || trimmed.startsWith("https://") -> {
+                    if (trimmed.endsWith("/")) trimmed else "$trimmed/"
+                }
+                isCloudUrl(trimmed) || port == 443 -> {
+                    "https://$trimmed/"
+                }
+                else -> {
+                    "http://$trimmed:$port/"
+                }
+            }
+        }
+    }
+
     private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
     val connectionState: StateFlow<ConnectionState> = _connectionState
 
@@ -187,20 +220,44 @@ class ConnectionManager(private val context: Context) {
     val isConnected: Boolean 
         get() = _connectionState.value == ConnectionState.CONNECTED && api != null
 
-    private fun quickCheckEndpoint(host: String, port: Int): Boolean {
+    fun isCloudUrl(hostOrUrl: String): Boolean = Companion.isCloudUrl(hostOrUrl)
+
+    fun formatEndpointUrl(hostOrUrl: String, port: Int = 3000): String = Companion.formatEndpointUrl(hostOrUrl, port)
+
+    private fun checkHttp(urlString: String, timeoutMs: Int): Boolean {
+        var conn: HttpURLConnection? = null
         return try {
-            val url = URL("http://$host:$port/health")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 1800
-            conn.readTimeout = 1800
+            val url = URL(urlString)
+            conn = url.openConnection() as HttpURLConnection
+            conn.instanceFollowRedirects = true
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
             conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "CyberGuard-Android/1.0")
+            conn.setRequestProperty("Accept", "application/json, text/html, */*")
             conn.connect()
             val code = conn.responseCode
-            conn.disconnect()
-            code == 200
+            code in 200..299 || code in 300..399
         } catch (e: Exception) {
             false
+        } finally {
+            try { conn?.disconnect() } catch (ignored: Exception) {}
         }
+    }
+
+    private fun quickCheckEndpoint(hostOrUrl: String, port: Int = 3000, timeoutMs: Int = 1200): Boolean {
+        val base = formatEndpointUrl(hostOrUrl, port)
+        val isCloud = isCloudUrl(base)
+
+        // Check primary /health path
+        if (checkHttp("${base}health", timeoutMs)) return true
+
+        // For cloud endpoints, also check health.json and root URL
+        if (isCloud) {
+            if (checkHttp("${base}health.json", timeoutMs)) return true
+            if (checkHttp(base, timeoutMs)) return true
+        }
+        return false
     }
 
     fun startDiscovery() {
@@ -230,87 +287,99 @@ class ConnectionManager(private val context: Context) {
         _connectionState.value = ConnectionState.DISCOVERING
         isResolving = false
 
-        // Timeout mechanism: 12 seconds with progressive status updates
+        // Timeout mechanism: 10s safety net that automatically triggers cloud backend fallback
         discoveryJob?.cancel()
         discoveryJob = CoroutineScope(Dispatchers.Main).launch {
-            delay(12000)
+            delay(10000)
             if (_connectionState.value == ConnectionState.DISCOVERING) {
-                Log.e("ConnectionManager", "Discovery timed out")
-                _connectionState.value = ConnectionState.DISCOVERY_TIMEOUT
-                stopDiscovery()
+                Log.i("ConnectionManager", "Discovery timeout reached. Auto-switching to cloud defense node...")
+                discoveryStatus.value = "AUTO-SWITCHING TO CLOUD NODE..."
+                connectToDeployedBackend()
             }
         }
 
-        // Parallel Subnet & Gateway Fast-Probe
+        // Stage 1 & 2: Autonomous Local Host Probe -> Cloud Failover
         subnetProbeJob?.cancel()
         subnetProbeJob = CoroutineScope(Dispatchers.IO).launch {
-            // Priority 1: Check last successfully connected host
+            discoveryStatus.value = "PROBING AUTO-DETECTED HOST CANDIDATE..."
+
+            val localCandidates = mutableListOf<String>()
+
+            // 1. Hotspot peers from ARP table
+            val hotspotClients = getHotspotClientIps()
+            localCandidates.addAll(hotspotClients)
+
+            // 2. Gateway IP (PC hotspot or router)
+            val gw = getDetectedGatewayOrHostIp()
+            if (!gw.isNullOrBlank() && !localCandidates.contains(gw)) {
+                localCandidates.add(gw)
+            }
+
+            // 3. Last known local host from prefs
             val prefs = context.getSharedPreferences("cyberguard_prefs", Context.MODE_PRIVATE)
             val lastHost = prefs.getString("last_host_ip", null)
-            val lastPort = prefs.getInt("last_host_port", 3000)
-            if (!lastHost.isNullOrBlank()) {
-                discoveryStatus.value = "PROBING LAST KNOWN NODE: $lastHost:$lastPort..."
-                if (quickCheckEndpoint(lastHost, lastPort)) {
-                    withContext(Dispatchers.Main) {
-                        if (_connectionState.value == ConnectionState.DISCOVERING) {
-                            _connectionState.value = ConnectionState.NODE_FOUND
-                            connectToServer(lastHost, lastPort)
-                        }
-                    }
-                    return@launch
+            if (!lastHost.isNullOrBlank() && !isCloudUrl(lastHost) && !localCandidates.contains(lastHost)) {
+                localCandidates.add(0, lastHost)
+            }
+
+            // 4. Android emulator candidate
+            if (!localCandidates.contains("10.0.2.2")) {
+                localCandidates.add("10.0.2.2")
+            }
+
+            var localFound: String? = null
+            for (candidate in localCandidates) {
+                if (_connectionState.value != ConnectionState.DISCOVERING) return@launch
+                discoveryStatus.value = "CHECKING CANDIDATE $candidate:3000..."
+                if (quickCheckEndpoint(candidate, 3000, timeoutMs = 1200)) {
+                    localFound = candidate
+                    break
                 }
             }
 
-            // Priority 2: Check emulator / loopback hosts if in dev or simulator
-            val emuCandidates = listOf("10.0.2.2", "127.0.0.1")
-            for (emu in emuCandidates) {
-                if (emu != lastHost && quickCheckEndpoint(emu, 3000)) {
-                    withContext(Dispatchers.Main) {
-                        if (_connectionState.value == ConnectionState.DISCOVERING) {
-                            _connectionState.value = ConnectionState.NODE_FOUND
-                            connectToServer(emu, 3000)
-                        }
-                    }
-                    return@launch
-                }
-            }
-
-            // Priority 3: Check default gateway IP (e.g. 192.168.137.1)
-            val gw = getDetectedGatewayOrHostIp()
-            if (!gw.isNullOrBlank() && gw != lastHost && !emuCandidates.contains(gw)) {
-                discoveryStatus.value = "PROBING GATEWAY HOST: $gw:3000..."
-                if (quickCheckEndpoint(gw, 3000)) {
-                    withContext(Dispatchers.Main) {
-                        if (_connectionState.value == ConnectionState.DISCOVERING) {
-                            _connectionState.value = ConnectionState.NODE_FOUND
-                            connectToServer(gw, 3000)
-                        }
-                    }
-                    return@launch
-                }
-            }
-
-            // Priority 4: Probe local subnet priority host indices
-            val localIp = getLocalIpAddress()
-            if (!localIp.isNullOrBlank()) {
-                val prefix = localIp.substringBeforeLast(".")
-                discoveryStatus.value = "SCANNING SUBNET $prefix.0/24..."
-                val prioritySuffixes = listOf(1, 2, 3, 100, 101, 102, 103, 104, 105, 50, 254)
-                for (suffix in prioritySuffixes) {
-                    if (_connectionState.value != ConnectionState.DISCOVERING) return@launch
-                    val candidate = "$prefix.$suffix"
-                    if (candidate != localIp && quickCheckEndpoint(candidate, 3000)) {
-                        withContext(Dispatchers.Main) {
-                            if (_connectionState.value == ConnectionState.DISCOVERING) {
-                                _connectionState.value = ConnectionState.NODE_FOUND
-                                connectToServer(candidate, 3000)
+            // If direct candidates (gateway/last host) are unavailable, fast-probe subnet priority IPs in parallel
+            if (localFound == null && _connectionState.value == ConnectionState.DISCOVERING) {
+                val localIp = getLocalIpAddress()
+                if (!localIp.isNullOrBlank()) {
+                    val prefix = localIp.substringBeforeLast(".")
+                    if (prefix != "192.0.0" && prefix != "127.0.0") {
+                        val prioritySuffixes = listOf(2, 3, 100, 101, 102, 103, 141, 205, 50, 254)
+                        val subnetCandidates = prioritySuffixes.map { "$prefix.$it" }.filter { it != localIp && !localCandidates.contains(it) }
+                        
+                        discoveryStatus.value = "FAST-PROBING SUBNET $prefix.0/24..."
+                        val deferreds = subnetCandidates.map { ip ->
+                            async {
+                                if (quickCheckEndpoint(ip, 3000, timeoutMs = 800)) ip else null
                             }
                         }
-                        return@launch
+                        val foundOnSubnet = deferreds.awaitAll().filterNotNull().firstOrNull()
+                        if (foundOnSubnet != null) {
+                            localFound = foundOnSubnet
+                        }
                     }
                 }
             }
-            discoveryStatus.value = "AWAITING BROADCAST BEACON..."
+
+            if (localFound != null) {
+                Log.i("ConnectionManager", "Auto-detected host candidate verified: $localFound:3000")
+                withContext(Dispatchers.Main) {
+                    if (_connectionState.value == ConnectionState.DISCOVERING) {
+                        _connectionState.value = ConnectionState.NODE_FOUND
+                        discoveryStatus.value = "LOCAL HOST FOUND // CONNECTING..."
+                        connectToServer(localFound, 3000)
+                    }
+                }
+                return@launch
+            }
+
+            // Stage 2: Local candidates unavailable -> Auto-switch internally to Deployed Cloud Node!
+            Log.i("ConnectionManager", "No local candidate responding on port 3000. Auto-switching to Deployed Cloud Node...")
+            withContext(Dispatchers.Main) {
+                if (_connectionState.value == ConnectionState.DISCOVERING) {
+                    discoveryStatus.value = "LOCAL OFFLINE // AUTO-SWITCHING TO CLOUD NODE..."
+                    connectToDeployedBackend()
+                }
+            }
         }
 
         // Standard mDNS / DNS-SD Service Discovery
@@ -394,9 +463,14 @@ class ConnectionManager(private val context: Context) {
         }
     }
 
-    fun connectManually(host: String, port: Int) {
+    fun connectManually(hostOrUrl: String, port: Int = 3000) {
         stopDiscovery()
-        connectToServer(host, port)
+        connectToServer(hostOrUrl, port)
+    }
+
+    fun connectToDeployedBackend(url: String = DEFAULT_CLOUD_BACKEND_URL) {
+        stopDiscovery()
+        connectToServer(url, 443)
     }
 
     fun scanSubnetOnDemand(onFound: (String) -> Unit, onFinished: () -> Unit) {
@@ -453,26 +527,66 @@ class ConnectionManager(private val context: Context) {
         }
     }
 
-    private fun connectToServer(host: String, port: Int) {
+    fun connectToServer(hostOrUrl: String, port: Int = 3000) {
         if (_connectionState.value == ConnectionState.CONNECTED) return
         
         discoveryJob?.cancel()
         subnetProbeJob?.cancel()
         _connectionState.value = ConnectionState.VALIDATING
         
-        val url = "http://$host:$port/"
+        val url = formatEndpointUrl(hostOrUrl, port)
+        val isCloud = isCloudUrl(url)
         
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val httpUrl = URL("${url}health")
-                val connection = httpUrl.openConnection() as HttpURLConnection
-                connection.connectTimeout = 3000
-                connection.readTimeout = 3000
-                connection.requestMethod = "GET"
-                connection.connect()
-                
-                val responseCode = connection.responseCode
-                if (responseCode == 200) {
+                var isHealthy = false
+                var responseCode = 0
+
+                val executeHttpCheck: (String) -> Int = { targetUrl ->
+                    var conn: HttpURLConnection? = null
+                    try {
+                        val httpUrl = URL(targetUrl)
+                        conn = httpUrl.openConnection() as HttpURLConnection
+                        conn.instanceFollowRedirects = true
+                        conn.connectTimeout = 4000
+                        conn.readTimeout = 4000
+                        conn.requestMethod = "GET"
+                        conn.setRequestProperty("User-Agent", "CyberGuard-Android/1.0")
+                        conn.setRequestProperty("Accept", "application/json, text/html, */*")
+                        conn.connect()
+                        conn.responseCode
+                    } finally {
+                        try { conn?.disconnect() } catch (ignored: Exception) {}
+                    }
+                }
+
+                try {
+                    responseCode = executeHttpCheck("${url}health")
+                    if (responseCode in 200..299) {
+                        isHealthy = true
+                    }
+                } catch (e: Exception) {
+                    if (!isCloud) throw e
+                }
+
+                // Cloud fallback check: health.json or root /
+                if (!isHealthy && isCloud) {
+                    try {
+                        val codeJson = executeHttpCheck("${url}health.json")
+                        if (codeJson in 200..299) {
+                            isHealthy = true
+                        } else {
+                            val codeRoot = executeHttpCheck(url)
+                            if (codeRoot in 200..299) {
+                                isHealthy = true
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ConnectionManager", "Cloud health probe fallback notice: ${e.message}")
+                    }
+                }
+
+                if (isHealthy) {
                     withContext(Dispatchers.Main) {
                         _serverUrl.value = url
                         val retrofit = Retrofit.Builder()
@@ -483,34 +597,74 @@ class ConnectionManager(private val context: Context) {
                         
                         api = retrofit.create(CyberGuardApi::class.java)
                         _connectionState.value = ConnectionState.CONNECTED
+                        discoveryStatus.value = if (isCloud) "CLOUD DEFENSE UPLINK SYNCHRONIZED" else "LOCAL WORKSTATION NODE CONNECTED"
                         
                         // Persist successful host in preferences for instant subsequent reconnects
                         val prefs = context.getSharedPreferences("cyberguard_prefs", Context.MODE_PRIVATE)
-                        prefs.edit().putString("last_host_ip", host).putInt("last_host_port", port).apply()
+                        prefs.edit()
+                            .putString("last_host_ip", hostOrUrl)
+                            .putInt("last_host_port", port)
+                            .putString("server_url", url)
+                            .apply()
 
                         stopDiscovery()
                     }
                 } else {
-                    withContext(Dispatchers.Main) {
-                        Log.e("ConnectionManager", "Health check failed with code $responseCode")
-                        _connectionState.value = ConnectionState.BACKEND_UNHEALTHY
+                    Log.e("ConnectionManager", "Health check failed with code $responseCode for $url")
+                    if (!isCloud) {
+                        // Local host candidate unhealthy -> auto switch internally to Deployed Cloud Node!
+                        Log.i("ConnectionManager", "Local host unhealthy ($responseCode). Auto-switching to deployed cloud node...")
+                        withContext(Dispatchers.Main) {
+                            discoveryStatus.value = "LOCAL NODE UNHEALTHY // AUTO-SWITCHING TO CLOUD NODE..."
+                        }
+                        connectToDeployedBackend()
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            _connectionState.value = ConnectionState.BACKEND_UNHEALTHY
+                        }
                     }
                 }
-                connection.disconnect()
             } catch (e: java.net.ConnectException) {
-                Log.e("ConnectionManager", "Backend unreachable (Connection Refused)", e)
-                withContext(Dispatchers.Main) {
-                    _connectionState.value = ConnectionState.BACKEND_UNREACHABLE
+                Log.e("ConnectionManager", "Backend unreachable (Connection Refused): ${e.message}")
+                if (!isCloud) {
+                    // Local host port 3000 refused -> auto switch internally to Deployed Cloud Node!
+                    Log.i("ConnectionManager", "Local host port 3000 refused. Auto-switching to deployed cloud node...")
+                    withContext(Dispatchers.Main) {
+                        discoveryStatus.value = "PORT 3000 CLOSED // AUTO-SWITCHING TO CLOUD NODE..."
+                    }
+                    connectToDeployedBackend()
+                } else {
+                    withContext(Dispatchers.Main) {
+                        _connectionState.value = ConnectionState.BACKEND_UNREACHABLE
+                    }
                 }
             } catch (e: java.net.SocketTimeoutException) {
-                Log.e("ConnectionManager", "Backend unreachable (Timeout)", e)
-                withContext(Dispatchers.Main) {
-                    _connectionState.value = ConnectionState.BACKEND_UNREACHABLE
+                Log.e("ConnectionManager", "Backend unreachable (Timeout): ${e.message}")
+                if (!isCloud) {
+                    // Local host timed out -> auto switch internally to Deployed Cloud Node!
+                    Log.i("ConnectionManager", "Local host timed out. Auto-switching to deployed cloud node...")
+                    withContext(Dispatchers.Main) {
+                        discoveryStatus.value = "LOCAL TIMEOUT // AUTO-SWITCHING TO CLOUD NODE..."
+                    }
+                    connectToDeployedBackend()
+                } else {
+                    withContext(Dispatchers.Main) {
+                        _connectionState.value = ConnectionState.BACKEND_UNREACHABLE
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("ConnectionManager", "Failed to connect to server", e)
-                withContext(Dispatchers.Main) {
-                    _connectionState.value = ConnectionState.ERROR
+                Log.e("ConnectionManager", "Failed to connect to server: ${e.message}", e)
+                if (!isCloud) {
+                    // Local host failed -> auto switch internally to Deployed Cloud Node!
+                    Log.i("ConnectionManager", "Local candidate error. Auto-switching to deployed cloud node...")
+                    withContext(Dispatchers.Main) {
+                        discoveryStatus.value = "LOCAL OFFLINE // AUTO-SWITCHING TO CLOUD NODE..."
+                    }
+                    connectToDeployedBackend()
+                } else {
+                    withContext(Dispatchers.Main) {
+                        _connectionState.value = ConnectionState.ERROR
+                    }
                 }
             }
         }

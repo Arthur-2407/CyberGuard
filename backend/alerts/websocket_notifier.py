@@ -85,7 +85,7 @@ class WebSocketNotifier:
         active_det = getattr(event, "active_detector", None)
         if not active_det:
             try:
-                from backend.ml.continuous_learning import ContinuousLearningService
+                from backend.services.continuous_learning import ContinuousLearningService
                 active_det = ContinuousLearningService.get_active_model_version()
             except Exception:
                 active_det = "v025"

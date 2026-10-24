@@ -812,7 +812,7 @@ fun DeviceSecurityScreen(@Suppress("UNUSED_PARAMETER") navController: NavControl
         // ACTIVE QUARANTINE SECTION (Dedicated card list if any quarantined apps exist)
         if (quarantinedApps.isNotEmpty()) {
             Spacer(modifier = Modifier.height(20.dp))
-            SectionHeader("ACTIVE QUARANTINE // SUSPECTED EXTERNAL APPS (${quarantinedApps.size})")
+            SectionHeader("ACTIVE QUARANTINE (${quarantinedApps.size})")
             Text(
                 text = "These applications were detected outside official store repositories and are quarantined to prevent unauthorized background execution. Conduct deep investigation via VirusTotal & URLhaus before authorizing.",
                 style = MaterialTheme.typography.bodySmall,

@@ -226,8 +226,8 @@ class ThreatInterceptActivity : ComponentActivity() {
             val details = targetIntent.getStringExtra("threat_details") ?: "Sideloaded from unverified external origin. Bypassed official store verification."
             val perms = targetIntent.getStringArrayListExtra("sensitive_permissions") ?: arrayListOf()
             val category = targetIntent.getStringExtra("threat_category") ?: "UNOFFICIAL_SIDELOAD_MALWARE"
-            val virusScan = targetIntent.getStringExtra("virus_scan_result") ?: "HIGH_ENTROPY_EXECUTABLE // OBFUSCATED_DEX_SUSPECTED"
-            val playProtect = targetIntent.getStringExtra("play_protect_status") ?: "NOT VERIFIED BY GOOGLE PLAY PROTECT // BYPASSED STORE SIGNING"
+            val virusScan = targetIntent.getStringExtra("virus_scan_result") ?: "HIGH_ENTROPY_EXECUTABLE"
+            val playProtect = targetIntent.getStringExtra("play_protect_status") ?: "NOT VERIFIED BY GOOGLE PLAY PROTECT"
             val aiRec = targetIntent.getStringExtra("ai_recommendation") ?: "Autonomous containment active. Immediate purge recommended to prevent device compromise."
 
             val sessionId = targetIntent.getIntExtra("session_id", -1)

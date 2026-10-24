@@ -1,0 +1,25 @@
+{
+  "model_name": "CyberGuard EnsembleDetector",
+  "version": "v032",
+  "architecture": "EnsembleDetector (Dual-modality CNN-BiLSTM + Gated Multi-Modal Fusion)",
+  "checkpoint_path": "backend/models/weights/detector.pt",
+  "checkpoint_size_bytes": 35804770,
+  "sha256": "1f4df2e4b790d692eb6d38709c2d21b48176cc1dc379bb2088678a020473e91c",
+  "parameters": 8941976,
+  "parent_version": "v031",
+  "training_run_id": "RUN_1792519026",
+  "validation_metrics": {
+    "validation_samples": 115,
+    "accuracy": 0.7913,
+    "precision": 0.7571,
+    "recall": 0.8833,
+    "f1": 0.8154,
+    "eer": 0.2087,
+    "operating_threshold": 0.5
+  },
+  "promoted_at": "2026-10-20T17:57:19.239283+00:00",
+  "promoted_by": "admin",
+  "last_adapted_at": "2026-10-23T17:37:59Z",
+  "total_manual_adaptations": 40,
+  "last_manual_label": "HUMAN"
+}

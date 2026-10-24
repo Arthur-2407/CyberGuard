@@ -253,12 +253,13 @@ if _TORCH_AVAILABLE:
             Returns:
                 [batch, 1] ensemble P(synthetic) before sigmoid
             """
-            logit_seq = self.seq_detector(mel_seq)      # [batch, 1]
+            logit_seq = self.seq_detector(mel_seq)       # [batch, 1]
 
-            # If fused vector has no dense embeddings (wav2vec2 is zero-padded for fast inference),
+            # If fused vector has no dense embeddings and no acoustic features,
             # safely rely on seq_detector (trained with direct multi-task supervision to prevent collapse).
             has_dense_embeddings = bool(fused_vec.shape[-1] >= 975 and (fused_vec[:, 207:975].abs().sum() > 1e-4))
-            if not has_dense_embeddings:
+            has_acoustic_features = bool(fused_vec.shape[-1] >= 207 and (fused_vec[:, :207].abs().sum() > 1e-4))
+            if not has_dense_embeddings and not has_acoustic_features:
                 return logit_seq
 
             logit_fused = self.fused_detector(fused_vec) # [batch, 1]

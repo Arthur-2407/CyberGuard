@@ -13,7 +13,7 @@
     href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap"
     rel="stylesheet" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <link rel="stylesheet" href="/static/styles.css?v=4.2" />
+  <link rel="stylesheet" href="./styles.css?v=4.8" />
 </head>
 
 <body>
@@ -23,19 +23,12 @@
   <!-- Top SOC Command Center Navigation Bar -->
   <nav class="navbar" id="navbar">
     <div class="nav-brand">
-      <div class="nav-logo" role="banner">
-        <svg width="26" height="26" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <circle cx="14" cy="14" r="12" stroke="url(#logoGrad)" stroke-width="2" />
-          <path d="M9 14 Q14 8 19 14 Q14 20 9 14Z" fill="url(#logoGrad)" opacity="0.85" />
-          <circle cx="14" cy="14" r="3.2" fill="url(#logoGrad)" />
-          <defs>
-            <linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" style="stop-color:#06b6d4" />
-              <stop offset="100%" style="stop-color:#0284c7" />
-            </linearGradient>
-          </defs>
-        </svg>
-        <span class="brand-name">CyberGuard</span>
+      <div class="nav-logo" role="banner" id="nav-brand-logo" onclick="showTab('overview')" title="CyberGuard SOC AI">
+        <div class="brand-logo-wrap" id="brand-logo-interactive">
+          <img src="/logo_full.png" alt="CyberGuard Logo" class="brand-logo-img" id="brand-logo-img" />
+          <div class="brand-logo-scanline" aria-hidden="true"></div>
+          <div class="brand-logo-glow" aria-hidden="true"></div>
+        </div>
         <span class="brand-badge">SOC AI</span>
       </div>
     </div>
@@ -124,7 +117,7 @@
           <span id="nav-engine-text">CHECKING ENGINES...</span>
         </button>
         <button class="sound-toggle-btn" id="sound-toggle-btn" onclick="toggleSound()">
-          🔇 SOUND OFF
+          SOUND OFF
         </button>
         <div class="status-indicator" id="system-status">
           <div class="status-dot offline"></div>
@@ -201,7 +194,7 @@
               <div class="defcon-tactical-matrix autonomous-defcon-matrix" id="overview-defcon-matrix" onclick="handleDefconMatrixClick()" title="Autonomous AI Defense Posture — Real-time telemetry driven (Medium+ threats today)">
                 <div class="defcon-matrix-header">
                   <span class="defcon-label">DEFCON:</span>
-                  <span class="defcon-auto-indicator" id="defcon-auto-indicator" title="Autonomous Defense Level is dynamically calculated from today's Medium+ threats and cannot be manipulated">⚡ AUTO</span>
+                  <span class="defcon-auto-indicator" id="defcon-auto-indicator" title="Autonomous Defense Level is dynamically calculated from today's Medium+ threats and cannot be manipulated">AUTO</span>
                 </div>
                 <div class="defcon-pills-wrap" id="defcon-pills-wrap">
                   <div class="defcon-pill defcon-5" data-level="5" title="DEFCON 5: Baseline Monitoring (0 Medium+ threats today)">5</div>
@@ -213,15 +206,15 @@
 
                 <!-- Interactive Holographic Telemetry Tooltip for DEFCON -->
                 <div class="defcon-autonomous-hud" id="defcon-autonomous-hud">
-                  <div class="defcon-hud-title">⚡ AUTONOMOUS THREAT ARBITRATION</div>
+                  <div class="defcon-hud-title">AUTONOMOUS THREAT ARBITRATION</div>
                   <div class="defcon-hud-status" id="defcon-hud-status">DEFCON 2 · HIGH ALERT DEFENSE</div>
                   <div class="defcon-hud-metrics" id="defcon-hud-metrics">Scanning today's telemetry (Medium+ severity only)...</div>
-                  <div class="defcon-hud-lock">🔒 SYSTEM LOCKED · DAILY MEDIUM+ THREAT DRIVEN</div>
+                  <div class="defcon-hud-lock">SYSTEM LOCKED · DAILY MEDIUM+ THREAT DRIVEN</div>
                 </div>
               </div>
 
               <!-- Emergency Threat Containment Quick-Trigger -->
-              <button class="btn btn-emergency-containment" onclick="triggerEmergencyThreatContainment()" title="Dispatch automated quarantine to isolate active critical indicators">
+              <button class="btn btn-emergency-containment" onclick="triggerEmergencyThreatContainment()" title="Dispatch automated quarantine to isolate active critical indicators" data-text="EMERGENCY CONTAINMENT">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                 EMERGENCY CONTAINMENT
               </button>
@@ -234,7 +227,7 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
                 System Health
               </button>
-              <button class="btn btn-primary btn-xs" onclick="showTab('security-center')" title="Open Security Center Console">
+              <button class="btn btn-primary btn-xs" onclick="showTab('security-center')" title="Open Security Center Console" data-text="Security Center →">
                 Security Center →
               </button>
             </div>
@@ -330,7 +323,7 @@
         <!-- Tactical Drilldown Filter Banner -->
         <div id="overview-active-drilldown-banner" class="overview-drilldown-banner" style="display:none;">
           <div style="display:flex; align-items:center; gap:8px;">
-            <span style="color:#00d4ff; font-size:13px;">⚡</span>
+            
             <span>TACTICAL DRILLDOWN ACTIVE: <strong id="overview-drilldown-label">CATEGORY [ALL]</strong></span>
           </div>
           <button class="btn btn-secondary btn-xs" onclick="clearOverviewDrilldown()" title="Reset active drilldown filter">Clear Filter ✕</button>
@@ -680,7 +673,7 @@
                 </svg>
               </div>
             </div>
-            <div class="defcon-pill" id="defcon-status">
+            <div class="defcon-status-badge" id="defcon-status">
               <span class="review-live-dot" style="background:#10b981; box-shadow:0 0 8px #10b981;"></span>
               DEFCON 5: NORMAL DEFENSE
             </div>
@@ -720,14 +713,14 @@
             </div>
 
             <div class="session-buttons">
-              <button class="btn btn-primary btn-lg" id="start-live-btn" onclick="startLiveSession()">
+              <button class="btn btn-primary btn-lg" id="start-live-btn" onclick="startLiveSession()" data-text="Start Live Analysis">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="10" />
                   <circle cx="12" cy="12" r="3" fill="currentColor" />
                 </svg>
                 Start Live Analysis
               </button>
-              <button class="btn btn-danger btn-lg hidden" id="stop-live-btn" onclick="stopLiveSession()">
+              <button class="btn btn-danger btn-lg hidden" id="stop-live-btn" onclick="stopLiveSession()" data-text="Stop Session">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                   <rect x="4" y="4" width="16" height="16" rx="2" />
                 </svg>
@@ -895,10 +888,10 @@
                 </div>
                 <!-- Live Ingested Signal Telemetry Chips -->
                 <div class="analyze-payload-meta" id="analyze-payload-meta">
-                  <span class="va-meta-chip" id="va-meta-dur">⏱ Standby</span>
-                  <span class="va-meta-chip" id="va-meta-rate">🎚 16 kHz</span>
-                  <span class="va-meta-chip" id="va-meta-chn">🎙 Mono PCM</span>
-                  <span class="va-meta-chip" id="va-meta-vad">⚡ WebRTC VAD</span>
+                  <span class="va-meta-chip" id="va-meta-dur">Standby</span>
+                  <span class="va-meta-chip" id="va-meta-rate">16 kHz</span>
+                  <span class="va-meta-chip" id="va-meta-chn">Mono PCM</span>
+                  <span class="va-meta-chip" id="va-meta-vad">WebRTC VAD</span>
                 </div>
               </div>
             </div>
@@ -910,7 +903,7 @@
               </select>
             </div>
 
-            <button class="btn btn-primary btn-full" id="analyze-btn" onclick="analyzeFile()" disabled>
+            <button class="btn btn-primary btn-full" id="analyze-btn" onclick="analyzeFile()" disabled data-text="Analyze Audio">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="11" cy="11" r="8" />
                 <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -944,7 +937,7 @@
                   </svg>
                 </div>
                 <div style="font-weight:700; color:#f8fafc; font-family:var(--font-mono); font-size:12px; letter-spacing:0.06em; margin-bottom:4px;">
-                  ACOUSTIC SENSORS ONLINE // STANDBY FOR INGESTION
+                  ACOUSTIC SENSORS ONLINE
                 </div>
                 <div style="font-size:11px; color:#64748b; max-width:400px; line-height:1.5;">
                   Drop an audio or video payload on the left to activate the 5-stage neural pipeline: VAD stripping, 1920-dim ECAPA embedding, and forensic deepfake risk assessment.
@@ -965,7 +958,7 @@
       <div class="threat-command-hud">
         <div class="threat-hud-title">
           <span class="threat-pulse-beacon"></span>
-          <span>THREAT DEFENSE MATRIX // SECTOR 04</span>
+          <span>THREAT DEFENSE MATRIX</span>
         </div>
         <div class="threat-hud-chips">
           <div class="threat-hud-chip active" title="NLP & Urgency Transformer Active">
@@ -1060,8 +1053,8 @@
             <label class="form-label" for="image-forensic-input">Upload Image for Forensic Inspection</label>
             <div class="threat-preset-chips" style="margin-bottom:6px; flex-wrap:wrap;">
               <span class="threat-preset-label">Quick Test:</span>
-              <span class="threat-chip" onclick="simulateForensicImage('authentic')" title="Simulate authentic optical camera capture with sensor noise and EXIF hardware tags">📸 Authentic Photo</span>
-              <span class="threat-chip" onclick="simulateForensicImage('synthetic')" title="Simulate generative AI diffusion with high-frequency harmonic lattice artifacts">🤖 Diffusion Deepfake</span>
+              <span class="threat-chip" onclick="simulateForensicImage('authentic')" title="Simulate authentic optical camera capture with sensor noise and EXIF hardware tags">Authentic Photo</span>
+              <span class="threat-chip" onclick="simulateForensicImage('synthetic')" title="Simulate generative AI diffusion with high-frequency harmonic lattice artifacts">Diffusion Deepfake</span>
               <span class="threat-preset-label" style="margin-left:4px;">Modes:</span>
               <span class="threat-chip" onclick="toggleForensicModeHighlight('exif')">EXIF Provenance</span>
               <span class="threat-chip" onclick="toggleForensicModeHighlight('fft')">FFT Spectral</span>
@@ -1077,7 +1070,7 @@
               Extracts high-frequency spectral artifacts, edge variance discontinuities, and EXIF software signatures.
             </div>
           </div>
-          <button class="btn btn-primary btn-full" id="btn-scan-image" onclick="scanImageForensics()">
+          <button class="btn btn-primary btn-full" id="btn-scan-image" onclick="scanImageForensics()" data-text="Analyze Image Forensics">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right:6px;"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             Analyze Image Forensics
           </button>
@@ -1096,7 +1089,7 @@
             <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
               <div class="session-badge vt-enclave" id="threat-enclave-badge" title="Threat intelligence APIs are isolated exclusively to the Phishing &amp; URL tab to conserve API quota and tokens. Click to view metrics." onclick="showEnclaveMetricsModal()" style="cursor:pointer;">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2.2" style="display:inline-block; vertical-align:middle; margin-right:3px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                ENCLAVE: ISOLATED // SAVED: <span id="enclave-tokens-saved-val">0</span>
+                ENCLAVE: ISOLATED <span style="opacity:0.8; margin-left:4px;">(SAVED: <span id="enclave-tokens-saved-val">0</span>)</span>
               </div>
               <div class="session-badge vt-connecting" id="vt-status" title="VirusTotal Threat Intelligence (Click to refresh)" onclick="refreshVirusTotalStatus(true)" style="cursor:pointer;">VirusTotal: Connecting...</div>
               <div class="session-badge vt-connecting" id="uh-status" title="URLhaus Malware Intelligence (Click to refresh)" onclick="refreshURLhausStatus(true)" style="cursor:pointer;">URLhaus: Connecting...</div>
@@ -1106,14 +1099,7 @@
 
           <div class="form-group">
             <div style="display:flex; justify-content:space-between; align-items:center;">
-              <label class="form-label" for="ioc-input" style="margin-bottom:0;">Indicator of Compromise (IOC)</label>
-            </div>
-            <div class="threat-preset-chips" style="margin-bottom:6px;">
-              <span class="threat-preset-label">Quick Test:</span>
-              <span class="threat-chip" onclick="fillPresetIOC('http://182.184.61.121:47825/bin.sh')">Mozi Botnet URL</span>
-              <span class="threat-chip" onclick="fillPresetIOC('ed01ebf83334a17fe1880b73db81148b8c3132b86b389f31804977f6e3d7727f')">WannaCry SHA256</span>
-              <span class="threat-chip" onclick="fillPresetIOC('182.184.61.121')">Host IP</span>
-              <span class="threat-chip" onclick="fillPresetIOC('secure-login-account-update.com')">Phish Domain</span>
+              <label class="form-label" for="ioc-input" style="margin-bottom:6px;">Indicator of Compromise (IOC)</label>
             </div>
             <input class="form-input" id="ioc-input" style="font-family:'JetBrains Mono', monospace;" placeholder="SHA-256 Hash, URL, Domain, or IP address..."
               oninput="updateIOCTypeBadges(this.value)"
@@ -1147,7 +1133,7 @@
               Threat Intelligence &amp; Forensic Analysis Results
             </h2>
             <button class="btn btn-xs btn-secondary" id="btn-threat-llm-analyze" onclick="openLLMCopilotWithCurrentThreat()" style="display:none; border-color:rgba(6,182,212,0.4); color:#38bdf8;">
-              ⚡ Deep LLM Threat Analysis
+              Deep LLM Threat Analysis
             </button>
           </div>
           <div class="results-body" id="threat-results-body">
@@ -1164,7 +1150,7 @@
                 </svg>
               </div>
               <div style="font-weight:700; color:#f8fafc; font-family:var(--font-mono); font-size:12px; letter-spacing:0.06em; margin-bottom:4px;">
-                GLOBAL THREAT RADAR ACTIVE // AWAITING TARGET
+                GLOBAL THREAT RADAR ACTIVE
               </div>
               <div style="font-size:11px; color:#64748b; max-width:440px; line-height:1.5;">
                 Submit an Indicator of Compromise (IOC), URL, email message, QR code, or visual image above to execute synchronized VirusTotal, URLhaus, and Deepfake heuristics.
@@ -1244,7 +1230,7 @@
             <div id="enroll-file-count" class="file-count-badge hidden"></div>
           </div>
 
-          <button class="btn btn-primary btn-full" id="enroll-btn" onclick="enrollSpeaker()" disabled>
+          <button class="btn btn-primary btn-full" id="enroll-btn" onclick="enrollSpeaker()" disabled data-text="Enroll Speaker Profile">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
               <line x1="12" y1="3" x2="12" y2="9" />
@@ -1281,7 +1267,7 @@
                 </svg>
               </div>
               <div style="font-weight:700; color:#f8fafc; font-family:var(--font-mono); font-size:12px; letter-spacing:0.06em; margin-bottom:4px;">
-                BIOMETRIC IDENTITY REGISTRY // STANDBY
+                BIOMETRIC IDENTITY REGISTRY
               </div>
               <div style="font-size:11px; color:#64748b; max-width:380px; line-height:1.5;">
                 No speaker profiles enrolled yet. Upload verified reference audio samples on the left to establish a 1920-dim ECAPA-TDNN biometric centroid for live voice verification.
@@ -1316,7 +1302,7 @@
             <div>
               <div class="sc-eyebrow">
                 <span class="cyber-shield-badge">CYBER DEFENSE MATRIX</span>
-                <span>// SOC COMMAND CORE</span>
+                <span>SOC COMMAND CORE</span>
               </div>
               <h1 class="card-title sc-hero-title">
                 SECURITY CENTER CONSOLE
@@ -1334,9 +1320,9 @@
                 Export Report
               </button>
               <button class="btn btn-secondary btn-xs sc-action-btn" id="sc-thresh-toggle-btn" onclick="toggleThresholdPanel()">
-                ⚙ Alert Thresholds
+                Alert Thresholds
               </button>
-              <button class="btn btn-primary btn-xs sc-action-btn" onclick="loadSecurityCenterData()">
+              <button class="btn btn-primary btn-xs sc-action-btn" onclick="loadSecurityCenterData()" data-text="↻ Refresh Console">
                 ↻ Refresh Console
               </button>
             </div>
@@ -1373,71 +1359,92 @@
             <div class="threshold-result hidden" id="threshold-result" style="margin-top:8px;"></div>
           </div>
 
-          <!-- 5 Holographic Orbital KPI Pods -->
-          <div class="sc-kpi-grid" id="sc-summary-stats">
-            <!-- Pod 1: Security Posture -->
-            <div class="sc-kpi-pod">
-              <div class="sc-kpi-pod-orbit">
-                <div class="sc-kpi-orb-bg"></div>
-                <div class="sc-kpi-orb-ring"></div>
-                <div class="sc-kpi-orb-ring-inner"></div>
-                <div class="sc-kpi-pod-icon" style="color:#00d4ff;">🛡️</div>
+          <!-- 5 Holographic Orbital KPI Pods (Synchronized with Command Overview Design) -->
+          <div class="overview-kpi-5 overview-kpi-grid sc-kpi-grid" id="sc-summary-stats">
+            <!-- KPI 1: Active Threats -->
+            <div class="card metric-tile tile-threats overview-kpi-pod sc-kpi-pod threat" title="Active Threats in Security Center">
+              <div class="overview-kpi-pod-orbit">
+                <div class="overview-kpi-orb-bg"></div>
+                <div class="overview-kpi-orb-ring"></div>
+                <div class="overview-kpi-orb-ring-inner"></div>
+                <div class="overview-kpi-pod-icon" style="color:#ef4444;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                </div>
               </div>
-              <div class="sc-kpi-label">Security Posture</div>
-              <div class="sc-kpi-val" id="sc-posture-badge"><span class="badge" style="background:rgba(255,255,255,0.06);color:#64748b;">Loading…</span></div>
-              <div class="sc-kpi-sub" id="sc-posture-desc">Fetching current state</div>
+              <div class="overview-kpi-label">ACTIVE THREATS</div>
+              <div class="metric-tile-value text-threat overview-kpi-val" id="sc-stat-threats">0</div>
+              <canvas class="kpi-sparkline" id="sc-spark-threats" width="80" height="24" style="margin: 3px 0;"></canvas>
+              <div class="overview-kpi-sub">Threat events detected</div>
             </div>
 
-            <!-- Pod 2: Active Threats -->
-            <div class="sc-kpi-pod threat">
-              <div class="sc-kpi-pod-orbit">
-                <div class="sc-kpi-orb-bg"></div>
-                <div class="sc-kpi-orb-ring"></div>
-                <div class="sc-kpi-orb-ring-inner"></div>
-                <div class="sc-kpi-pod-icon" style="color:#ef4444;">⚠️</div>
+            <!-- KPI 2: Open Incidents -->
+            <div class="card metric-tile tile-incidents overview-kpi-pod sc-kpi-pod incident" title="Active Investigations">
+              <div class="overview-kpi-pod-orbit">
+                <div class="overview-kpi-orb-bg"></div>
+                <div class="overview-kpi-orb-ring"></div>
+                <div class="overview-kpi-orb-ring-inner"></div>
+                <div class="overview-kpi-pod-icon" style="color:#f59e0b;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                </div>
               </div>
-              <div class="sc-kpi-label">Active Threats</div>
-              <div class="sc-kpi-val text-threat" id="sc-stat-threats" style="color:#f87171;">…</div>
-              <div class="sc-kpi-sub">Threat events detected</div>
+              <div class="overview-kpi-label">OPEN INCIDENTS</div>
+              <div class="metric-tile-value text-warning overview-kpi-val" id="sc-stat-incidents">0</div>
+              <canvas class="kpi-sparkline" id="sc-spark-incidents" width="80" height="24" style="margin: 3px 0;"></canvas>
+              <div class="overview-kpi-sub">Under investigation</div>
             </div>
 
-            <!-- Pod 3: Open Incidents -->
-            <div class="sc-kpi-pod incident">
-              <div class="sc-kpi-pod-orbit">
-                <div class="sc-kpi-orb-bg"></div>
-                <div class="sc-kpi-orb-ring"></div>
-                <div class="sc-kpi-orb-ring-inner"></div>
-                <div class="sc-kpi-pod-icon" style="color:#f59e0b;">⚡</div>
+            <!-- KPI 3: Recent Alerts / Telemetry Stream -->
+            <div class="card metric-tile tile-events overview-kpi-pod sc-kpi-pod alerts tile-alerts" title="Dispatched Alerts & Telemetry">
+              <div class="overview-kpi-pod-orbit">
+                <div class="overview-kpi-orb-bg"></div>
+                <div class="overview-kpi-orb-ring"></div>
+                <div class="overview-kpi-orb-ring-inner"></div>
+                <div class="overview-kpi-pod-icon" style="color:#06b6d4;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                </div>
               </div>
-              <div class="sc-kpi-label">Open Incidents</div>
-              <div class="sc-kpi-val text-warning" id="sc-stat-incidents" style="color:#fbbf24;">…</div>
-              <div class="sc-kpi-sub">Under investigation</div>
+              <div class="overview-kpi-label">RECENT ALERTS</div>
+              <div class="metric-tile-value text-cyan overview-kpi-val" id="sc-stat-alerts">0</div>
+              <canvas class="kpi-sparkline" id="sc-spark-alerts" width="80" height="24" style="margin: 3px 0;"></canvas>
+              <div class="overview-kpi-sub">Dispatched across sessions</div>
             </div>
 
-            <!-- Pod 4: Recent Alerts -->
-            <div class="sc-kpi-pod">
-              <div class="sc-kpi-pod-orbit">
-                <div class="sc-kpi-orb-bg"></div>
-                <div class="sc-kpi-orb-ring"></div>
-                <div class="sc-kpi-orb-ring-inner"></div>
-                <div class="sc-kpi-pod-icon" style="color:#38bdf8;">📡</div>
+            <!-- KPI 4: Critical Threats -->
+            <div class="card metric-tile tile-critical overview-kpi-pod sc-kpi-pod critical" title="Priority Containment">
+              <div class="overview-kpi-pod-orbit">
+                <div class="overview-kpi-orb-bg"></div>
+                <div class="overview-kpi-orb-ring"></div>
+                <div class="overview-kpi-orb-ring-inner"></div>
+                <div class="overview-kpi-pod-icon" style="color:#dc2626;">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                </div>
               </div>
-              <div class="sc-kpi-label">Recent Alerts</div>
-              <div class="sc-kpi-val text-cyan" id="sc-stat-alerts" style="color:#38bdf8;">…</div>
-              <div class="sc-kpi-sub">Dispatched across sessions</div>
+              <div class="overview-kpi-label">CRITICAL THREATS</div>
+              <div class="metric-tile-value text-critical overview-kpi-val" id="sc-stat-critical">0</div>
+              <canvas class="kpi-sparkline" id="sc-spark-critical" width="80" height="24" style="margin: 3px 0;"></canvas>
+              <div class="overview-kpi-sub">Priority tier 1 containment</div>
             </div>
 
-            <!-- Pod 5: Critical Threats -->
-            <div class="sc-kpi-pod critical">
-              <div class="sc-kpi-pod-orbit">
-                <div class="sc-kpi-orb-bg"></div>
-                <div class="sc-kpi-orb-ring"></div>
-                <div class="sc-kpi-orb-ring-inner"></div>
-                <div class="sc-kpi-pod-icon" style="color:#dc2626;">🚨</div>
+            <!-- KPI 5: Security Posture / Holographic Arc Reactor HUD Dial -->
+            <div class="card metric-tile tile-posture overview-kpi-pod sc-kpi-pod posture kpi-posture-reactor" title="Security Posture Operational State">
+              <div class="posture-reactor-dial">
+                <div class="reactor-ring-outer"></div>
+                <div class="reactor-ring-ticks"></div>
+                <div class="reactor-ring-middle"></div>
+                <div class="reactor-ring-inner"></div>
+                <div class="reactor-core-content">
+                  <div class="reactor-icon">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  </div>
+                  <div class="overview-kpi-label reactor-label">SECURITY POSTURE</div>
+                  <div class="metric-tile-value text-cyan overview-kpi-val reactor-status" id="sc-tile-posture">NORMAL</div>
+                  <div class="overview-kpi-sub reactor-sub" id="sc-tile-posture-sub">All pipelines operational</div>
+                  <!-- Hidden legacy hook elements for zero breakage -->
+                  <div id="sc-posture-badge" style="display:none;"></div>
+                  <div id="sc-posture-desc" style="display:none;"></div>
+                </div>
               </div>
-              <div class="sc-kpi-label">Critical Threats</div>
-              <div class="sc-kpi-val text-critical" id="sc-stat-critical" style="color:#ef4444;">…</div>
-              <div class="sc-kpi-sub">Priority tier 1 containment</div>
+              <canvas class="kpi-sparkline" id="sc-spark-engines" width="80" height="24" style="display:none;"></canvas>
             </div>
           </div>
         </div>
@@ -1576,7 +1583,7 @@
             <div class="review-title-group">
               <div class="review-eyebrow">
                 <span class="pulse-indicator"></span>
-                <span class="cyber-glitch-text">CYBERGUARD // FORENSIC ACOUSTIC NEXUS</span>
+                <span class="cyber-glitch-text">CYBERGUARD</span>
                 <span class="cyber-shield-badge">HUMAN-IN-THE-LOOP</span>
               </div>
               <h1 class="review-title">Human-in-the-Loop Acoustic Verification &amp; Neural Lineage</h1>
@@ -1600,8 +1607,8 @@
               <button class="btn btn-sm btn-secondary" onclick="loadReviewQueue()" title="Refresh queue from database">
                 <span class="refresh-icon">↻</span> Refresh Queue
               </button>
-              <button class="btn btn-sm btn-primary" onclick="handleRetrainButtonClick()" id="btn-trigger-retrain-hero" title="Open retraining configuration and run candidate training">
-                ⚡ Retrain Pipeline (<span id="review-hero-pool-count">0</span> queued)
+              <button class="btn btn-sm btn-primary" onclick="handleRetrainButtonClick()" id="btn-trigger-retrain-hero" title="Open retraining configuration and run candidate training" data-text="Retrain Pipeline ( 0 queued)">
+                Retrain Pipeline (<span id="review-hero-pool-count">0</span> queued)
               </button>
             </div>
           </div>
@@ -1678,28 +1685,28 @@
         <!-- Tactical Quick-Filter Subnav Dock -->
         <div class="review-subnav-dock" id="review-subnav-dock">
           <button type="button" class="review-pill-btn active" data-review-filter="all" onclick="setReviewQuickFilter('all', this)">
-            <span>⊞</span> All Records
+            All Records
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="pending" onclick="setReviewQuickFilter('pending', this)">
-            <span>⏳</span> Pending Triage
+            Pending Triage
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="high_risk" onclick="setReviewQuickFilter('high_risk', this)">
-            <span>⚠️</span> Critical / High Threat
+            Critical / High Threat
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="approved" onclick="setReviewQuickFilter('approved', this)">
-            <span>⚡</span> Approved Pool
+            Approved Pool
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="rejected" onclick="setReviewQuickFilter('rejected', this)">
-            <span>🚫</span> Rejected / Excluded
+            Rejected / Excluded
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="uncertain" onclick="setReviewQuickFilter('uncertain', this)">
-            <span>🎯</span> Ambiguous (40-60%)
+            Ambiguous (40-60%)
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="human" onclick="setReviewQuickFilter('human', this)">
-            <span>👤</span> Human Bonafide
+            Human Bonafide
           </button>
           <button type="button" class="review-pill-btn" data-review-filter="cloned" onclick="setReviewQuickFilter('cloned', this)">
-            <span>🤖</span> Cloned Spoof
+            Cloned Spoof
           </button>
           <div class="review-subnav-dock-right">
             <button type="button" class="review-pill-btn" onclick="loadReviewQueue()" title="Synchronize telemetry queue">
@@ -1805,7 +1812,7 @@
           </div>
           <div class="nexus-banner-inner">
             <div class="nexus-banner-left">
-              <div class="nexus-eyebrow"><div class="nexus-live-dot"></div><span class="nexus-eyebrow-text">CyberGuard // SOC Administrative Nexus</span></div>
+              <div class="nexus-eyebrow"><div class="nexus-live-dot"></div><span class="nexus-eyebrow-text">CyberGuard</span></div>
               <h1 class="nexus-command-title">Neural Command &amp; Control Interface</h1>
               <p class="nexus-command-sub">Sovereign AI model governance, zero-trust policy enforcement, live containment telemetry,<br>and autonomous retraining pipelines &mdash; unified into one control surface.</p>
             </div>
@@ -1841,35 +1848,35 @@
         <!-- TACTICAL SUB-NAVIGATION DOCK -->
         <div class="nexus-subnav-bar" id="nexus-subnav-bar">
           <button type="button" class="nexus-subnav-btn active" data-nexus-mode="all" onclick="switchNexusMode('all')">
-            <span class="nexus-subnav-icon">⊞</span>
+            
             <span class="nexus-subnav-text">All Modules Grid</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="policy" onclick="switchNexusMode('policy')">
-            <span class="nexus-subnav-icon">🛡️</span>
+            
             <span class="nexus-subnav-text">Security Policy</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="quarantine" onclick="switchNexusMode('quarantine')">
-            <span class="nexus-subnav-icon">☣️</span>
+            
             <span class="nexus-subnav-text">Quarantine Firewall</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="alerts" onclick="switchNexusMode('alerts')">
-            <span class="nexus-subnav-icon">📡</span>
+            
             <span class="nexus-subnav-text">Executive Alerts</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="neural" onclick="switchNexusMode('neural')">
-            <span class="nexus-subnav-icon">🧬</span>
+            
             <span class="nexus-subnav-text">Neural Adaptation</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="training" onclick="switchNexusMode('training')">
-            <span class="nexus-subnav-icon">🧠</span>
+            
             <span class="nexus-subnav-text">Continuous Lineage</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="users" onclick="switchNexusMode('users')">
-            <span class="nexus-subnav-icon">👥</span>
+            
             <span class="nexus-subnav-text">Operator RBAC</span>
           </button>
           <button type="button" class="nexus-subnav-btn" data-nexus-mode="audit" onclick="switchNexusMode('audit')">
-            <span class="nexus-subnav-icon">📜</span>
+            
             <span class="nexus-subnav-text">Audit Telemetry</span>
           </button>
           <div class="nexus-subnav-refresh">
@@ -1881,7 +1888,7 @@
 
         <!-- SECTION A: POLICY ENGINE -->
         <div class="nexus-module-section" id="nexus-sec-policy">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// SECURITY POLICY ENGINE</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(0,212,255,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">SECURITY POLICY ENGINE</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(0,212,255,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-cyan">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -1965,7 +1972,7 @@
 
         <!-- SECTION B: QUARANTINE REGISTRY -->
         <div class="nexus-module-section" id="nexus-sec-quarantine">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// ZERO-TRUST CONTAINMENT</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(248,113,113,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">ZERO-TRUST CONTAINMENT</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(248,113,113,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-red">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -1984,7 +1991,7 @@
             <div class="nexus-panel-body" style="padding-top:12px;padding-bottom:14px;">
               <div class="nexus-table-toolbar">
                 <div class="nexus-search-box">
-                  <span class="nexus-search-icon">🔍</span>
+                  <span class="nexus-search-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                   <input type="text" id="quarantine-search-input" class="nexus-search-input" placeholder="Search entity IP, domain, hash, reason..." oninput="filterQuarantineTable(this.value)" />
                   <button type="button" class="nexus-search-clear" onclick="document.getElementById('quarantine-search-input').value=''; filterQuarantineTable('')" title="Clear">✕</button>
                 </div>
@@ -2002,7 +2009,7 @@
 
         <!-- SECTION C: EMAIL ALERT JOURNAL -->
         <div class="nexus-module-section" id="nexus-sec-alerts">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// EXECUTIVE ALERT DISPATCH</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(251,191,36,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">EXECUTIVE ALERT DISPATCH</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(251,191,36,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-amber">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -2021,7 +2028,7 @@
             <div class="nexus-panel-body" style="padding-top:12px;padding-bottom:14px;">
               <div class="nexus-table-toolbar">
                 <div class="nexus-search-box">
-                  <span class="nexus-search-icon">🔍</span>
+                  <span class="nexus-search-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                   <input type="text" id="alerts-search-input" class="nexus-search-input" placeholder="Search recipient, category, subject, delivery status..." oninput="filterAlertsTable(this.value)" />
                   <button type="button" class="nexus-search-clear" onclick="document.getElementById('alerts-search-input').value=''; filterAlertsTable('')" title="Clear">✕</button>
                 </div>
@@ -2039,7 +2046,7 @@
 
         <!-- SECTION 0: AUDIO CLASSIFICATION & LIVE ADAPTATION -->
         <div class="nexus-module-section" id="nexus-sec-neural">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// INSTANT NEURAL ADAPTATION</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(56,189,248,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">INSTANT NEURAL ADAPTATION</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(56,189,248,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-blue">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -2096,7 +2103,7 @@
 
         <!-- SECTION 1: CONTINUOUS LEARNING -->
         <div class="nexus-module-section" id="nexus-sec-training">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// AUTONOMOUS RETRAINING PIPELINE</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">AUTONOMOUS RETRAINING PIPELINE</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(167,139,250,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-purple">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -2116,7 +2123,7 @@
               <!-- Retraining Pipeline Architecture Circuit -->
               <div class="nexus-pipeline-flow" id="nexus-training-pipeline-flow">
                 <div class="nexus-flow-node active">
-                  <span class="nexus-flow-icon">📥</span>
+                  
                   <div class="nexus-flow-content">
                     <span class="nexus-flow-title">1. Telemetry Ingestion</span>
                     <span class="nexus-flow-sub" id="nexus-flow-queue-count">Replay buffer active</span>
@@ -2124,7 +2131,7 @@
                 </div>
                 <div class="nexus-flow-arrow">&gt;&gt;&gt;</div>
                 <div class="nexus-flow-node">
-                  <span class="nexus-flow-icon">🧠</span>
+                  
                   <div class="nexus-flow-content">
                     <span class="nexus-flow-title">2. Autonomous PyTorch</span>
                     <span class="nexus-flow-sub">Balanced BCE loss</span>
@@ -2132,7 +2139,7 @@
                 </div>
                 <div class="nexus-flow-arrow">&gt;&gt;&gt;</div>
                 <div class="nexus-flow-node">
-                  <span class="nexus-flow-icon">🛡️</span>
+                  
                   <div class="nexus-flow-content">
                     <span class="nexus-flow-title">3. Triple Gate Verifier</span>
                     <span class="nexus-flow-sub">Loss, Acc &amp; Drift check</span>
@@ -2140,7 +2147,7 @@
                 </div>
                 <div class="nexus-flow-arrow">&gt;&gt;&gt;</div>
                 <div class="nexus-flow-node">
-                  <span class="nexus-flow-icon">🚀</span>
+                  
                   <div class="nexus-flow-content">
                     <span class="nexus-flow-title">4. Atomic Promotion</span>
                     <span class="nexus-flow-sub active-detector-version-target" id="nexus-flow-active-ver">Hot-swap runtime</span>
@@ -2181,7 +2188,7 @@
 
         <!-- SECTION 2: USER MANAGEMENT -->
         <div class="nexus-module-section" id="nexus-sec-users">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// IDENTITY &amp; ACCESS CONTROL</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(52,211,153,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">IDENTITY &amp; ACCESS CONTROL</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(52,211,153,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-green">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -2200,7 +2207,7 @@
             <div class="nexus-panel-body" style="padding-top:12px;padding-bottom:14px;">
               <div class="nexus-table-toolbar">
                 <div class="nexus-search-box">
-                  <span class="nexus-search-icon">🔍</span>
+                  <span class="nexus-search-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                   <input type="text" id="users-search-input" class="nexus-search-input" placeholder="Filter by username, email, ID..." oninput="filterUsersTable(this.value)" />
                   <button type="button" class="nexus-search-clear" onclick="document.getElementById('users-search-input').value=''; filterUsersTable('')" title="Clear">✕</button>
                 </div>
@@ -2225,7 +2232,7 @@
 
         <!-- SECTION 3: AUDIT TRAIL -->
         <div class="nexus-module-section" id="nexus-sec-audit">
-          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">// TAMPER-EVIDENT AUDIT TRAIL</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(0,212,255,0.3));"></div></div>
+          <div class="nexus-section-divider"><div class="nexus-section-divider-line"></div><span class="nexus-section-divider-label">TAMPER-EVIDENT AUDIT TRAIL</span><div class="nexus-section-divider-line" style="background:linear-gradient(90deg,transparent,rgba(0,212,255,0.3));"></div></div>
           <div class="nexus-panel nexus-panel-accent-cyan">
             <div class="nexus-panel-header">
               <div class="nexus-panel-header-left">
@@ -2243,7 +2250,7 @@
             <div class="nexus-panel-body" style="padding-top:12px;padding-bottom:14px;">
               <div class="nexus-table-toolbar">
                 <div class="nexus-search-box">
-                  <span class="nexus-search-icon">🔍</span>
+                  <span class="nexus-search-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
                   <input type="text" id="audit-search-input" class="nexus-search-input" placeholder="Search actor, action, target entity, details..." oninput="filterAuditTable(this.value)" />
                   <button type="button" class="nexus-search-clear" onclick="document.getElementById('audit-search-input').value=''; filterAuditTable('')" title="Clear">✕</button>
                 </div>
@@ -2286,7 +2293,7 @@
             <div class="retrain-cyber-spinner" id="retrain-hud-spinner">
               <div class="spinner-ring outer"></div>
               <div class="spinner-ring inner"></div>
-              <div class="spinner-core">⚡</div>
+              <div class="spinner-core"></div>
             </div>
             <!-- Completed icon state -->
             <div class="retrain-icon-completed hidden" id="retrain-hud-completed-icon">
@@ -2304,7 +2311,7 @@
             </div>
           </div>
           <div class="retrain-hud-title-col">
-            <span class="retrain-hud-eyebrow">CYBERGUARD // DETECTOR ENGINE</span>
+            <span class="retrain-hud-eyebrow">CYBERGUARD</span>
             <span class="retrain-hud-title" id="retrain-hud-title">MODEL RETRAINING ACTIVE</span>
           </div>
         </div>
@@ -2354,7 +2361,7 @@
         <!-- Post-retraining action buttons -->
         <div class="retrain-action-row hidden" id="retrain-hud-action-row">
           <button class="btn btn-xs btn-primary btn-promote-hud" id="retrain-hud-btn-promote" onclick="promoteFromHudNotification(event)">
-            ⚡ Promote Candidate to Active Detector
+            Promote Candidate to Active Detector
           </button>
           <button class="btn btn-xs btn-secondary btn-dismiss-hud" onclick="dismissRetrainNotification(event)">
             Dismiss
@@ -2375,7 +2382,7 @@
       <div class="modal-drawer-header sc-dossier-header">
         <div style="display:flex; flex-direction:column; gap:3px;">
           <div class="sc-dossier-eyebrow">
-            <span class="soc-pulse-dot"></span> SOVEREIGN FORENSIC DOSSIER // LEVEL 5 ATTRIBUTION
+            <span class="soc-pulse-dot"></span> SOVEREIGN FORENSIC DOSSIER
           </div>
           <h2 class="card-title" id="modal-sc-title" style="font-size:16px; margin:0; display:flex; align-items:center; gap:8px;">Security Record Detail</h2>
           <div style="font-size:11px; color:#94a3b8; font-family:'JetBrains Mono', monospace;" id="modal-sc-subtitle"></div>
@@ -2690,8 +2697,6 @@
             <div class="auth-enclave-badge">
               <span class="badge-dot"></span>
               <span>ZERO-TRUST IDENTITY MATRIX</span>
-              <span class="badge-divider">//</span>
-              <span class="badge-sub">LEVEL 5 ACCESS</span>
             </div>
             <h2 class="auth-modal-title" id="auth-modal-title">CyberGuard Access Control</h2>
             <div class="auth-sub-status" id="auth-sub-status">Hardware cryptographic enclave ready for operator verification</div>
@@ -2699,9 +2704,11 @@
         </div>
         <div class="auth-header-right">
           <span class="auth-clearance-pill" title="Active Security Enclave">
-            <span class="pill-shield">🛡️</span> SHIELD ARMED
+            <span class="pill-shield"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> SHIELD ARMED
           </span>
-          <button type="button" class="auth-close-btn" onclick="closeAuthModal()" title="Close Terminal (Esc)" aria-label="Close Access Control Terminal">✕</button>
+          <button type="button" class="auth-close-btn" onclick="closeAuthModal()" title="Close Terminal (Esc)" aria-label="Close Access Control Terminal">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
         </div>
       </div>
 
@@ -2720,7 +2727,7 @@
           </svg>
         </div>
         <div class="auth-reticle-info">
-          <div class="auth-reticle-status" id="auth-reticle-status">AI IDENTITY CORE // ACTIVE</div>
+          <div class="auth-reticle-status" id="auth-reticle-status">AI IDENTITY CORE</div>
           <div class="auth-reticle-desc" id="auth-reticle-desc">Continuous biometric posture &amp; hardware cryptographic enclave</div>
         </div>
         <div class="auth-telemetry-tag" id="auth-telemetry-tag">
@@ -2737,17 +2744,17 @@
           <div class="auth-avatar-orbital" aria-hidden="true">
             <div class="avatar-ring-outer"></div>
             <div class="avatar-ring-inner"></div>
-            <div class="avatar-hex">🛡️</div>
+            <div class="avatar-hex"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00e5ff" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></div>
             <span class="avatar-glow-pulse"></span>
           </div>
           <div class="auth-dossier-credentials">
             <div class="dossier-callsign-row">
               <span class="dossier-callsign" id="auth-profile-username">admin</span>
               <span class="auth-role-badge" id="auth-profile-role">ADMIN</span>
-              <span class="dossier-verif-tag" title="Cryptographically Verified Sovereign Session">✓ VERIFIED</span>
+              <span class="dossier-verif-tag" title="Cryptographically Verified Sovereign Session"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="display:inline;vertical-align:middle;margin-right:2px;"><polyline points="20 6 9 17 4 12"/></svg>VERIFIED</span>
             </div>
             <div class="dossier-email" id="auth-profile-email">cyberguardadmin@gmail.com</div>
-            <div class="dossier-sub-clearance" id="auth-profile-clearance">CLEARANCE: LEVEL 5 ROOT COMMANDER // FULL ADMINISTRATIVE ACCESS</div>
+            <div class="dossier-sub-clearance" id="auth-profile-clearance">CLEARANCE: LEVEL 5 ROOT COMMANDER</div>
           </div>
         </div>
 
@@ -2770,15 +2777,13 @@
           </div>
         </div>
 
-
-
         <!-- Profile Action Buttons -->
         <div class="auth-profile-footer">
           <button type="button" class="auth-btn-danger" onclick="logoutUser()">
-            <span class="btn-icon">🔴</span> DISENGAGE SESSION (LOG OUT)
+            <span class="btn-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18.36 6.64a9 9 0 11-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg></span> DISENGAGE SESSION (LOG OUT)
           </button>
           <button type="button" class="auth-btn-return" onclick="closeAuthModal()">
-            <span class="btn-icon">✕</span> RETURN TO COCKPIT
+            <span class="btn-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg></span> RETURN TO COCKPIT
           </button>
         </div>
       </div>
@@ -2791,10 +2796,10 @@
         <!-- Segmented Tab Bar -->
         <div class="auth-tabs-segmented" role="tablist" aria-label="Access Mode Selector">
           <button type="button" class="auth-tab-btn active" id="auth-tab-login" onclick="switchAuthTab('login')" role="tab" aria-selected="true">
-            <span class="tab-icon">✦</span> SIGN IN
+            SIGN IN
           </button>
           <button type="button" class="auth-tab-btn" id="auth-tab-register" onclick="switchAuthTab('register')" role="tab" aria-selected="false">
-            <span class="tab-icon">⊕</span> CREATE ACCOUNT
+            CREATE ACCOUNT
           </button>
         </div>
 
@@ -2810,7 +2815,9 @@
               <span class="label-subtext">Operator Callsign</span>
             </div>
             <div class="auth-field-wrapper">
-              <span class="field-icon-prefix" aria-hidden="true">👤</span>
+              <span class="field-icon-prefix" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </span>
               <input type="text" id="auth-input-username" class="auth-cyber-input form-input" required autocomplete="username" placeholder="Enter username or email..." />
               <span class="field-scanline-glow" aria-hidden="true"></span>
             </div>
@@ -2823,7 +2830,9 @@
               <span class="label-subtext">Alerts &amp; Telemetry</span>
             </div>
             <div class="auth-field-wrapper">
-              <span class="field-icon-prefix" aria-hidden="true">✉️</span>
+              <span class="field-icon-prefix" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </span>
               <input type="email" id="auth-input-email" class="auth-cyber-input form-input" autocomplete="email" placeholder="operator@cyberguard.defense" />
               <span class="field-scanline-glow" aria-hidden="true"></span>
             </div>
@@ -2836,10 +2845,14 @@
               <span class="auth-entropy-label" id="auth-entropy-label">SECURITY: STANDBY</span>
             </div>
             <div class="auth-field-wrapper">
-              <span class="field-icon-prefix" aria-hidden="true">🔑</span>
+              <span class="field-icon-prefix" aria-hidden="true">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#64748b" stroke-width="2"><path d="M21 2l-2 2m-1.5 1.5L14 9l-1.5-1.5-2 2 1.5 1.5L3 20v2h2l9-9 1.5 1.5 2-2-1.5-1.5L20 7l2-2z"/><circle cx="7.5" cy="16.5" r="1.5"/></svg>
+              </span>
               <input type="password" id="auth-input-password" class="auth-cyber-input form-input" required autocomplete="current-password" placeholder="Enter your passkey..." oninput="updatePasswordEntropy(this.value)" />
               <button type="button" class="auth-optic-toggle" onclick="togglePasswordVisibility()" id="auth-optic-toggle" title="Reveal/Conceal Password" aria-label="Toggle Password Visibility">
-                <span id="auth-optic-icon">👁️</span>
+                <span id="auth-optic-icon">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </span>
               </button>
               <span class="field-scanline-glow" aria-hidden="true"></span>
             </div>
@@ -2859,13 +2872,11 @@
             </div>
           </div>
 
-          <!-- Action Submit Button -->
-          <button type="submit" class="auth-cyber-submit-btn btn btn-primary" id="auth-submit-btn">
-            <span class="btn-laser-sweep" aria-hidden="true"></span>
+          <!-- Sharp Red Action Submit Button -->
+          <button type="submit" class="auth-cyber-submit-btn" id="auth-submit-btn">
             <span class="btn-content-wrap">
-              <span class="btn-icon">⚡</span>
               <span class="btn-label" id="auth-submit-text">AUTHORIZE ACCESS</span>
-              <span class="btn-arrow">➔</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
             </span>
           </button>
         </form>
@@ -2911,7 +2922,7 @@
       <div class="review-drawer-title-wrap">
         <div class="review-drawer-eyebrow">
           <span class="pulse-indicator"></span>
-          <span class="cyber-glitch-text">FORENSIC ACOUSTIC TELEMETRY // QUANTUM DISSECTION NEXUS</span>
+          <span class="cyber-glitch-text">FORENSIC ACOUSTIC TELEMETRY</span>
           <span class="drawer-header-pill active-detector-version-target" id="drawer-header-ver-badge">--</span>
           <span class="drawer-header-pill" id="drawer-header-status-badge">PENDING</span>
           <span class="drawer-header-pill sec-clearance-pill">SOVEREIGN AI COMMAND</span>
@@ -2919,7 +2930,7 @@
         <div class="drawer-title-row">
           <h2 class="review-drawer-title" id="drawer-item-title">#REV_00000000</h2>
           <button class="btn btn-xs btn-cyber-copy" onclick="copyDrawerTargetId()" title="Copy Target Forensic ID to Clipboard">
-            <span>📋</span> COPY ID
+            COPY ID
           </button>
         </div>
         <div class="review-drawer-subtitle" id="drawer-item-subtitle">Filename: unknown</div>
@@ -2928,7 +2939,7 @@
       <!-- Header Layout & Action Controls -->
       <div class="review-drawer-header-actions">
         <button class="drawer-view-mode-btn" id="drawer-toggle-layout-btn" onclick="toggleDrawerLayout()" title="Toggle Panoramic Command Holodeck / Docked Sidebar View (Hotkey: F)">
-          <span id="drawer-layout-icon">🗖</span>
+          <span id="drawer-layout-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg></span>
           <span id="drawer-layout-text">PANORAMIC COMMAND</span>
         </button>
         <button class="review-drawer-close" onclick="closeReviewDrawer()" title="Close Forensics Console (Esc)">✕</button>
@@ -2995,7 +3006,7 @@
           <section class="drawer-section drawer-vault-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">🔊</span> ACOUSTIC EVIDENCE &amp; CRYPTOGRAPHIC VAULT
+                 ACOUSTIC EVIDENCE &amp; CRYPTOGRAPHIC VAULT
               </div>
               <span class="badge badge-vault-auth" id="drawer-audio-status-badge">VAULT AUTHENTICATED</span>
             </div>
@@ -3024,18 +3035,18 @@
           <section class="drawer-section drawer-visualizer-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">⚡</span> MULTI-MODE HOLOGRAPHIC ACOUSTIC ANALYZER
+                 MULTI-MODE HOLOGRAPHIC ACOUSTIC ANALYZER
               </div>
               <!-- Visualization Mode Switcher -->
               <div class="visualizer-mode-tabs">
                 <button class="vis-tab-btn active" id="tab-vis-waveform" onclick="setDrawerVisualizerMode('waveform')">
-                  🌊 Waveform &amp; Envelope
+                  Waveform &amp; Envelope
                 </button>
                 <button class="vis-tab-btn" id="tab-vis-spectrogram" onclick="setDrawerVisualizerMode('spectrogram')">
-                  🌈 Mel-Spectrogram
+                  Mel-Spectrogram
                 </button>
                 <button class="vis-tab-btn" id="tab-vis-radar" onclick="setDrawerVisualizerMode('radar')">
-                  ⚡ Harmonic Radar
+                  Harmonic Radar
                 </button>
               </div>
             </div>
@@ -3066,7 +3077,7 @@
               </div>
 
               <div id="drawer-audio-error-banner" class="drawer-audio-error hidden">
-                <span>⚠️ Audio stream unavailable or decoding rejected.</span>
+                <span>Audio stream unavailable or decoding rejected.</span>
                 <button class="btn btn-xs btn-secondary" onclick="retryLoadAudio()">↻ Retry Pipeline</button>
               </div>
             </div>
@@ -3087,7 +3098,7 @@
                   +5s
                 </button>
                 <button class="player-btn-loop" id="btn-player-ab-loop" onclick="toggleDrawerABLoop()" title="Toggle Forensic 3s A-B Region Loop">
-                  🔁 Loop 3s
+                  Loop 3s
                 </button>
               </div>
 
@@ -3104,7 +3115,7 @@
                   <button class="speed-btn" id="speed-2x" onclick="setPlaybackSpeed(2.0)">2.0x</button>
                 </div>
                 <div class="player-volume-wrap">
-                  <button class="vol-btn" onclick="toggleAudioMute()" title="Mute / Unmute" id="drawer-mute-btn">🔊</button>
+                  <button class="vol-btn" onclick="toggleAudioMute()" title="Mute / Unmute" id="drawer-mute-btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 010 7.07"/></svg></button>
                   <input type="range" id="drawer-audio-volume" min="0" max="1" step="0.05" value="1" class="player-vol-slider" oninput="setAudioVolume(this.value)" />
                 </div>
               </div>
@@ -3118,7 +3129,7 @@
           <section class="drawer-section drawer-biometrics-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">🧬</span> ACOUSTIC BIOMETRICS &amp; HARMONIC TELEMETRY
+                 ACOUSTIC BIOMETRICS &amp; HARMONIC TELEMETRY
               </div>
               <span class="badge badge-subtle-glow">REAL-TIME FLUX</span>
             </div>
@@ -3158,7 +3169,7 @@
           <section class="drawer-section drawer-evidence-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">🧠</span> EVIDENTIARY MODEL ASSESSMENT &amp; INFERENCE
+                 EVIDENTIARY MODEL ASSESSMENT &amp; INFERENCE
               </div>
               <span class="badge badge-evidence">NON-BINDING EVIDENCE</span>
             </div>
@@ -3236,7 +3247,7 @@
               </div>
 
               <div class="evidence-notice">
-                <span class="notice-icon">🛡️</span>
+                
                 <span>
                   Neural predictions and risk scores are evidence only. The ground-truth classification below is determined exclusively by human operator judgment.
                 </span>
@@ -3248,7 +3259,7 @@
           <section class="drawer-section drawer-verification-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">👤</span> HUMAN SOVEREIGN OPERATOR VERIFICATION
+                 HUMAN SOVEREIGN OPERATOR VERIFICATION
               </div>
               <span class="badge badge-gt-status" id="drawer-gt-status-badge">AWAITING GROUND TRUTH</span>
             </div>
@@ -3262,19 +3273,19 @@
               <div class="gt-button-group">
                 <button class="gt-choice-btn" id="btn-gt-bonafide" onclick="selectDrawerGroundTruth('BONAFIDE')" title="Verify Human Biological Voice (Hotkey: 1)">
                   <div class="gt-hotkey-badge">[1]</div>
-                  <span class="gt-btn-icon">👤</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                   <span class="gt-btn-title">HUMAN / BONAFIDE</span>
                   <span class="gt-btn-desc">Authentic biological speech (Target: 0.0)</span>
                 </button>
                 <button class="gt-choice-btn" id="btn-gt-spoof" onclick="selectDrawerGroundTruth('SPOOF')" title="Confirm Synthetic Deepfake / Voice Clone (Hotkey: 2)">
                   <div class="gt-hotkey-badge">[2]</div>
-                  <span class="gt-btn-icon">🤖</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4m-4 5h8"/></svg>
                   <span class="gt-btn-title">CLONED / SPOOF</span>
                   <span class="gt-btn-desc">Deepfake / synthesized voice (Target: 1.0)</span>
                 </button>
                 <button class="gt-choice-btn" id="btn-gt-inconclusive" onclick="selectDrawerGroundTruth('INCONCLUSIVE')" title="Quarantine Ambiguous Audio (Hotkey: 3)">
                   <div class="gt-hotkey-badge">[3]</div>
-                  <span class="gt-btn-icon">❓</span>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                   <span class="gt-btn-title">INCONCLUSIVE</span>
                   <span class="gt-btn-desc">Ambiguous or degraded audio (Not trained)</span>
                 </button>
@@ -3282,7 +3293,7 @@
 
               <!-- Instant Forensic Acoustic Quick-Tags (Clickable Cyber Chips) -->
               <div class="forensic-quick-tags-wrap">
-                <span class="quick-tags-label">⚡ FORENSIC ACOUSTIC QUICK-TAGS:</span>
+                <span class="quick-tags-label">FORENSIC ACOUSTIC QUICK-TAGS:</span>
                 <div class="quick-tags-container">
                   <button type="button" class="quick-tag-chip" onclick="toggleForensicTag('Vocoder Distortion')">+ Vocoder Distortion</button>
                   <button type="button" class="quick-tag-chip" onclick="toggleForensicTag('Pitch Monotony')">+ Pitch Monotony</button>
@@ -3310,21 +3321,21 @@
           <section class="drawer-section drawer-decision-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">⚡</span> CONTINUOUS RETRAINING CONDUIT
+                 CONTINUOUS RETRAINING CONDUIT
               </div>
               <span class="badge" id="drawer-training-eligibility-badge" style="background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.3);">REQUIRES HUMAN LABEL</span>
             </div>
 
             <div class="drawer-decision-card">
               <div class="decision-safety-lock">
-                <span class="lock-icon">🔒</span>
+                <span class="lock-icon"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></span>
                 <span>Active detector weights protected. New weights validated across multi-gate benchmark tests before promotion.</span>
               </div>
 
               <div class="decision-action-row">
                 <button class="btn btn-primary btn-approve-training" id="btn-drawer-approve" onclick="handleApproveForRetrainingClick()" title="Authorize sample and initiate controlled candidate retraining (Hotkey: A)">
                   <span class="btn-hotkey-badge">[A]</span>
-                  <span>⚡ Authorize &amp; Retrain Pipeline</span>
+                  <span>Authorize &amp; Retrain Pipeline</span>
                 </button>
                 <button class="btn btn-secondary btn-reject-training" id="btn-drawer-reject" onclick="submitRejectionDecision()" title="Archive and reject from training pool (Hotkey: R)">
                   <span class="btn-hotkey-badge">[R]</span>
@@ -3339,7 +3350,7 @@
           <section class="drawer-section drawer-audit-section">
             <div class="drawer-section-header">
               <div class="drawer-section-title">
-                <span class="section-icon">📜</span> CRYPTOGRAPHIC AUDIT TRAIL &amp; LINEAGE
+                 CRYPTOGRAPHIC AUDIT TRAIL &amp; LINEAGE
               </div>
             </div>
             <div class="drawer-audit-wrap" id="drawer-audit-trail-list">
@@ -3358,7 +3369,7 @@
       <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
         <div style="display:flex; align-items:center; gap:8px;">
           <span class="pulse-indicator"></span>
-          <h2 class="card-title">CYBERGUARD // TRAINING AUTHORIZATION</h2>
+          <h2 class="card-title">CYBERGUARD</h2>
         </div>
         <button class="btn btn-xs btn-secondary" onclick="closeApprovalConfirmation()">✕</button>
       </div>
@@ -3399,14 +3410,14 @@
         </div>
 
         <div class="confirm-safety-note">
-          🛡️ <strong>Safety Guarantee:</strong> This verified sample will enter the controlled training pipeline.
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline;vertical-align:middle;margin-right:3px;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg><strong>Safety Guarantee:</strong> This verified sample will enter the controlled training pipeline.
           The active production detector (<code>detector.pt</code>) will <strong>NOT</strong> be overwritten directly.
           Candidate weights must pass multi-gate validation benchmarks before promotion is authorized.
         </div>
 
         <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px;">
           <button class="btn btn-secondary" onclick="closeApprovalConfirmation()">Cancel</button>
-          <button class="btn btn-primary" id="btn-confirm-approval-submit" onclick="executeApprovedTrainingDecision()">
+          <button class="btn btn-primary" id="btn-confirm-approval-submit" onclick="executeApprovedTrainingDecision()" data-text="✓ Confirm & Approve Sample">
             ✓ Confirm &amp; Approve Sample
           </button>
         </div>
@@ -3453,7 +3464,7 @@
     <div class="card modal-card" style="max-width:520px; width:92%; margin:auto; border:1px solid rgba(239, 68, 68, 0.4); box-shadow: 0 0 35px rgba(239, 68, 68, 0.25); background: rgba(15, 23, 42, 0.95); backdrop-filter: blur(16px);">
       <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(239, 68, 68, 0.3); background:rgba(239, 68, 68, 0.08); padding:14px 18px;">
         <div style="display:flex; align-items:center; gap:10px;">
-          <span style="color:#ef4444; font-size:18px;">⚠️</span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
           <div>
             <h2 class="card-title" style="color:#f87171; font-weight:700; letter-spacing:0.5px; font-size:15px; margin:0;">PERMANENT ACCOUNT &amp; DATA PURGE</h2>
             <div style="font-size:10px; color:#fca5a5; opacity:0.85; margin-top:2px;">Admin Console &bull; Irreversible Operation</div>
@@ -3497,7 +3508,7 @@
             <li>Pending review queue submissions and personal reports</li>
           </ul>
           <div style="margin-top:8px; color:#34d399; font-size:11px; display:flex; align-items:center; gap:6px;">
-            <span>🛡️</span> <span>Shared database, global threat intelligence, and other users' records remain strictly protected.</span>
+            <span>Shared database, global threat intelligence, and other users' records remain strictly protected.</span>
           </div>
         </div>
 
@@ -3514,7 +3525,7 @@
 
         <div style="display:flex; justify-content:flex-end; gap:10px;">
           <button type="button" class="nexus-btn nexus-btn-ghost nexus-btn-sm" id="delete-user-cancel-btn" onclick="closeDeleteUserModal()">Cancel</button>
-          <button type="button" class="nexus-btn nexus-btn-danger nexus-btn-sm" id="delete-user-submit-btn" disabled onclick="executeAccountPurge()" style="padding:6px 16px;">
+          <button type="button" class="nexus-btn nexus-btn-danger nexus-btn-sm" id="delete-user-submit-btn" disabled onclick="executeAccountPurge()" style="padding:6px 16px;" data-text="Confirm & Purge Data">
             Confirm &amp; Purge Data
           </button>
         </div>
@@ -3553,7 +3564,7 @@
       <div class="card-header" style="position:sticky; top:0; background:rgba(11,17,32,0.98); backdrop-filter:blur(14px); z-index:10; border-bottom:1px solid var(--border-subtle); padding:14px 18px; margin-bottom:0;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div style="width:28px; height:28px; border-radius:6px; background:rgba(6,182,212,0.15); display:flex; align-items:center; justify-content:center; color:#06b6d4; font-size:16px;">
-            ⚡
+            
           </div>
           <div>
             <h2 class="card-title" style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px;">
@@ -3598,7 +3609,7 @@
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span style="font-size:11px; color:var(--text-muted);">Deterministic zero-latency offline cyber-analyst engine</span>
             <button class="btn btn-primary btn-sm" id="btn-run-llm" onclick="runLLMCopilotAnalysis()">
-              ⚡ Run AI Security Analysis
+              Run AI Security Analysis
             </button>
           </div>
         </div>
@@ -3653,8 +3664,8 @@
         </div>
         <div style="display:flex; justify-content:flex-end; gap:8px;">
           <button class="btn btn-secondary btn-sm" onclick="closeReportModal()">Cancel</button>
-          <button class="btn btn-primary btn-sm" id="btn-generate-report" onclick="generateThreatReport()">
-            📄 Generate &amp; Download Report
+          <button class="btn btn-primary btn-sm" id="btn-generate-report" onclick="generateThreatReport()" data-text="Generate & Download Report">
+            Generate &amp; Download Report
           </button>
         </div>
       </div>
@@ -3700,7 +3711,7 @@
         </div>
         <div style="display:flex; justify-content:flex-end; gap:8px;">
           <button class="btn btn-secondary btn-sm" onclick="closeQuarantineModal()">Cancel</button>
-          <button class="btn btn-danger btn-sm" onclick="submitManualQuarantine()">⚡ Enforce Quarantine</button>
+          <button class="btn btn-danger btn-sm" onclick="submitManualQuarantine()" data-text="Enforce Quarantine">Enforce Quarantine</button>
         </div>
       </div>
     </div>
@@ -3740,8 +3751,8 @@
         </div>
         <pre id="audit-modal-payload" style="background:#040916; border:1px solid rgba(0,212,255,0.15); border-radius:8px; padding:14px; font-size:11.5px; font-family:'JetBrains Mono', monospace; color:#e2e8f0; max-height:280px; overflow-y:auto; white-space:pre-wrap; word-break:break-word;"></pre>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px;">
-          <button class="btn btn-secondary btn-sm" id="btn-copy-audit-json" onclick="copyAuditModalPayload()">📋 Copy Event JSON</button>
-          <button class="btn btn-primary btn-sm" onclick="closeAuditDetailModal()">Close Inspector</button>
+          <button class="btn btn-secondary btn-sm" id="btn-copy-audit-json" onclick="copyAuditModalPayload()">Copy Event JSON</button>
+          <button class="btn btn-primary btn-sm" onclick="closeAuditDetailModal()" data-text="Close Inspector">Close Inspector</button>
         </div>
       </div>
     </div>
@@ -3753,7 +3764,7 @@
       <div class="card-header" style="position:sticky; top:0; background:rgba(11,17,32,0.98); backdrop-filter:blur(14px); z-index:10; border-bottom:1px solid rgba(6,182,212,0.2); padding:14px 18px; margin-bottom:0; display:flex; justify-content:space-between; align-items:center;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div style="width:30px; height:30px; border-radius:6px; background:rgba(6,182,212,0.15); display:flex; align-items:center; justify-content:center; color:#06b6d4; font-size:16px;">
-            🔬
+            
           </div>
           <div>
             <h2 class="card-title" style="font-size:14px; margin:0; display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono', monospace; color:#38bdf8;">
@@ -3819,7 +3830,7 @@
       <div class="card-header" style="position:sticky; top:0; background:rgba(11,17,32,0.98); backdrop-filter:blur(14px); z-index:10; border-bottom:1px solid rgba(56,189,248,0.2); padding:14px 18px; margin-bottom:0; display:flex; justify-content:space-between; align-items:center;">
         <div style="display:flex; align-items:center; gap:10px;">
           <div style="width:30px; height:30px; border-radius:6px; background:rgba(56,189,248,0.15); display:flex; align-items:center; justify-content:center; color:#38bdf8; font-size:16px;">
-            📷
+            
           </div>
           <div>
             <h2 class="card-title" style="font-size:14px; margin:0; display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono', monospace; color:#38bdf8;">
@@ -3840,14 +3851,15 @@
         </div>
 
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:12px; border-top:1px solid var(--border-subtle);">
-          <button class="btn btn-secondary btn-sm" id="btn-copy-exif-json" onclick="copyExifJSON()">📋 Copy EXIF JSON</button>
-          <button class="btn btn-primary btn-sm" onclick="closeImageExifModal()">Close Inspector</button>
+          <button class="btn btn-secondary btn-sm" id="btn-copy-exif-json" onclick="copyExifJSON()">Copy EXIF JSON</button>
+          <button class="btn btn-primary btn-sm" onclick="closeImageExifModal()" data-text="Close Inspector">Close Inspector</button>
         </div>
       </div>
     </div>
   </div>
 
-  <script src="/static/app.js?v=4.2"></script>
+  <script src="./config.js"></script>
+  <script src="./app.js?v=4.8"></script>
 </body>
 
 </html>

@@ -258,7 +258,7 @@ fun AlertHistoryScreen(navController: NavController, viewModel: MainViewModel) {
                                 color = StatusWarning
                             )
                             Text(
-                                "AUTHENTICATION REQUIRED // ZERO-TRUST ACCESS",
+                                "AUTHENTICATION REQUIRED",
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 8.sp,
@@ -506,7 +506,7 @@ fun AlertHistoryScreen(navController: NavController, viewModel: MainViewModel) {
                                         }
 
                                         Text(
-                                            text = "First seen: ${inc.firstSeen} // Last seen: ${inc.lastSeen}",
+                                            text = "First seen: ${inc.firstSeen} • Last seen: ${inc.lastSeen}",
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 fontFamily = FontFamily.Monospace,
                                                 fontSize = 10.sp,
@@ -640,7 +640,7 @@ fun AlertHistoryScreen(navController: NavController, viewModel: MainViewModel) {
 
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Text(
-                                                text = "⚡ ADVISORY ONLY // Verify authorization before executing containment actions.",
+                                                text = "ADVISORY ONLY",
                                                 style = MaterialTheme.typography.bodySmall.copy(
                                                     fontFamily = FontFamily.Monospace,
                                                     fontSize = 9.sp,

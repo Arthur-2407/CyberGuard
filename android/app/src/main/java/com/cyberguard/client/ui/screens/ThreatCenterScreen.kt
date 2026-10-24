@@ -91,7 +91,7 @@ fun ThreatCenterScreen(navController: NavController, viewModel: MainViewModel) {
     var isAnalyzingImage by remember { mutableStateOf(false) }
     var imageThreatResult by remember { mutableStateOf<ThreatEvent?>(null) }
     var imageError by remember { mutableStateOf<String?>(null) }
-    var scanPhaseText by remember { mutableStateOf("ARMED // IDLE") }
+    var scanPhaseText by remember { mutableStateOf("ARMED") }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         imageUri = uri
@@ -536,7 +536,7 @@ fun ThreatCenterScreen(navController: NavController, viewModel: MainViewModel) {
                                 } finally {
                                     try { tempFile.delete() } catch (ignored: Exception) {}
                                     isAnalyzingImage = false
-                                    scanPhaseText = "ARMED // IDLE"
+                                    scanPhaseText = "ARMED"
                                 }
                             }
                         }
@@ -981,7 +981,7 @@ fun ThreatCenterScreen(navController: NavController, viewModel: MainViewModel) {
                     Column {
                         Text("TOKEN CONSERVATION ENCLAVE", style = MaterialTheme.typography.labelSmall, color = CyberNeonCyan)
                         Text(
-                            "Scope: ${enclaveMetrics?.activeScope ?: "phishing_and_url"} // Zero quota leakage",
+                            "Scope: ${enclaveMetrics?.activeScope ?: "phishing_and_url"}",
                             style = MaterialTheme.typography.bodySmall,
                             color = TextSecondary
                         )
@@ -1554,7 +1554,7 @@ fun AutomaticAiThreatIntelligenceCard(
             val briefing = res.executiveSummary ?: res.executiveBriefing ?: res.threatNarrative ?: res.narrative
             if (!briefing.isNullOrBlank()) {
                 Text(
-                    text = "EXECUTIVE BRIEFING // AI SYNTHESIS",
+                    text = "EXECUTIVE BRIEFING",
                     style = MaterialTheme.typography.labelSmall.copy(
                         fontFamily = FontFamily.Monospace,
                         color = CyberBlue,
@@ -1673,7 +1673,7 @@ fun AutomaticAiThreatIntelligenceCard(
             // Advisory Disclaimer
             Spacer(modifier = Modifier.height(10.dp))
             Text(
-                text = "⚡ AUTONOMOUS ADVISORY // Model-derived reasoning. Authoritative operator approval required prior to containment execution.",
+                text = "AUTONOMOUS ADVISORY",
                 style = MaterialTheme.typography.bodySmall.copy(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 9.sp,

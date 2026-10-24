@@ -212,6 +212,23 @@ class VoiceCloneDetector:
                 logger.warning(f"AASIST inference failed ({exc}).")
                 aasist_raw = None
 
+        # Safety check: if audio is completely flat or empty, return non-threatening result immediately
+        if audio is None or len(audio) == 0 or np.all(audio == 0) or float(np.std(audio)) < 1e-6:
+            return ChunkDetectionResult(
+                chunk_id=chunk_id,
+                timestamp=time.time(),
+                synthetic_probability=0.0,
+                processing_time_ms=0.0,
+                features_available={
+                    "mfcc": False, "log_mel": False, "prosodic": False,
+                    "wav2vec2": False, "speaker_embedding": False, "aasist": has_aasist,
+                },
+                speaker_embedding=None,
+                detector_state=self.detector_state,
+                calibration_mode="calibrated_probability",
+                pitch_analysis={"pitch_verdict": "SILENCE", "is_pitch_anomaly": False},
+            )
+
         # 2b. Acoustic Pitch & Prosodic Signal Analysis (Physical vocal cord metrics)
         prosodic_vec = bundle.prosodic if hasattr(bundle, "prosodic") and bundle.prosodic is not None else np.zeros(7, dtype=np.float32)
         f0_mean = float(prosodic_vec[0]) if len(prosodic_vec) > 0 else 0.0
@@ -220,23 +237,26 @@ class VoiceCloneDetector:
         shimmer_val = float(prosodic_vec[3]) if len(prosodic_vec) > 3 else 0.0
         hnr_val = float(prosodic_vec[4]) if len(prosodic_vec) > 4 else 0.0
 
-        # Physical Pitch Stability & Prosodic Verdict:
-        # Organic speech: F0 dynamic modulation (std: 20-70Hz), jitter (0.015-0.050), clean HNR (>10dB)
-        # Cloned AI speech: Vocoder frame-stitching boundary jitter (>=0.060), or flat pitch monotony
-        if jitter_val > 0.0:
+        # Voiced speech validation: pitch, jitter, and shimmer are ONLY meaningful when
+        # voiced vocal tract resonance is present. Random noise period jumps must never trigger pitch anomaly.
+        has_voiced_speech = bool(60.0 <= f0_mean <= 500.0 and hnr_val > 2.0 and jitter_val > 0.0)
+
+        if has_voiced_speech:
             if jitter_val < 0.052:
                 stability_pct = max(75.0, min(98.5, 98.0 - (jitter_val - 0.02) * 350.0))
             else:
                 stability_pct = max(20.0, min(65.0, 65.0 - (jitter_val - 0.052) * 1100.0))
-        else:
-            stability_pct = 92.0
 
-        is_pitch_anomaly = bool(
-            (jitter_val >= 0.060) or
-            (f0_mean > 80.0 and f0_std < 12.0) or
-            (f0_mean > 280.0 and jitter_val >= 0.052)
-        )
-        pitch_verdict = "SYNTHETIC PITCH ANOMALY" if is_pitch_anomaly else "ORGANIC HUMAN PROSODY"
+            is_pitch_anomaly = bool(
+                (jitter_val >= 0.060) or
+                (f0_mean > 80.0 and f0_std < 12.0) or
+                (f0_mean > 280.0 and jitter_val >= 0.052)
+            )
+            pitch_verdict = "SYNTHETIC PITCH ANOMALY" if is_pitch_anomaly else "ORGANIC HUMAN PROSODY"
+        else:
+            stability_pct = 95.0
+            is_pitch_anomaly = False
+            pitch_verdict = "UNVOICED / NO PITCH DETECTED"
 
         pitch_data = {
             "f0_mean_hz": round(f0_mean, 1),
@@ -251,36 +271,37 @@ class VoiceCloneDetector:
 
         if has_aasist and aasist_raw is not None and has_learned_model and nn_prob is not None:
             # Calibrated multi-model neural consensus:
-            # AASIST (SOTA raw waveform graph attention) + EnsembleDetector (spectral CNN-BiLSTM-Attention).
-            # When both models are available, compute balanced consensus (0.60 AASIST + 0.40 CNN-RNN).
-            #
-            # Anti-Dilution Security Protection:
-            # If either deep model detects synthetic cloning (prob >= 0.50 Bayesian decision threshold),
-            # prevent the other model's blind spot (e.g. frozen AASIST missing modern neural vocoders)
-            # from diluting a confirmed threat into a false negative.
+            # AASIST (SOTA raw waveform graph attention) + EnsembleDetector (detector.pt)
+            # Balanced consensus: 0.60 AASIST + 0.40 EnsembleDetector
             base_consensus = 0.60 * aasist_raw + 0.40 * nn_prob
             max_threat = max(aasist_raw, nn_prob)
-            if max_threat >= 0.50:
+
+            # Anti-Dilution Security Protection:
+            # If confirmed synthetic cloning (AASIST >= 0.85 or both models indicate threat >= 0.55),
+            # preserve strong threat response.
+            if aasist_raw >= 0.85 or (aasist_raw >= 0.60 and nn_prob >= 0.55):
                 synthetic_prob = max(base_consensus, max_threat * 0.90)
+            elif aasist_raw < 0.10 and nn_prob < 0.55:
+                # Both deep models and acoustic filters confirm organic human voice
+                synthetic_prob = min(base_consensus, 0.25)
             else:
                 synthetic_prob = base_consensus
 
-            # Corroborate with real physical pitch telemetry:
-            if is_pitch_anomaly:
-                # Physical vocoder frame-stitching boundary jitter or monotone anomaly detected:
-                # Confirm synthetic manipulation and guarantee threat score reflects physical evidence
-                synthetic_prob = max(synthetic_prob, 0.75)
-            elif not is_pitch_anomaly and max_threat < 0.35 and aasist_raw < 0.15:
-                # Both neural models and physical acoustics agree on organic human prosody
-                synthetic_prob = max(0.001, synthetic_prob * 0.80)
+            # Corroborate with physical pitch telemetry without arbitrary clamping:
+            if is_pitch_anomaly and max_threat >= 0.50:
+                # Physical vocoder frame-stitching boundary jitter corroborates neural suspicion
+                synthetic_prob = min(1.0, synthetic_prob + 0.05)
+            elif not is_pitch_anomaly and max_threat < 0.40 and aasist_raw < 0.10:
+                # Natural human vocal tract dynamic prosody confirmed
+                synthetic_prob = max(0.001, synthetic_prob * 0.85)
         elif has_aasist and aasist_raw is not None:
             synthetic_prob = aasist_raw
-            if is_pitch_anomaly:
-                synthetic_prob = max(synthetic_prob, 0.75)
+            if is_pitch_anomaly and aasist_raw >= 0.50:
+                synthetic_prob = min(1.0, synthetic_prob + 0.05)
         elif has_learned_model and nn_prob is not None:
             synthetic_prob = nn_prob
-            if is_pitch_anomaly:
-                synthetic_prob = max(synthetic_prob, 0.75)
+            if is_pitch_anomaly and nn_prob >= 0.50:
+                synthetic_prob = min(1.0, synthetic_prob + 0.05)
         else:
             synthetic_prob = self._heuristic_score(bundle)
 

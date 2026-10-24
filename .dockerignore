@@ -1,0 +1,45 @@
+# Version control & internal IDE tooling
+.git
+.gitignore
+.github
+.agents
+.edge_profile
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Environment files containing local secrets
+.env
+.env.*
+!.env.example
+
+# Large local testing & history data (mounted dynamically at runtime if desired)
+data/audio_vault/
+data/*.db*
+data/*.log
+data/asvspoof2019/
+data/reports/
+data/user_databases/
+
+# Candidate & legacy checkpoints (exclude intermediate training checkpoints from image build)
+backend/models/weights/detector_adapted_*.pt
+backend/models/weights/detector_candidate_*.pt
+backend/models/weights/detector_candidate.pt
+backend/models/weights/detector_v*.pt
+
+# Local tests, scratch, and dumps
+tests/
+demo/
+android/
+scripts/
+verification/
+dump.txt
+Problem_Statement_9.pdf
+*.log

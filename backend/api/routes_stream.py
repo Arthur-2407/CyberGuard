@@ -37,12 +37,16 @@ import logging
 import time
 import uuid
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_STREAM_ML_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cyberguard-stream-ml")
 
 
 @router.websocket("/ws/stream")
@@ -190,56 +194,77 @@ async def websocket_stream(websocket: WebSocket):
                 chunks = stream.push(data)
 
                 for chunk in chunks:
-                    current_chunk_id = chunk_counter
-                    chunk_counter += 1
-
-                    # Track overall processing latency for this chunk
                     t_receive = time.monotonic()
                     raw_chunk = chunk.copy()
 
-                    # Calculate raw audio RMS energy level
-                    rms = float(np.sqrt(np.mean(raw_chunk ** 2))) if len(raw_chunk) > 0 else 0.0
+                    # Audio Forensics Speech-Activity Gate:
+                    # Distinguish silence/ambient room noise from genuine human speech.
+                    # Never feed silence or amplified background hiss into neural deepfake models.
+                    from backend.audio.preprocessor import is_speech_present, preprocess_audio
 
-                    # Apply normalization and mild VAD in thread pool
-                    from backend.audio.preprocessor import preprocess_audio, normalize
-                    
+                    has_speech, speech_reason, speech_metrics = is_speech_present(
+                        raw_chunk,
+                        sr=app_settings.audio.sample_rate,
+                        rms_thresh=0.003,
+                        peak_thresh=0.012,
+                        min_speech_duration_sec=0.35,
+                    )
+
+                    if not has_speech:
+                        empty_frames += 1
+                        await websocket.send_text(json.dumps({
+                            "type": "status_update",
+                            "status": "WAITING_FOR_SPEECH",
+                            "detail": f"Listening for caller voice ({speech_reason.lower()})...",
+                            "rms": speech_metrics.get("rms", 0.0),
+                            "peak": speech_metrics.get("peak", 0.0),
+                            "speech_detected": False,
+                            "reason": speech_reason,
+                            "frames_received": frames_received,
+                            "active_detector": active_det_version,
+                        }))
+                        continue
+
+                    # Speech detected and validated by speech-activity gate
+                    # Execute audio preprocessing pipeline in thread pool preserving temporal waveform continuity
                     t_preprocess_start = time.monotonic()
                     processed_chunk = await loop.run_in_executor(
-                        None,
+                        _STREAM_ML_EXECUTOR,
                         functools.partial(
                             preprocess_audio,
-                            chunk,
+                            raw_chunk,
                             sr=app_settings.audio.sample_rate,
                             target_sr=app_settings.audio.sample_rate,
-                            apply_vad=True,
-                            vad_aggressiveness=1,
+                            apply_vad=False,
+                            normalize_method="peak",
                         )
                     )
                     t_preprocess_end = time.monotonic()
 
-                    # If VAD dropped all frames or telephony chunk is short, check acoustic energy
-                    if len(processed_chunk) == 0 or len(processed_chunk) < 8000:
-                        if rms >= 0.0008:
-                            # Natural speech energy present (normalized)
-                            processed_chunk = normalize(raw_chunk, method="peak")
-                        else:
-                            empty_frames += 1
-                            # True silence or listening pause
-                            await websocket.send_text(json.dumps({
-                                "type": "status_update",
-                                "status": "LISTENING",
-                                "detail": "Listening for caller voice...",
-                                "rms": round(rms, 4),
-                                "frames_received": frames_received,
-                                "active_detector": active_det_version,
-                            }))
-                            continue
-                    
+                    # Validate minimum usable speech duration
+                    min_samples = int(app_settings.audio.sample_rate * 0.35)  # 0.35s = 5,600 samples
+                    if len(processed_chunk) < min_samples:
+                        empty_frames += 1
+                        await websocket.send_text(json.dumps({
+                            "type": "status_update",
+                            "status": "INSUFFICIENT_AUDIO",
+                            "detail": "Voice segment too short for reliable biometric analysis...",
+                            "rms": speech_metrics.get("rms", 0.0),
+                            "speech_detected": False,
+                            "reason": "INSUFFICIENT_AUDIO",
+                            "frames_received": frames_received,
+                            "active_detector": active_det_version,
+                        }))
+                        continue
+
+                    # Genuine speech validated — assign chunk ID and increment counter
                     valid_frames += 1
+                    current_chunk_id = chunk_counter
+                    chunk_counter += 1
 
                     # Run ML detection in thread pool — prevents blocking the async event loop
                     result = await loop.run_in_executor(
-                        None,
+                        _STREAM_ML_EXECUTOR,
                         functools.partial(
                             app_detector.process_chunk,
                             processed_chunk,
@@ -271,9 +296,13 @@ async def websocket_stream(websocket: WebSocket):
                         speaker_similarity=speaker_similarity,
                     )
 
-                    # Voice classification: genuine human vs cloned synthetic voice
-                    is_cloned = risk_snapshot.combined_risk >= 0.60
-                    voice_classification = "CLONED_VOICE" if is_cloned else "GENUINE_VOICE"
+                    # Voice classification: genuine human vs cloned synthetic voice (calibrated 3-way decision)
+                    if risk_snapshot.combined_risk < 0.40:
+                        voice_classification = "GENUINE_VOICE"
+                    elif risk_snapshot.combined_risk >= 0.70:
+                        voice_classification = "CLONED_VOICE"
+                    else:
+                        voice_classification = "INCONCLUSIVE"
 
                     # Get recommendation
                     recommendation = threshold_engine.evaluate(risk_snapshot.combined_risk)
@@ -289,13 +318,13 @@ async def websocket_stream(websocket: WebSocket):
                         speaker_id=consistency_result.get("speaker_id"),
                         speaker_similarity=speaker_similarity,
                         voice_classification=voice_classification,
-                        rms=round(rms, 4),
+                        rms=round(speech_metrics.get("rms", 0.0), 4),
                     )
                     
-                    # Feed high risk to Incident Manager
+                    # Feed high risk to Incident Manager only for confirmed synthetic cloned speech detections
                     from backend.main import get_app_incident_manager
                     inc_manager = get_app_incident_manager()
-                    if inc_manager and risk_snapshot.alert_level.value in ["HIGH", "CRITICAL"]:
+                    if inc_manager and risk_snapshot.alert_level.value in ["HIGH", "CRITICAL"] and voice_classification == "CLONED_VOICE":
                         from backend.threats.models import ThreatEvent, ThreatCategory, RiskLevel, Explanation, Evidence
                         
                         threat_category = ThreatCategory.VOICE_CLONING

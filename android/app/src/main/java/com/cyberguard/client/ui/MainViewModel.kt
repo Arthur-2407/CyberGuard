@@ -10,6 +10,7 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.cyberguard.client.model.CallMonitorRepository
+import com.cyberguard.client.network.ConnectionManager
 import com.cyberguard.client.network.ConnectionState
 import com.cyberguard.client.network.InstalledAppInfo
 import com.cyberguard.client.network.DeviceHardwareInfo
@@ -81,8 +82,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun connectManually(host: String, port: String) {
-        val p = port.toIntOrNull() ?: 3000
+        val p = port.toIntOrNull() ?: if (host.startsWith("https://") || host.contains(".vercel.app")) 443 else 3000
         connectionManager.connectManually(host, p)
+    }
+
+    fun connectToDeployedBackend(url: String = ConnectionManager.DEFAULT_CLOUD_BACKEND_URL) {
+        connectionManager.connectToDeployedBackend(url)
     }
     
     fun retryDiscovery() {

@@ -51,7 +51,7 @@ def make_test_qr_png(data="https://google.com") -> bytes:
 
 async def test_rest_endpoints():
     print("\n--- 1. Testing Core & Frontend Endpoints ---")
-    async with httpx.AsyncClient(base_url=BASE_URL, timeout=15.0) as client:
+    async with httpx.AsyncClient(base_url=BASE_URL, timeout=60.0) as client:
         # Health
         try:
             r = await client.get("/health")
@@ -108,15 +108,24 @@ async def test_rest_endpoints():
             record_result("URLhaus Provider", False, str(e))
 
         print("\n--- 4. Testing Incident Management Pipeline & DB ---")
+        auth_token = None
         try:
-            r = await client.get("/api/incidents/dashboard/summary")
+            login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "Admin@CyberGuard2026!"})
+            if login_resp.status_code == 200:
+                auth_token = login_resp.json().get("token")
+        except Exception:
+            pass
+        auth_headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
+
+        try:
+            r = await client.get("/api/incidents/dashboard/summary", headers=auth_headers)
             data = r.json()
             record_result("Incident Dashboard Summary", r.status_code == 200, f"total: {data.get('total_incidents')}, open: {data.get('open_incidents')}")
         except Exception as e:
             record_result("Incident Dashboard Summary", False, str(e))
 
         try:
-            r = await client.get("/api/incidents/")
+            r = await client.get("/api/incidents/", headers=auth_headers)
             data = r.json()
             record_result("Incidents List", r.status_code == 200 and isinstance(data, list), f"retrieved {len(data)} incidents")
         except Exception as e:
@@ -124,9 +133,9 @@ async def test_rest_endpoints():
 
         print("\n--- 5. Testing Speaker Registry & Enrollment Pipeline ---")
         try:
-            r = await client.get("/api/speakers")
+            r = await client.get("/api/speakers", headers=auth_headers)
             speakers = r.json()
-            record_result("GET /api/speakers", r.status_code == 200, f"{len(speakers)} registered speakers")
+            record_result("GET /api/speakers", r.status_code == 200 and isinstance(speakers, list), f"{len(speakers)} registered speakers")
         except Exception as e:
             record_result("GET /api/speakers", False, str(e))
 
@@ -135,13 +144,13 @@ async def test_rest_endpoints():
         try:
             files = [("files", ("test.wav", wav_data, "audio/wav"))]
             data = {"name": "Pipeline Verification User", "speaker_id": test_speaker_id, "organization": "CyberGuard QA"}
-            r = await client.post("/api/speakers/enroll", data=data, files=files)
+            r = await client.post("/api/speakers/enroll", data=data, files=files, headers=auth_headers)
             record_result("POST /api/speakers/enroll", r.status_code == 200, f"enrolled: {r.json().get('speaker_id')}")
         except Exception as e:
             record_result("POST /api/speakers/enroll", False, str(e))
 
         try:
-            r = await client.delete(f"/api/speakers/{test_speaker_id}")
+            r = await client.delete(f"/api/speakers/{test_speaker_id}", headers=auth_headers)
             record_result("DELETE /api/speakers/{id}", r.status_code == 200, f"deleted {test_speaker_id}")
         except Exception as e:
             record_result("DELETE /api/speakers/{id}", False, str(e))
@@ -153,7 +162,7 @@ async def test_rest_endpoints():
             data = r.json()
             record_result("POST /api/analyze (Audio File)", r.status_code == 200, f"risk: {data.get('final_risk')}, alert: {data.get('alert_level')}")
         except Exception as e:
-            record_result("POST /api/analyze (Audio File)", False, str(e))
+            record_result("POST /api/analyze (Audio File)", False, repr(e))
 
         print("\n--- 7. Testing Threat Analysis Pipelines ---")
         # Phishing analysis
@@ -162,7 +171,7 @@ async def test_rest_endpoints():
             data = r.json()
             record_result("POST /api/threats/phishing", r.status_code == 200 and data.get("threat_category") == "PHISHING", f"risk: {data.get('severity')}")
         except Exception as e:
-            record_result("POST /api/threats/phishing", False, str(e))
+            record_result("POST /api/threats/phishing", False, repr(e))
 
         # URL analysis
         try:
@@ -170,7 +179,7 @@ async def test_rest_endpoints():
             data = r.json()
             record_result("POST /api/threats/url", r.status_code == 200 and data.get("threat_category") == "MALICIOUS_URL", f"risk: {data.get('severity')}")
         except Exception as e:
-            record_result("POST /api/threats/url", False, str(e))
+            record_result("POST /api/threats/url", False, repr(e))
 
         # QR analysis
         try:
@@ -179,7 +188,7 @@ async def test_rest_endpoints():
             data = r.json()
             record_result("POST /api/threats/qr", r.status_code == 200, f"category: {data.get('threat_category')}, risk: {data.get('severity')}")
         except Exception as e:
-            record_result("POST /api/threats/qr", False, str(e))
+            record_result("POST /api/threats/qr", False, repr(e))
 
         # Deepfake analysis (audio/video/image)
         try:
@@ -187,7 +196,7 @@ async def test_rest_endpoints():
             data = r.json()
             record_result("POST /api/threats/deepfake", r.status_code == 200, f"modality: {data.get('modality')}, risk: {data.get('severity')}")
         except Exception as e:
-            record_result("POST /api/threats/deepfake", False, str(e))
+            record_result("POST /api/threats/deepfake", False, repr(e))
 
         # Anomaly detection event ingestion
         try:

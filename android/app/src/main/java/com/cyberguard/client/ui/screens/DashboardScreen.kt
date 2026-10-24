@@ -868,7 +868,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = when (state) {
-                                ConnectionState.CONNECTED -> "ONLINE // ACTIVE"
+                                ConnectionState.CONNECTED -> "ONLINE"
                                 ConnectionState.DISCOVERING -> "DISCOVERING"
                                 ConnectionState.VALIDATING -> "VALIDATING"
                                 else -> "OFFLINE"
@@ -1241,9 +1241,9 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                     // Auto-Adapting Status Telemetry Banner
                     Text(
                         text = when (currentAlertLevel) {
-                            ThreatAlertLevel.NORMAL -> "ACTIVE // NO THREATS DETECTED"
-                            ThreatAlertLevel.ELEVATED -> "ELEVATED // ANOMALY ANALYSIS ACTIVE"
-                            ThreatAlertLevel.CRITICAL -> "CRITICAL // ACTIVE BREACH INTERCEPTED"
+                            ThreatAlertLevel.NORMAL -> "ACTIVE"
+                            ThreatAlertLevel.ELEVATED -> "ELEVATED"
+                            ThreatAlertLevel.CRITICAL -> "CRITICAL"
                         },
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,

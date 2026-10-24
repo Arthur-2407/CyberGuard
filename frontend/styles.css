@@ -4,15 +4,15 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Surface Layers (Deep Command Center Dark Navy) */
-  --bg-base:        #030712;
-  --bg-surface:     #070d1d;
-  --bg-elevated:    #0d1527;
-  --bg-card:        rgba(10, 17, 34, 0.88);
-  --bg-card-hover:  rgba(15, 26, 50, 0.94);
+  /* Surface Layers (Pure Black SOC Theme) */
+  --bg-base:        #000000;
+  --bg-surface:     #000000;
+  --bg-elevated:    #000000;
+  --bg-card:        #000000;
+  --bg-card-hover:  #080808;
   --bg-card-subtle: rgba(255, 255, 255, 0.02);
-  --bg-input:       rgba(6, 11, 24, 0.85);
-  --bg-input-focus: rgba(8, 16, 36, 0.95);
+  --bg-input:       #000000;
+  --bg-input-focus: #080808;
 
   /* Primary Cyber Accents */
   --accent-primary:   #06b6d4;  /* Electric Cyan */
@@ -21,6 +21,11 @@
   --accent-purple:    #8b5cf6;  /* Multi-provider attribution */
   --accent-glow:      rgba(6, 182, 212, 0.22);
   --accent-gradient:  linear-gradient(135deg, #06b6d4 0%, #0284c7 100%);
+
+  /* Blood Red · Cyberpunk Logo Crimson (Buttons & Urgent Actions) */
+  --blood-red:        #a10f1f;
+  --blood-red-hot:    #f81838;
+  --blood-red-grad:   linear-gradient(135deg, #a10f1f 0%, #f81838 100%);
 
   /* Semantic Security Severities */
   --risk-safe:            #10b981;
@@ -57,7 +62,7 @@
   --border:           rgba(56, 189, 248, 0.14);
 
   /* Glassmorphism & Depth Elevation */
-  --glass-bg:         rgba(10, 17, 34, 0.85);
+  --glass-bg:         #000000;
   --glass-border:     rgba(255, 255, 255, 0.07);
   --backdrop-blur:    blur(16px);
   --shadow-sm:        0 2px 6px rgba(0, 0, 0, 0.25);
@@ -189,6 +194,7 @@
 html {
   scroll-behavior: smooth;
   color-scheme: dark;
+  background-color: #000000;
 }
 
 body {
@@ -237,7 +243,7 @@ body::after {
   left: 0;
   right: 0;
   height: 50px;
-  background: rgba(3, 7, 18, 0.94);
+  background: #000000;
   backdrop-filter: var(--backdrop-blur);
   -webkit-backdrop-filter: var(--backdrop-blur);
   border-bottom: 1px solid var(--border-subtle);
@@ -271,42 +277,127 @@ body::after {
 .nav-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   user-select: none;
 }
 
 .nav-logo {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   cursor: pointer;
   text-decoration: none;
+  perspective: 600px;
+  position: relative;
   transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.nav-logo:hover {
-  transform: scale(1.04);
+/* Brand Logo Interactive Wrapper */
+.brand-logo-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  padding: 2px 4px;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), filter 0.35s ease;
+  will-change: transform, filter;
+  overflow: visible;
 }
 
-.nav-logo svg {
-  transition: transform 0.8s cubic-bezier(0.16, 1, 0.3, 1), filter 0.3s ease;
+.brand-logo-img {
+  height: 38px;
+  width: auto;
+  max-width: 150px;
+  object-fit: contain;
+  display: block;
+  mix-blend-mode: screen;
+  transform: translateY(2px);
+  filter: drop-shadow(0 0 8px rgba(0, 229, 255, 0.6)) drop-shadow(0 0 16px rgba(239, 68, 68, 0.38));
+  animation: cyberLogoBreathe 4s ease-in-out infinite alternate;
+  transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1), filter 0.35s ease;
+  pointer-events: none;
 }
 
-.nav-logo:hover svg {
-  transform: rotate(360deg);
-  filter: drop-shadow(0 0 10px #06b6d4) drop-shadow(0 0 20px #0284c7);
+/* Ambient breathing cyber glow */
+@keyframes cyberLogoBreathe {
+  0% {
+    filter: drop-shadow(0 0 6px rgba(0, 229, 255, 0.45)) drop-shadow(0 0 14px rgba(255, 0, 128, 0.25));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 11px rgba(0, 229, 255, 0.8)) drop-shadow(0 0 22px rgba(255, 0, 128, 0.5)) drop-shadow(0 0 30px rgba(16, 185, 129, 0.3));
+    transform: scale(1.02);
+  }
+  100% {
+    filter: drop-shadow(0 0 7px rgba(0, 229, 255, 0.5)) drop-shadow(0 0 15px rgba(255, 0, 128, 0.3));
+    transform: scale(1);
+  }
 }
 
-.brand-name {
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: -0.3px;
-  color: #ffffff;
-  transition: text-shadow 0.3s ease;
+/* Diagonal Laser Photon Scanline Sweep across Logo */
+.brand-logo-scanline {
+  position: absolute;
+  inset: -2px;
+  border-radius: 6px;
+  background: linear-gradient(115deg, transparent 20%, rgba(0, 229, 255, 0.25) 45%, rgba(255, 255, 255, 0.8) 50%, rgba(255, 0, 128, 0.35) 55%, transparent 75%);
+  background-size: 250% 100%;
+  background-position: 200% 0;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: screen;
+  transition: opacity 0.3s ease;
 }
 
-.nav-logo:hover .brand-name {
-  text-shadow: 0 0 12px rgba(0, 229, 255, 0.8), 0 0 24px rgba(0, 229, 255, 0.4);
+/* Holographic Glow Aura */
+.brand-logo-glow {
+  position: absolute;
+  inset: -6px;
+  border-radius: 10px;
+  background: radial-gradient(ellipse at center, rgba(0, 229, 255, 0.2) 0%, rgba(255, 0, 128, 0.1) 50%, transparent 80%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease, transform 0.4s ease;
+}
+
+/* Interactive Hover States */
+.nav-logo:hover .brand-logo-wrap {
+  transform: scale(1.06) translateY(-1px);
+}
+
+.nav-logo:hover .brand-logo-img {
+  filter: drop-shadow(0 0 14px #00e5ff) drop-shadow(0 0 26px #ff007f) drop-shadow(0 0 36px rgba(16, 185, 129, 0.45)) brightness(1.15);
+  animation: cyberLogoHoverGlitch 1.5s infinite ease-in-out;
+}
+
+.nav-logo:hover .brand-logo-scanline {
+  opacity: 1;
+  animation: logoScanlineSweep 1.8s infinite linear;
+}
+
+.nav-logo:hover .brand-logo-glow {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+@keyframes logoScanlineSweep {
+  0% { background-position: 200% 0; }
+  100% { background-position: -100% 0; }
+}
+
+@keyframes cyberLogoHoverGlitch {
+  0%, 100% { transform: translate(0, 0); }
+  15% { transform: translate(-1.5px, 0.8px) skewX(-1deg); }
+  30% { transform: translate(1.5px, -0.8px) skewX(1deg); }
+  45% { transform: translate(-0.8px, -0.5px); }
+  60% { transform: translate(1px, 0.5px); }
+  75% { transform: translate(0, 0); }
+}
+
+/* Active / Click State */
+.nav-logo:active .brand-logo-wrap {
+  transform: scale(0.96) translateY(1px);
+  filter: brightness(1.3) drop-shadow(0 0 24px #00e5ff);
 }
 
 .brand-badge {
@@ -327,6 +418,7 @@ body::after {
   background: rgba(6, 182, 212, 0.28);
   border-color: #06b6d4;
   box-shadow: 0 0 10px rgba(6, 182, 212, 0.6);
+  transform: translateY(-1px);
 }
 
 /* Nav Links Tabs Container (Red Highlighted Region) */
@@ -612,7 +704,7 @@ body::after {
   }
 }
 
-/* ── Base Cards & Universal Panels ───────────────────────────────────────── */
+/* ── Base Cards & Universal Panels — Smooth Mini Pop-Up Interactive Motion ── */
 .card {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
@@ -620,8 +712,21 @@ body::after {
   padding: 12px 14px;
   position: relative;
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.22s ease, box-shadow 0.22s ease, transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
-  transform-style: preserve-3d;
+  transform: translateY(0) scale(1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.26s ease;
+  will-change: transform, box-shadow;
+}
+
+.card:hover {
+  transform: translateY(-4px) scale(1.006);
+  border-color: rgba(0, 212, 255, 0.4);
+  box-shadow: var(--shadow-md), 0 10px 24px -2px rgba(0, 0, 0, 0.45), 0 0 16px rgba(0, 212, 255, 0.16);
+  z-index: 2;
+}
+
+.card:active {
+  transform: translateY(-1px) scale(1.002);
+  transition: transform 0.1s ease;
 }
 
 /* 50th-Century Cybernetic Corner Brackets on Interactive Cards */
@@ -629,6 +734,8 @@ body::after {
 .overview-cyber-deck::after,
 .overview-kpi-pod::before,
 .overview-kpi-pod::after,
+.sc-kpi-pod::before,
+.sc-kpi-pod::after,
 .overview-hero-card::before,
 .overview-hero-card::after {
   content: '';
@@ -642,6 +749,7 @@ body::after {
 
 .overview-cyber-deck::before,
 .overview-kpi-pod::before,
+.sc-kpi-pod::before,
 .overview-hero-card::before {
   top: -1px;
   left: -1px;
@@ -652,6 +760,7 @@ body::after {
 
 .overview-cyber-deck::after,
 .overview-kpi-pod::after,
+.sc-kpi-pod::after,
 .overview-hero-card::after {
   bottom: -1px;
   right: -1px;
@@ -876,13 +985,21 @@ body::after {
   z-index: 1;
 }
 
-/* Overview Hero Header Card */
+/* Overview Hero Header Card — Smooth Mini Pop-Up Motion */
 .overview-hero-card {
   padding: 10px 14px;
-  background: rgba(8, 14, 28, 0.92);
+  background: #000000;
   border: 1px solid rgba(0, 229, 255, 0.4) !important;
   box-shadow: 0 0 24px rgba(0, 229, 255, 0.16), inset 0 0 20px rgba(0, 229, 255, 0.05) !important;
   --bracket-color: #00e5ff;
+  transform: translateY(0) scale(1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.26s ease;
+  will-change: transform, box-shadow;
+}
+
+.overview-hero-card:hover {
+  transform: translateY(-3px) scale(1.004);
+  box-shadow: 0 10px 32px rgba(0, 229, 255, 0.24), inset 0 0 20px rgba(0, 229, 255, 0.08) !important;
 }
 
 /* Holographic Telemetry Strip */
@@ -1064,7 +1181,7 @@ body::after {
   font-size: 8px;
   font-weight: 800;
   color: #00e5ff;
-  background: rgba(3, 7, 18, 0.85);
+  background: #000000;
   padding: 1px 4px;
   border-radius: 2px;
   border: 1px solid rgba(0, 229, 255, 0.4);
@@ -1196,15 +1313,23 @@ body::after {
   text-align: center;
   position: relative;
   overflow: hidden;
-  background: rgba(8, 14, 28, 0.88);
+  background: #000000;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-radius: 9px;
-  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease;
+  transform: translateY(0) scale(1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s ease, border-color 0.26s ease;
+  will-change: transform, box-shadow;
 }
 
 .overview-kpi-pod:hover {
-  transform: translateY(-2px);
+  transform: translateY(-4px) scale(1.015);
+  z-index: 3;
+}
+
+.overview-kpi-pod:active {
+  transform: translateY(-1px) scale(1.005);
+  transition: transform 0.1s ease;
 }
 
 /* KPI 1: Active Threats (Vibrant Crimson Red Glow) */
@@ -1361,7 +1486,7 @@ body::after {
   position: absolute;
   inset: 22px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(0, 229, 255, 0.22) 0%, rgba(3, 7, 18, 0.95) 75%);
+  background: radial-gradient(circle, rgba(0, 229, 255, 0.22) 0%, #000000 75%);
   border: 1.5px solid rgba(0, 229, 255, 0.6);
   box-shadow: inset 0 0 16px rgba(0, 229, 255, 0.4);
 }
@@ -2308,16 +2433,17 @@ body::after {
 .gauge-container {
   position: relative;
   width: 280px;
-  height: 155px;
+  height: 184px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  padding-bottom: 26px;
 }
 
 .gauge-value {
   position: absolute;
-  bottom: 24px;
+  top: 72px;
   font-size: 32px;
   font-weight: 800;
   font-family: var(--font-mono);
@@ -2327,12 +2453,19 @@ body::after {
 
 .gauge-label {
   position: absolute;
-  bottom: 6px;
+  bottom: 0px;
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 1px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
   color: var(--risk-safe);
+  padding: 3px 14px;
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.25);
+  transition: all 0.25s ease;
 }
 
 .risk-meta {
@@ -3263,7 +3396,7 @@ body::after {
 
 /* Centered Modal Card */
 .modal-card {
-  background: rgba(10, 17, 34, 0.98);
+  background: #000000;
   border: 1px solid var(--border-medium);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
@@ -3383,13 +3516,13 @@ body::after {
 }
 
 .btn-primary {
-  background: var(--accent-gradient);
-  color: #030712;
-  box-shadow: 0 2px 8px rgba(6, 182, 212, 0.25);
+  background: var(--blood-red-grad, linear-gradient(135deg, #a10f1f 0%, #f81838 100%));
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(248, 24, 56, 0.35);
 }
 
 .btn-primary:hover:not(:disabled) {
-  box-shadow: 0 4px 14px rgba(6, 182, 212, 0.40);
+  box-shadow: 0 4px 14px rgba(248, 24, 56, 0.60);
   transform: translateY(-1px);
 }
 
@@ -3800,7 +3933,7 @@ body::after {
 }
 
 .review-spectrum-wrap::before {
-  content: 'ACOUSTIC SPECTRAL RADAR // 60 FPS HARMONIC OSCILLATION';
+  content: 'ACOUSTIC SPECTRAL RADAR';
   position: absolute;
   top: 4px;
   left: 10px;
@@ -6840,7 +6973,7 @@ body::after {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: radial-gradient(circle at center, rgba(13, 23, 48, 0.9) 0%, rgba(4, 9, 22, 0.95) 70%);
+  background: #000000;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.8);
 }
@@ -7684,7 +7817,7 @@ body::after {
 }
 
 .nexus-waveform-wrap::before {
-  content: 'NEURAL FREQUENCY SPECTRUM // 60 FPS TELEMETRY';
+  content: 'NEURAL FREQUENCY SPECTRUM';
   position: absolute;
   top: 4px;
   left: 10px;
@@ -8052,32 +8185,72 @@ body::after {
   }
 }
 
+/* Security Center KPI Pods — Unified with Command Overview Design */
 .sc-kpi-pod {
-  position: relative;
-  background: radial-gradient(circle at 50% 0%, rgba(13, 24, 52, 0.85) 0%, rgba(4, 9, 22, 0.95) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 10px;
-  padding: 14px 12px 12px;
+  padding: 12px 14px;
+  min-height: 120px;
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
   align-items: center;
   text-align: center;
+  position: relative;
   overflow: hidden;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  background: rgba(8, 14, 28, 0.88) !important;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-radius: 9px;
+  transform: translateY(0) scale(1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s ease, border-color 0.26s ease;
+  will-change: transform, box-shadow;
 }
 
 .sc-kpi-pod:hover {
-  transform: translateY(-3px);
-  border-color: rgba(0, 212, 255, 0.45);
-  box-shadow: 0 8px 28px rgba(0, 212, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transform: translateY(-4px) scale(1.015);
+  z-index: 3;
+}
+
+.sc-kpi-pod:active {
+  transform: translateY(-1px) scale(1.005);
+  transition: transform 0.1s ease;
+}
+
+.sc-kpi-pod.threat {
+  --bracket-color: #ff2a5f;
+  border: 1.5px solid #ff2a5f !important;
+  box-shadow: 0 0 24px rgba(255, 42, 95, 0.45), inset 0 0 18px rgba(255, 42, 95, 0.12) !important;
+}
+
+.sc-kpi-pod.incident {
+  --bracket-color: #ff9900;
+  border: 1.5px solid #ff9900 !important;
+  box-shadow: 0 0 24px rgba(255, 153, 0, 0.45), inset 0 0 18px rgba(255, 153, 0, 0.12) !important;
+}
+
+.sc-kpi-pod.alerts, .sc-kpi-pod.tile-alerts, .sc-kpi-pod.tile-events {
+  --bracket-color: #00f0ff;
+  border: 1.5px solid #00f0ff !important;
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.45), inset 0 0 18px rgba(0, 240, 255, 0.12) !important;
+}
+
+.sc-kpi-pod.critical {
+  --bracket-color: #ff1744;
+  border: 1.5px solid #ff1744 !important;
+  box-shadow: 0 0 24px rgba(255, 23, 68, 0.45), inset 0 0 18px rgba(255, 23, 68, 0.12) !important;
+}
+
+.sc-kpi-pod.posture {
+  --bracket-color: #00e5ff;
+  border: 1.5px solid #00e5ff !important;
+  box-shadow: 0 0 28px rgba(0, 229, 255, 0.5), inset 0 0 20px rgba(0, 229, 255, 0.15) !important;
+  padding: 8px 10px;
 }
 
 .sc-kpi-pod-orbit {
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   position: relative;
-  margin-bottom: 8px;
+  margin-bottom: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -8085,16 +8258,16 @@ body::after {
 
 .sc-kpi-orb-bg {
   position: absolute;
-  inset: 0;
+  inset: 4px;
   border-radius: 50%;
-  background: radial-gradient(circle at center, rgba(13, 23, 48, 0.9) 0%, rgba(4, 9, 22, 0.95) 70%);
+  background: #000000;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8);
 }
 
 .sc-kpi-orb-ring {
   position: absolute;
-  inset: -3px;
+  inset: -2px;
   border-radius: 50%;
   border: 2px dashed rgba(0, 212, 255, 0.45);
   animation: orbRotateCw 22s linear infinite;
@@ -8103,7 +8276,7 @@ body::after {
 
 .sc-kpi-orb-ring-inner {
   position: absolute;
-  inset: 3px;
+  inset: 2px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-top-color: rgba(0, 212, 255, 0.85);
@@ -8521,10 +8694,10 @@ body::after {
 }
 
 .btn-llm-pill {
-  animation: cyberGlitchShimmer 3s infinite ease-in-out;
+  animation: none !important;
 }
 
-/* Phishing & Threat Cards */
+/* Phishing & Threat Cards — Mini Pop-Up (Coming Front & Back) Interactive Animation */
 .phish-card, .image-card, .intel-card {
   position: relative;
   background: linear-gradient(135deg, rgba(6, 12, 28, 0.95) 0%, rgba(8, 16, 38, 0.98) 100%) !important;
@@ -8532,6 +8705,16 @@ body::after {
   border-radius: 10px !important;
   padding: 14px 16px !important;
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.5) !important;
+  transform: translateY(0) scale(1);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.25s ease !important;
+  will-change: transform, box-shadow;
+}
+
+.phish-card:hover, .image-card:hover, .intel-card:hover {
+  transform: translateY(-4px) scale(1.008) !important;
+  border-color: rgba(0, 212, 255, 0.45) !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.6), 0 0 18px rgba(0, 212, 255, 0.18) !important;
+  z-index: 2;
 }
 
 .phish-card::before, .image-card::before, .intel-card::before {
@@ -8546,7 +8729,7 @@ body::after {
   pointer-events: none;
 }
 
-/* Laser Scanline Beam on Forensic Image Inspection */
+/* Stable Inspection Zone — Distracting Scanline Decommissioned */
 .image-inspection-zone {
   position: relative;
   overflow: hidden;
@@ -8554,14 +8737,7 @@ body::after {
 }
 
 .image-inspection-scanline {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #00d4ff, transparent);
-  box-shadow: 0 0 8px #00d4ff;
-  animation: scanlineSweep 2.2s ease-in-out infinite;
-  pointer-events: none;
+  display: none !important;
 }
 
 /* Threat Intel Search Terminal Card */
@@ -8594,13 +8770,22 @@ body::after {
   box-shadow: 0 0 14px rgba(16, 185, 129, 0.35) !important;
 }
 
-/* Results Full-Width Card */
+/* Threat Results Full-Width Card — Mini Pop-Up (Coming Front & Back) Interactive Animation */
 #threat-results-card {
   position: relative;
   background: linear-gradient(135deg, rgba(6, 12, 28, 0.96) 0%, rgba(7, 14, 34, 0.98) 100%) !important;
   border: 1px solid rgba(0, 212, 255, 0.22) !important;
   border-radius: 10px !important;
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55) !important;
+  transform: translateY(0) scale(1);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.25s ease, border-color 0.25s ease !important;
+  will-change: transform, box-shadow;
+}
+
+#threat-results-card:hover {
+  transform: translateY(-3px) scale(1.004) !important;
+  border-color: rgba(0, 212, 255, 0.45) !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.65), 0 0 20px rgba(0, 212, 255, 0.18) !important;
 }
 
 #threat-results-card::before {
@@ -8637,19 +8822,7 @@ body::after {
 }
 
 .threat-command-hud::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, #00d4ff, transparent);
-  animation: hudLaser 4s linear infinite;
-}
-
-@keyframes hudLaser {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  display: none !important;
 }
 
 .threat-hud-title {
@@ -9655,14 +9828,19 @@ body::after {
 
 .gauge-container {
   position: relative;
+  width: 280px;
+  height: 184px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 8px 0;
+  justify-content: flex-start;
+  padding: 4px 0 26px !important;
 }
 
 .gauge-value {
+  position: absolute !important;
+  top: 72px !important;
+  bottom: auto !important;
   font-family: var(--font-mono) !important;
   font-size: 32px !important;
   font-weight: 900 !important;
@@ -9672,12 +9850,20 @@ body::after {
 }
 
 .gauge-label {
+  position: absolute !important;
+  bottom: 0px !important;
   font-family: var(--font-mono) !important;
   font-size: 11px !important;
   font-weight: 800 !important;
   letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
-  margin-top: 2px;
+  padding: 3px 14px !important;
+  border-radius: 999px !important;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.35);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.25);
+  transition: all 0.25s ease;
+  margin-top: 0 !important;
 }
 
 .risk-meta {
@@ -9735,12 +9921,25 @@ body::after {
 /* Defense State Holographic Rings */
 .defense-orb-wrap {
   position: relative;
-  width: 82px;
-  height: 82px;
-  margin-bottom: 14px;
+  width: 94px;
+  height: 94px;
+  margin: 52px auto 14px auto;
   display: flex;
   align-items: center;
   justify-content: center;
+  filter: drop-shadow(0 0 18px rgba(16, 185, 129, 0.4));
+  transition: transform 0.4s ease, filter 0.4s ease;
+}
+
+.defense-orb-wrap:hover {
+  transform: scale(1.05);
+  filter: drop-shadow(0 0 26px rgba(16, 185, 129, 0.6));
+}
+
+.defense-orb-wrap .alert-icon-wrap {
+  width: 70px;
+  height: 70px;
+  margin-bottom: 0 !important;
 }
 
 .defense-ring-outer {
@@ -9762,21 +9961,29 @@ body::after {
   pointer-events: none;
 }
 
-.defcon-pill {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  padding: 3px 10px;
-  border-radius: 12px;
-  background: rgba(16, 185, 129, 0.14);
-  border: 1px solid rgba(16, 185, 129, 0.4);
-  color: #34d399;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-bottom: 8px;
-  animation: defconPulse 2.5s infinite ease-in-out;
+.defcon-status-badge,
+#defcon-status {
+  width: auto !important;
+  height: auto !important;
+  min-width: 0 !important;
+  max-width: fit-content !important;
+  font-family: var(--font-mono) !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.08em !important;
+  padding: 4px 12px !important;
+  border-radius: 12px !important;
+  background: rgba(16, 185, 129, 0.14) !important;
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  color: #34d399 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  margin: 6px auto 8px auto !important;
+  white-space: nowrap !important;
+  overflow: visible !important;
+  line-height: 1.4 !important;
 }
 
 /* Live Session Controls Card */
@@ -9898,7 +10105,7 @@ body::after {
 /* Command Bridge Hero Deck */
 .overview-bridge-deck {
   position: relative;
-  background: linear-gradient(135deg, rgba(6, 12, 28, 0.96) 0%, rgba(9, 18, 42, 0.98) 100%) !important;
+  background: #000000 !important;
   backdrop-filter: blur(20px);
   border: 1px solid rgba(0, 212, 255, 0.26) !important;
   border-radius: 12px !important;
@@ -9939,7 +10146,7 @@ body::after {
   gap: 12px;
   padding: 5px 12px;
   margin-bottom: 12px;
-  background: rgba(3, 7, 18, 0.75);
+  background: #000000 !important;
   border: 1px solid rgba(56, 189, 248, 0.2);
   border-radius: 6px;
   font-family: var(--font-mono);
@@ -9977,7 +10184,7 @@ body::after {
 
 /* Posture State Banner */
 .overview-posture-deck {
-  background: rgba(4, 9, 24, 0.85) !important;
+  background: #000000 !important;
   border: 1px solid rgba(0, 212, 255, 0.22) !important;
   border-radius: 8px !important;
   padding: 8px 14px !important;
@@ -10010,7 +10217,7 @@ body::after {
 
 .overview-kpi-pod {
   position: relative;
-  background: radial-gradient(circle at 50% 0%, rgba(13, 24, 52, 0.85) 0%, rgba(4, 9, 22, 0.95) 100%);
+  background: #000000 !important;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 10px;
   padding: 14px 12px 12px;
@@ -10019,14 +10226,17 @@ body::after {
   align-items: center;
   text-align: center;
   overflow: hidden;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transform: translateY(0) scale(1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s ease, border-color 0.26s ease;
+  will-change: transform, box-shadow;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 .overview-kpi-pod:hover {
-  transform: translateY(-3px);
+  transform: translateY(-4px) scale(1.015);
   border-color: rgba(0, 212, 255, 0.45);
-  box-shadow: 0 8px 28px rgba(0, 212, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  box-shadow: 0 12px 30px rgba(0, 212, 255, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  z-index: 3;
 }
 
 .overview-kpi-pod-orbit {
@@ -10043,7 +10253,7 @@ body::after {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: radial-gradient(circle at center, rgba(13, 23, 48, 0.9) 0%, rgba(4, 9, 22, 0.95) 70%);
+  background: #000000 !important;
   border: 1px solid rgba(255, 255, 255, 0.08);
   box-shadow: inset 0 0 15px rgba(0, 0, 0, 0.8);
 }
@@ -10121,14 +10331,24 @@ body::after {
   margin-top: 2px;
 }
 
-/* Cyber Deck Container Frame */
+/* Cyber Deck Container Frame — Smooth Mini Pop-Up Motion */
 .overview-cyber-deck {
   position: relative;
-  background: linear-gradient(135deg, rgba(7, 13, 28, 0.95) 0%, rgba(5, 10, 24, 0.98) 100%) !important;
+  background: #000000 !important;
   border: 1px solid rgba(0, 212, 255, 0.2) !important;
   border-radius: 12px !important;
   padding: 14px 16px !important;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55) !important;
+  transform: translateY(0) scale(1);
+  transition: transform 0.26s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.26s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.26s ease !important;
+  will-change: transform, box-shadow;
+}
+
+.overview-cyber-deck:hover {
+  transform: translateY(-4px) scale(1.006) !important;
+  border-color: rgba(0, 212, 255, 0.45) !important;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.65), 0 0 20px rgba(0, 212, 255, 0.18) !important;
+  z-index: 2;
 }
 
 .overview-cyber-deck::before {
@@ -10157,7 +10377,7 @@ body::after {
 
 /* Engine Summary Box Enhancements */
 .engine-summary-box {
-  background: rgba(4, 9, 22, 0.75) !important;
+  background: #000000 !important;
   border: 1px solid rgba(0, 212, 255, 0.16) !important;
   border-radius: 8px !important;
   padding: 9px 12px !important;
@@ -10166,7 +10386,7 @@ body::after {
 
 .engine-summary-box:hover {
   border-color: rgba(0, 212, 255, 0.45) !important;
-  background: rgba(8, 16, 38, 0.85) !important;
+  background: #080808 !important;
   transform: translateY(-2px);
   box-shadow: 0 4px 14px rgba(0, 212, 255, 0.18) !important;
 }
@@ -10182,7 +10402,7 @@ body::after {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: linear-gradient(135deg, rgba(8, 14, 28, 0.94) 0%, rgba(3, 7, 18, 0.98) 100%);
+  background: #000000 !important;
   border: 1px solid rgba(0, 229, 255, 0.28);
   border-radius: 6px;
   padding: 4px 10px;
@@ -10328,7 +10548,7 @@ body::after {
   top: calc(100% + 10px);
   right: 0;
   width: 320px;
-  background: rgba(4, 9, 22, 0.96);
+  background: #000000 !important;
   backdrop-filter: blur(16px);
   border: 1px solid rgba(0, 229, 255, 0.45);
   border-radius: 8px;
@@ -10421,8 +10641,8 @@ body::after {
 
 /* Emergency Containment Button */
 .btn-emergency-containment {
-  background: linear-gradient(135deg, rgba(220, 38, 38, 0.88) 0%, rgba(185, 28, 28, 0.98) 100%) !important;
-  border: 1px solid #ef4444 !important;
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.88) 0%, rgba(185, 28, 28, 0.98) 100%);
+  border: 1px solid #ef4444;
   color: #ffffff !important;
   font-family: var(--font-mono) !important;
   font-size: 10px !important;
@@ -10434,13 +10654,13 @@ body::after {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  box-shadow: 0 0 12px rgba(239, 68, 68, 0.45);
+  box-shadow: 5px 0 0 #22e3cb;
   transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .btn-emergency-containment:hover {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
-  box-shadow: 0 0 20px rgba(239, 68, 68, 0.75) !important;
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+  box-shadow: 7px 0 0 #22e3cb, 0 0 16px rgba(161, 15, 31, 0.7) !important;
   transform: translateY(-1px);
 }
 
@@ -10451,7 +10671,7 @@ body::after {
   height: 96px;
   border-radius: 50%;
   border: 1px solid rgba(0, 212, 255, 0.35);
-  background: radial-gradient(circle, rgba(4, 9, 24, 0.95) 0%, rgba(2, 5, 14, 0.98) 100%);
+  background: #000000 !important;
   box-shadow: 0 0 16px rgba(0, 212, 255, 0.2), inset 0 0 16px rgba(0, 0, 0, 0.85);
   display: flex;
   align-items: center;
@@ -10480,7 +10700,7 @@ body::after {
   font-weight: 700;
   color: #00d4ff;
   letter-spacing: 0.1em;
-  background: rgba(3, 7, 18, 0.8);
+  background: #000000;
   padding: 1px 4px;
   border-radius: 2px;
   pointer-events: none;
@@ -10495,7 +10715,7 @@ body::after {
   gap: 8px;
   padding: 8px 12px;
   margin-bottom: 8px;
-  background: rgba(3, 7, 18, 0.65);
+  background: #000000;
   border: 1px solid rgba(0, 212, 255, 0.16);
   border-radius: 8px;
 }
@@ -10504,7 +10724,7 @@ body::after {
   display: flex;
   align-items: center;
   gap: 6px;
-  background: rgba(6, 12, 28, 0.85);
+  background: #000000;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 5px;
   padding: 3px 8px;
@@ -12677,41 +12897,39 @@ body::after {
   }
 }
 
-/* Card Shell */
+/* Modal Overlay Backdrop — Pitch Black with Nervous System Circuit Animation Visible */
+#auth-modal {
+  background: rgba(0, 0, 0, 0.76) !important;
+  backdrop-filter: blur(4px) !important;
+  -webkit-backdrop-filter: blur(4px) !important;
+}
+
+/* Card Shell — Pitch Black Cyber Chassis (Aesthetic Twin of Overview Deck) */
 .auth-holo-card {
   position: relative;
-  max-width: 500px;
+  max-width: 480px;
   width: 94%;
   margin: auto;
-  background: rgba(8, 14, 28, 0.95);
-  backdrop-filter: blur(28px) saturate(180%);
-  -webkit-backdrop-filter: blur(28px) saturate(180%);
-  border: 1px solid rgba(6, 182, 212, 0.32);
-  border-radius: 16px;
-  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.88), 0 0 50px rgba(6, 182, 212, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  background: #02040a !important;
+  border: 1px solid rgba(255, 42, 95, 0.4) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.96), 0 0 35px rgba(255, 42, 95, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
   overflow: hidden;
-  animation: authModalEnter 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  animation: authModalEnter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* Top Laser Scanner Beam */
+/* Toy Laser Beam Decommissioned */
 .auth-laser-beam {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, transparent, #06b6d4, #8b5cf6, #06b6d4, transparent);
-  background-size: 200% 100%;
-  animation: authLaserScan 4s linear infinite;
-  z-index: 10;
+  display: none !important;
 }
 
-/* Sci-fi Corner Brackets */
+/* 50th-Century Cybernetic Corner Brackets (Sharp Red Neon Glow) */
 .auth-corner {
   position: absolute;
   width: 10px;
   height: 10px;
-  border-color: rgba(6, 182, 212, 0.55);
+  border-color: #ff2a5f !important;
+  filter: drop-shadow(0 0 4px #ff2a5f);
   pointer-events: none;
   z-index: 9;
 }
@@ -12721,15 +12939,15 @@ body::after {
 .auth-corner-bl { bottom: 6px; left: 6px; border-bottom: 2px solid; border-left: 2px solid; }
 .auth-corner-br { bottom: 6px; right: 6px; border-bottom: 2px solid; border-right: 2px solid; }
 
-/* Holographic Card Header */
+/* Holographic Card Header — Clean Minimalist SOC Precision */
 .auth-holo-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  padding: 22px 24px 16px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  background: linear-gradient(180deg, rgba(6, 182, 212, 0.06) 0%, transparent 100%);
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(255, 42, 95, 0.05) 0%, transparent 100%);
 }
 
 .auth-header-left {
@@ -12820,15 +13038,15 @@ body::after {
 .auth-clearance-pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   padding: 4px 10px;
-  background: rgba(6, 182, 212, 0.12);
-  border: 1px solid rgba(6, 182, 212, 0.32);
-  border-radius: 20px;
+  background: rgba(255, 42, 95, 0.12);
+  border: 1px solid rgba(255, 42, 95, 0.4);
+  border-radius: 4px;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
-  color: #38bdf8;
+  color: #ff4d79;
   letter-spacing: 0.6px;
   white-space: nowrap;
 }
@@ -12837,9 +13055,9 @@ body::after {
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.1);
   color: #94a3b8;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -12849,31 +13067,31 @@ body::after {
 }
 
 .auth-close-btn:hover {
-  background: rgba(239, 68, 68, 0.16);
-  border-color: rgba(239, 68, 68, 0.45);
-  color: #ef4444;
+  background: rgba(239, 68, 68, 0.2);
+  border-color: #ef4444;
+  color: #ffffff;
   transform: scale(1.05);
 }
 
-/* Biometric Reticle & Status Banner */
+/* Biometric Reticle & Status Banner — Pitch Black HUD */
 .auth-biometric-banner {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin: 14px 24px 0;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.09) 0%, rgba(139, 92, 246, 0.06) 50%, rgba(4, 9, 20, 0.6) 100%);
-  border: 1px solid rgba(6, 182, 212, 0.28);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35), inset 0 0 15px rgba(6, 182, 212, 0.05);
-  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  margin: 12px 20px 0;
+  padding: 10px 14px;
+  background: rgba(4, 9, 22, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), inset 0 0 15px rgba(0, 212, 255, 0.04);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   user-select: none;
 }
 
 .auth-biometric-banner:hover {
-  border-color: rgba(6, 182, 212, 0.55);
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.14) 0%, rgba(139, 92, 246, 0.1) 50%, rgba(4, 9, 20, 0.7) 100%);
-  box-shadow: 0 6px 24px rgba(6, 182, 212, 0.2), inset 0 0 20px rgba(6, 182, 212, 0.1);
+  border-color: rgba(255, 42, 95, 0.4);
+  background: rgba(8, 14, 28, 0.98);
+  box-shadow: 0 6px 24px rgba(255, 42, 95, 0.15), inset 0 0 20px rgba(255, 42, 95, 0.05);
   transform: translateY(-1px);
 }
 
@@ -12962,16 +13180,16 @@ body::after {
   animation: authPulse 1.5s infinite;
 }
 
-/* Modern Segmented Access Tabs */
+/* Modern Segmented Access Tabs — Pitch Black Cyber Chassis */
 .auth-tabs-segmented {
   display: flex;
-  gap: 8px;
-  margin: 16px 24px 0;
-  background: rgba(3, 7, 18, 0.7);
-  padding: 5px;
-  border-radius: 12px;
-  border: 1px solid rgba(56, 189, 248, 0.16);
-  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+  gap: 6px;
+  margin: 14px 20px 0;
+  background: #020408 !important;
+  padding: 4px;
+  border-radius: 6px !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.6);
 }
 
 .auth-tab-btn {
@@ -12979,37 +13197,32 @@ body::after {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 10px 16px;
+  gap: 6px;
+  padding: 8px 14px;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 4px !important;
   color: #94a3b8;
   font-family: var(--font-mono);
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.8px;
   cursor: pointer;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s ease;
 }
 
 .auth-tab-btn:hover {
   color: #f8fafc;
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
 }
 
 .auth-tab-btn.active {
-  background: linear-gradient(135deg, rgba(6, 182, 212, 0.22) 0%, rgba(2, 132, 199, 0.28) 100%) !important;
-  color: #00f0ff !important;
-  border: 1px solid rgba(6, 182, 212, 0.5) !important;
-  box-shadow: 0 4px 16px rgba(6, 182, 212, 0.25), inset 0 0 10px rgba(6, 182, 212, 0.1) !important;
-  text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
-}
-
-.auth-tab-btn .tab-icon {
-  font-size: 13px;
-  line-height: 1;
+  background: rgba(239, 68, 68, 0.16) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(239, 68, 68, 0.5) !important;
+  border-bottom: 2px solid #ef4444 !important;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.22) !important;
+  text-shadow: 0 0 8px rgba(255, 42, 95, 0.5);
 }
 
 /* Error Alert */
@@ -13085,20 +13298,20 @@ form#auth-form {
 .auth-cyber-input {
   width: 100%;
   padding: 10px 14px 10px 36px !important;
-  background: rgba(4, 9, 20, 0.85) !important;
-  border: 1px solid rgba(56, 189, 248, 0.18) !important;
-  border-radius: 9px !important;
+  background: #040814 !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 4px !important;
   color: #f1f5f9 !important;
   font-family: var(--font-mono) !important;
-  font-size: 12.5px !important;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  font-size: 12px !important;
+  transition: all 0.2s ease !important;
 }
 
 .auth-cyber-input:focus {
   outline: none !important;
-  border-color: #06b6d4 !important;
-  background: rgba(8, 16, 36, 0.95) !important;
-  box-shadow: 0 0 16px rgba(6, 182, 212, 0.28), inset 0 0 8px rgba(6, 182, 212, 0.08) !important;
+  border-color: #ef4444 !important;
+  background: #060b1c !important;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.3), inset 0 0 8px rgba(239, 68, 68, 0.08) !important;
 }
 
 .auth-optic-toggle {
@@ -13108,10 +13321,10 @@ form#auth-form {
   transform: translateY(-50%);
   background: transparent;
   border: none;
-  color: #94a3b8;
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+  color: #64748b;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -13122,8 +13335,8 @@ form#auth-form {
 }
 
 .auth-optic-toggle:hover {
-  color: #06b6d4;
-  background: rgba(6, 182, 212, 0.1);
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
 }
 
 /* Password Entropy & Complexity Meter */
@@ -13194,30 +13407,31 @@ form#auth-form {
   letter-spacing: 0.5px;
 }
 
-/* High-Voltage Action Submit Button */
+/* Sharp Red Precision Action Submit Button */
 .auth-cyber-submit-btn {
   position: relative;
   width: 100%;
-  padding: 12px 20px;
-  background: linear-gradient(135deg, #0284c7 0%, #06b6d4 100%) !important;
-  border: 1px solid rgba(56, 189, 248, 0.5) !important;
-  border-radius: 10px !important;
+  padding: 11px 20px;
+  background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%) !important;
+  border: 1.5px solid #ff2a5f !important;
+  border-radius: 4px !important;
   color: #ffffff !important;
   font-family: var(--font-mono) !important;
   font-size: 12px !important;
   font-weight: 800 !important;
-  letter-spacing: 1px !important;
+  letter-spacing: 1.2px !important;
   cursor: pointer;
   overflow: hidden;
-  box-shadow: 0 6px 20px rgba(6, 182, 212, 0.35) !important;
-  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1) !important;
-  margin-top: 6px;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.42), inset 0 1px 0 rgba(255, 255, 255, 0.22) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  margin-top: 8px;
 }
 
 .auth-cyber-submit-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 28px rgba(6, 182, 212, 0.55) !important;
-  border-color: #38bdf8 !important;
+  background: linear-gradient(135deg, #f87171 0%, #dc2626 100%) !important;
+  box-shadow: 0 6px 28px rgba(255, 42, 95, 0.75), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  border-color: #ff2a5f !important;
 }
 
 .auth-cyber-submit-btn:active {
@@ -13234,14 +13448,7 @@ form#auth-form {
 }
 
 .btn-laser-sweep {
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 50%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
-  transform: skewX(-20deg);
-  animation: btnSweep 3s infinite;
+  display: none !important;
 }
 
 /* Cryptographic Enclave Telemetry Matrix (Footer Bar) */
@@ -13492,5 +13699,932 @@ form#auth-form {
   color: #fff;
   border-color: rgba(255, 255, 255, 0.2);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CYBERGUARD CYBERPUNK HUD THEME OVERRIDES (Images 2, 3, 4 Reference Match)
+   Non-destructive visual upgrades: preserves all existing JS, APIs, connections
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --font-cyber: 'Orbitron', 'Rajdhani', 'Oxanium', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --cyber-yellow: #fcee0a;
+  --cyber-yellow-glow: rgba(252, 238, 10, 0.45);
+  --cyber-yellow-subtle: rgba(252, 238, 10, 0.12);
+  --cyber-yellow-border: rgba(252, 238, 10, 0.38);
+  --cyber-red-gradient: linear-gradient(135deg, #e11d48 0%, #be123c 100%);
+  --cyber-red-glow: 0 0 16px rgba(225, 29, 72, 0.45);
+}
+
+/* ── 1. Top Navbar Blending (Seamless pitch black void per Image 2) ── */
+body {
+  background-color: #000000 !important;
+}
+
+body::after {
+  content: '' !important;
+  position: fixed !important;
+  inset: 0 !important;
+  background:
+    radial-gradient(ellipse 35% 65% at 0% 50%, rgba(var(--theme-primary-rgb, 239, 68, 68), 0.12) 0%, transparent 75%),
+    radial-gradient(ellipse 35% 65% at 100% 50%, rgba(var(--theme-primary-rgb, 239, 68, 68), 0.12) 0%, transparent 75%),
+    radial-gradient(ellipse 65% 45% at 5% 10%, rgba(252, 232, 0, 0.02) 0%, transparent 60%),
+    radial-gradient(ellipse 55% 40% at 95% 90%, rgba(252, 232, 0, 0.02) 0%, transparent 60%) !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+}
+
+.navbar,
+#navbar {
+  background: #000000 !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+  box-shadow: none !important;
+}
+
+.navbar::after {
+  background: linear-gradient(90deg, transparent, #fce800, #ffffff, #fce800, transparent) !important;
+  box-shadow: none !important;
+}
+
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-logo,
+.brand-logo-img {
+  display: block !important;
+  height: 34px !important;
+  width: auto !important;
+  max-width: 150px !important;
+  object-fit: contain !important;
+  user-select: none !important;
+  -webkit-user-drag: none !important;
+  filter: none !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.nav-logo {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+.nav-logo:hover {
+  transform: none !important;
+  filter: none !important;
+}
+
+.nav-logo:hover .brand-logo,
+.nav-logo:hover .brand-logo-img,
+.nav-brand:hover .brand-logo,
+.brand-logo:hover {
+  animation: shift 1.2s ease-in-out infinite alternate !important;
+  filter: none !important;
+}
+
+@keyframes shift {
+  0%, 40%, 44%, 58%, 61%, 65%, 69%, 73%, 100% {
+    transform: skewX(0deg);
+  }
+  41% {
+    transform: skewX(10deg);
+  }
+  42% {
+    transform: skewX(-10deg);
+  }
+  59% {
+    transform: skewX(40deg) skewY(10deg);
+  }
+  60% {
+    transform: skewX(-40deg) skewY(-10deg);
+  }
+  63% {
+    transform: skewX(10deg) skewY(-5deg);
+  }
+  70% {
+    transform: skewX(-50deg) skewY(-20deg);
+  }
+  71% {
+    transform: skewX(10deg) skewY(-10deg);
+  }
+}
+
+.brand-badge {
+  font-family: var(--font-cyber) !important;
+  font-size: 8.5px !important;
+  font-weight: 800 !important;
+  color: #fcee0a !important;
+  background: rgba(252, 238, 10, 0.08) !important;
+  border: 1px solid rgba(252, 238, 10, 0.45) !important;
+  border-radius: 3px !important;
+  padding: 2px 6px !important;
+  letter-spacing: 0.8px !important;
+  text-transform: uppercase !important;
+}
+
+/* ── 2. Nav Active Tab (Crisp Emerald Outline per Images 2, 3, 4) ── */
+.nav-link.active {
+  color: #00ff88 !important;
+  border: 1px solid rgba(0, 255, 136, 0.75) !important;
+  background: rgba(0, 255, 136, 0.08) !important;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.25), inset 0 0 8px rgba(0, 255, 136, 0.05) !important;
+}
+
+.nav-link.active svg {
+  color: #00ff88 !important;
+  stroke: #00ff88 !important;
+  filter: drop-shadow(0 0 6px rgba(0, 255, 136, 0.7));
+}
+
+/* ── 3. Core Matrix Status Ticker ── */
+.overview-live-strip,
+.overview-live-stats-bar {
+  border: 1px solid rgba(252, 238, 10, 0.22) !important;
+  background: #000000 !important;
+}
+
+.overview-live-dot {
+  background: #fcee0a !important;
+  box-shadow: 0 0 8px #fcee0a !important;
+}
+
+.overview-live-chip span:first-child {
+  color: #fcee0a !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.5px !important;
+}
+
+/* ── 4. Command Center / Overview Hero Banner Glitch Title (Orange Highlighted Section) ── */
+.overview-main-title {
+  position: relative !important;
+  z-index: 1 !important;
+  display: inline-block !important;
+  overflow: hidden !important;          /* keeps chroma ghosts inside the line box */
+  font-family: 'Chakra Petch', var(--font-cyber), var(--font-sans) !important;
+  font-size: 15px !important;
+  font-weight: 700 !important;
+  font-style: italic !important;
+  letter-spacing: 0.8px !important;
+  text-transform: uppercase !important;
+  color: #fcee0a !important;
+  line-height: 1.2 !important;
+  text-shadow: none !important;
+}
+
+.overview-main-title::before,
+.overview-main-title::after {
+  display: block !important;
+  content: attr(data-glitch) !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  opacity: 0.75 !important;
+  white-space: nowrap !important;
+  pointer-events: none !important;
+}
+
+.overview-main-title::before {
+  animation: glitch 1.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) both infinite !important;
+  color: #fc3c84 !important;
+  z-index: -1 !important;
+}
+
+.overview-main-title::after {
+  animation: glitch 1.6s cubic-bezier(0.25, 0.46, 0.45, 0.94) reverse both infinite !important;
+  color: #22e3cb !important;
+  z-index: -2 !important;
+}
+
+@keyframes glitch {
+  0% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-3px, 3px);
+  }
+  40% {
+    transform: translate(-3px, -3px);
+  }
+  60% {
+    transform: translate(3px, 3px);
+  }
+  80% {
+    transform: translate(3px, -3px);
+  }
+  100% {
+    transform: translate(0);
+  }
+}
+
+.overview-eyebrow .soc-pulse-badge {
+  font-family: var(--font-cyber) !important;
+  color: #fcee0a !important;
+  background: rgba(252, 238, 10, 0.1) !important;
+  border: 1px solid rgba(252, 238, 10, 0.4) !important;
+  letter-spacing: 0.6px !important;
+}
+
+.soc-pulse-dot {
+  background: #fcee0a !important;
+  box-shadow: 0 0 8px #fcee0a !important;
+}
+
+.posture-headline {
+  color: #fcee0a !important;
+}
+
+.overview-radar-overlay-tag {
+  color: #fcee0a !important;
+  border-color: rgba(252, 238, 10, 0.45) !important;
+}
+
+.defcon-label {
+  color: #fcee0a !important;
+  font-weight: 800 !important;
+}
+
+/* ── 5. HUD Cards & Corner Brackets (All 4 Corners) ── */
+.card {
+  position: relative !important;
+  background: #000000 !important;
+  border: 1px solid rgba(252, 238, 10, 0.35) !important;
+  border-radius: 4px !important;
+}
+
+/* Corner HUD L-bracket notches on cards */
+.card::before,
+.phish-card::before,
+.image-card::before,
+.intel-card::before,
+.risk-card::before,
+.alert-card::before,
+.controls-card::before,
+.consistency-card::before,
+.timeline-card::before,
+.overview-hero-card::before,
+.overview-cyber-deck::before {
+  content: '' !important;
+  position: absolute !important;
+  inset: -1px !important;
+  width: auto !important;
+  height: auto !important;
+  border: none !important;
+  filter: none !important;
+  pointer-events: none !important;
+  z-index: 5 !important;
+  background:
+    linear-gradient(to right, #fcee0a 2px, transparent 2px) 0 0 / 10px 10px no-repeat,
+    linear-gradient(to bottom, #fcee0a 2px, transparent 2px) 0 0 / 10px 10px no-repeat,
+    linear-gradient(to left, #fcee0a 2px, transparent 2px) 100% 0 / 10px 10px no-repeat,
+    linear-gradient(to bottom, #fcee0a 2px, transparent 2px) 100% 0 / 10px 10px no-repeat,
+    linear-gradient(to right, #fcee0a 2px, transparent 2px) 0 100% / 10px 10px no-repeat,
+    linear-gradient(to top, #fcee0a 2px, transparent 2px) 0 100% / 10px 10px no-repeat,
+    linear-gradient(to left, #fcee0a 2px, transparent 2px) 100% 100% / 10px 10px no-repeat,
+    linear-gradient(to top, #fcee0a 2px, transparent 2px) 100% 100% / 10px 10px no-repeat !important;
+}
+
+.card::after,
+.phish-card::after,
+.image-card::after,
+.intel-card::after,
+.risk-card::after,
+.alert-card::after,
+.controls-card::after,
+.consistency-card::after,
+.timeline-card::after,
+.overview-hero-card::after,
+.overview-cyber-deck::after {
+  display: none !important;
+}
+
+/* Overview 5 KPI pods keep individual borders and clean look */
+.overview-kpi-pod::before,
+.overview-kpi-pod::after {
+  display: none !important;
+}
+
+.overview-kpi-pod.threat {
+  border: 1.5px solid #ff2a5f !important;
+  box-shadow: 0 0 24px rgba(255, 42, 95, 0.45), inset 0 0 18px rgba(255, 42, 95, 0.12) !important;
+}
+
+.overview-kpi-pod.incident {
+  border: 1.5px solid #ff9900 !important;
+  box-shadow: 0 0 24px rgba(255, 153, 0, 0.45), inset 0 0 18px rgba(255, 153, 0, 0.12) !important;
+}
+
+.overview-kpi-pod.tile-events {
+  border: 1.5px solid #00f0ff !important;
+  box-shadow: 0 0 24px rgba(0, 240, 255, 0.45), inset 0 0 18px rgba(0, 240, 255, 0.12) !important;
+}
+
+.overview-kpi-pod.critical {
+  border: 1.5px solid #ff1744 !important;
+  box-shadow: 0 0 24px rgba(255, 23, 68, 0.45), inset 0 0 18px rgba(255, 23, 68, 0.12) !important;
+}
+
+.overview-kpi-pod.posture {
+  border: 1.5px solid #fcee0a !important;
+  box-shadow: 0 0 28px rgba(252, 238, 10, 0.45), inset 0 0 20px rgba(252, 238, 10, 0.12) !important;
+}
+
+/* ── 6. Overview KPI Labels & Numbers (Proportional sizing per Image 2) ── */
+.overview-kpi-label {
+  font-family: var(--font-sans) !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+  color: #fcee0a !important;
+  letter-spacing: 0.8px !important;
+  text-transform: uppercase !important;
+  margin-bottom: 2px !important;
+}
+
+.overview-kpi-val,
+.metric-tile-value {
+  font-family: var(--font-mono) !important;
+  font-size: 21px !important;
+  font-weight: 800 !important;
+  line-height: 1 !important;
+  color: #fcee0a !important;
+  text-shadow: none !important;
+  margin: 3px 0 !important;
+}
+
+.overview-kpi-sub {
+  font-size: 9px !important;
+  color: #94a3b8 !important;
+}
+
+/* Posture Dial in KPI 5 (Clean, non-overlapping layout fitting the reactor dial perfectly) */
+.posture-reactor-dial {
+  position: relative !important;
+  width: 135px !important;
+  height: 135px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.reactor-core-content {
+  position: relative !important;
+  z-index: 3 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  text-align: center !important;
+  gap: 1px !important;
+  padding: 2px !important;
+  max-width: 95px !important;
+}
+
+.reactor-label {
+  font-size: 8px !important;
+  color: #fcee0a !important;
+  letter-spacing: 0.8px !important;
+  line-height: 1 !important;
+  margin-bottom: 2px !important;
+  white-space: nowrap !important;
+}
+
+.reactor-status,
+.overview-tile-posture,
+#overview-tile-posture {
+  font-family: 'Chakra Petch', var(--font-cyber), var(--font-sans) !important;
+  font-size: 13px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.6px !important;
+  line-height: 1.15 !important;
+  color: #fcee0a !important;
+  text-shadow: none !important;
+  margin: 1px 0 !important;
+  text-align: center !important;
+  white-space: normal !important;
+}
+
+.reactor-sub,
+#overview-tile-posture-sub {
+  display: none !important;
+}
+
+.reactor-ring-outer {
+  border-color: rgba(252, 238, 10, 0.7) !important;
+  box-shadow: 0 0 14px rgba(252, 238, 10, 0.3) !important;
+}
+
+.reactor-icon {
+  margin-bottom: 2px !important;
+}
+
+.reactor-icon svg {
+  color: #fcee0a !important;
+  stroke: #fcee0a !important;
+  filter: drop-shadow(0 0 4px #fcee0a);
+}
+
+/* ── 7. All Card Titles & Icons ── */
+.card-title,
+.threat-breakdown-title,
+.threat-top-header h2,
+.sec-center-title,
+.section-title {
+  font-family: var(--font-cyber) !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #fcee0a !important;
+  letter-spacing: 0.8px !important;
+  text-transform: uppercase !important;
+  text-shadow: 0 0 8px rgba(252, 238, 10, 0.35) !important;
+}
+
+.card-title svg,
+.threat-breakdown-title svg,
+.section-title svg,
+.threat-top-header svg {
+  stroke: #fcee0a !important;
+  color: #fcee0a !important;
+  filter: drop-shadow(0 0 4px rgba(252, 238, 10, 0.5)) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CYBERPUNK GLITCH // FRAME-ACCURATE HIGH-INTENSITY INTERACTIVE BUTTON ANIMATION
+   Authoritative Reference: button.mp4
+   Timeline:
+     - 0.0s: Idle - Crisp crimson plate, 45deg bottom-left chamfer, 5px cyan bar
+     - 0.05s: Abrupt Onset - Intense red & magenta bloom, edge softening
+     - 0.05s - 1.4s: Peak Burst - Multiple horizontal laser scanline streaks,
+       stepped text slicing & horizontal displacement (-18px to +16px),
+       hot pink laser bar overhanging bottom with cyan notch, lime/cyan split
+     - 1.4s - 2.0s: Recovery - Streaks cease, text aligns, red haze softens
+     - 2.0s+: Stable - 100% crisp return to normal state, replayable on hover
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── A. Primary, Action, Danger, & Emergency Buttons (Blood Red Plate + Teal Right Bar) ── */
+.btn.btn-primary,
+.btn-primary,
+.btn.btn-danger,
+.btn-danger,
+.btn-emergency,
+.btn-emergency-containment,
+.btn.btn-emergency-containment,
+.auth-btn-danger,
+.auth-cyber-submit-btn,
+.nexus-btn-primary,
+.nexus-btn-danger,
+.nexus-btn.nexus-btn-primary,
+.nexus-btn.nexus-btn-danger,
+.btn-approve-training,
+#overview-emergency-btn,
+#start-live-btn,
+#stop-live-btn,
+#btn-scan-phish,
+#btn-scan-image,
+#btn-scan-intel,
+#analyze-btn,
+#enroll-btn,
+#btn-drawer-approve,
+#btn-confirm-approval-submit,
+#btn-run-llm,
+#btn-generate-report,
+#btn-trigger-retrain-hero,
+#btn-save-policy,
+#btn-submit-manual-detector,
+#delete-user-submit-btn,
+#retrain-hud-btn-promote,
+#auth-submit-btn {
+  position: relative !important;
+  background: linear-gradient(45deg, transparent 5%, #a10f1f 5%) !important;
+  box-shadow: 5px 0 0 #22e3cb !important;
+  border-radius: var(--radius-sm, 6px) !important;
+  color: #ffffff !important;
+  cursor: pointer;
+  overflow: visible !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease !important;
+}
+
+/* ── B. All Other Buttons (Secondary, Ghost, Pills, Subnav, Filters, Chips, Toolbars) ── */
+.btn-secondary,
+.btn.btn-secondary,
+.nexus-btn-ghost,
+.nexus-btn.nexus-btn-ghost,
+.nexus-subnav-btn,
+.threat-subnav-btn,
+.review-pill-btn,
+.nexus-pill-btn,
+.overview-filter-pill,
+.sc-filter-btn,
+.quick-tag-chip,
+.chart-range-pill,
+.speed-btn,
+.player-btn-secondary,
+.gt-choice-btn,
+.vis-tab-btn,
+.quantum-chroma-btn,
+.modal-close-btn,
+button.sc-action-btn,
+button:not(.btn-primary):not(.btn-danger):not(.nexus-btn-primary):not(.nexus-btn-danger):not(.btn-emergency):not(.btn-emergency-containment):not(#start-live-btn):not(#stop-live-btn):not(#analyze-btn):not(#enroll-btn):not(#btn-scan-image):not(#btn-scan-phish):not(#btn-scan-intel):not(#btn-trigger-retrain-hero):not(#btn-generate-report):not(#btn-confirm-approval-submit):not(#delete-user-submit-btn):not(#auth-submit-btn) {
+  position: relative;
+  overflow: visible !important;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease !important;
+}
+
+/* Base Hover / Active Button Bloom Animation */
+button.cg-glitching,
+button:hover:not(:disabled),
+.btn.cg-glitching,
+.btn:hover:not(:disabled),
+.nexus-btn.cg-glitching,
+.nexus-btn:hover:not(:disabled),
+.overview-filter-pill.cg-glitching,
+.overview-filter-pill:hover:not(:disabled),
+.review-pill-btn.cg-glitching,
+.review-pill-btn:hover:not(:disabled),
+.nexus-pill-btn.cg-glitching,
+.nexus-pill-btn:hover:not(:disabled),
+.quick-tag-chip.cg-glitching,
+.quick-tag-chip:hover:not(:disabled),
+.speed-btn.cg-glitching,
+.speed-btn:hover:not(:disabled) {
+  animation: 2.0s cg-button-bloom forwards !important;
+}
+
+/* Secondary Button Specific Bloom */
+button:not(.btn-primary):not(.btn-danger):not(.nexus-btn-primary):not(.nexus-btn-danger):not(.btn-emergency):not(.btn-emergency-containment):not(#start-live-btn):not(#stop-live-btn):not(#analyze-btn):not(#enroll-btn):not(#btn-scan-image):not(#btn-scan-phish):not(#btn-scan-intel):not(#btn-trigger-retrain-hero):not(#btn-generate-report):not(#btn-confirm-approval-submit):not(#delete-user-submit-btn):not(#auth-submit-btn):hover:not(:disabled) {
+  box-shadow: 4px 0 0 #22e3cb, 0 0 16px rgba(34, 227, 203, 0.45) !important;
+  border-color: rgba(34, 227, 203, 0.8) !important;
+}
+
+/* Active Press State */
+button:active:not(:disabled),
+.btn:active:not(:disabled),
+.nexus-btn:active:not(:disabled) {
+  transform: translateY(1px) !important;
+  box-shadow: 2px 0 0 #22e3cb !important;
+}
+
+/* Disabled State - Clean Suppression */
+button:disabled,
+.btn:disabled,
+.nexus-btn:disabled,
+.disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed !important;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+button:disabled::before,
+button:disabled::after,
+.btn:disabled::before,
+.btn:disabled::after,
+.nexus-btn:disabled::before,
+.nexus-btn:disabled::after,
+.nav-link::before,
+.nav-link::after {
+  display: none !important;
+  animation: none !important;
+}
+
+/* ── LAYER 1 (::before): MULTIPLE HORIZONTAL LASER SCANLINES & RED/MAGENTA BLOOM ── */
+button::before,
+.btn::before,
+.nexus-btn::before,
+.overview-filter-pill::before,
+.review-pill-btn::before,
+.nexus-pill-btn::before,
+.quick-tag-chip::before,
+.speed-btn::before {
+  content: '' !important;
+  position: absolute !important;
+  inset: -3px -8px !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  opacity: 0;
+  z-index: 2 !important;
+  background:
+    /* Streak 1: Midline Hot Magenta Laser */
+    linear-gradient(90deg, transparent 0%, #22e3cb 8%, #fc3c84 25%, #ff007f 60%, #22e3cb 85%, transparent 100%) 0 52% / 100% 2.5px no-repeat,
+    /* Streak 2: Bottom Overhanging Pink/Cyan Laser Bar (Frame 40 reference) */
+    linear-gradient(90deg, transparent 2%, #22e3cb 5%, #fc3c84 15%, #ff0055 75%, transparent 98%) 0 92% / 100% 3px no-repeat,
+    /* Streak 3: Upper Text Slicing Laser */
+    linear-gradient(90deg, transparent 5%, #ff2a6d 20%, #ffffff 50%, #22e3cb 80%, transparent 95%) 0 24% / 100% 2px no-repeat,
+    /* Streak 4: Top Edge Neon Cyan/Pink Fragment */
+    linear-gradient(90deg, transparent 15%, #22e3cb 35%, #fc3c84 65%, transparent 85%) 0 6% / 100% 2px no-repeat;
+  filter: drop-shadow(0 0 6px #ff0055) drop-shadow(0 0 14px #fc3c84);
+}
+
+button.cg-glitching::before,
+button:hover:not(:disabled)::before,
+.btn.cg-glitching::before,
+.btn:hover:not(:disabled)::before,
+.nexus-btn.cg-glitching::before,
+.nexus-btn:hover:not(:disabled)::before,
+.overview-filter-pill.cg-glitching::before,
+.overview-filter-pill:hover:not(:disabled)::before,
+.review-pill-btn.cg-glitching::before,
+.review-pill-btn:hover:not(:disabled)::before,
+.nexus-pill-btn.cg-glitching::before,
+.nexus-pill-btn:hover:not(:disabled)::before,
+.quick-tag-chip.cg-glitching::before,
+.quick-tag-chip:hover:not(:disabled)::before,
+.speed-btn.cg-glitching::before,
+.speed-btn:hover:not(:disabled)::before {
+  animation: 2.0s cg-laser-scanlines forwards !important;
+}
+
+/* ── LAYER 2 (::after): REAL HORIZONTAL TEXT SLICING & CHROMATIC ABERRATION ── */
+button::after,
+.btn::after,
+.nexus-btn::after,
+.overview-filter-pill::after,
+.review-pill-btn::after,
+.nexus-pill-btn::after,
+.quick-tag-chip::after,
+.speed-btn::after {
+  content: attr(data-text) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  border-radius: inherit !important;
+  pointer-events: none !important;
+  user-select: none !important;
+  opacity: 0;
+  z-index: 3 !important;
+  background: linear-gradient(45deg, transparent 3%, #22e3cb 3%, #22e3cb 5%, #fc3c84 5%) !important;
+  color: #ffffff !important;
+  text-shadow: -3px -3px 0 #b4fc0a, 3px 3px 0 #22e3cb !important;
+  clip-path: inset(50% 50% 50% 50%);
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
+  letter-spacing: inherit !important;
+}
+
+button.cg-glitching::after,
+button:hover:not(:disabled)::after,
+.btn.cg-glitching::after,
+.btn:hover:not(:disabled)::after,
+.nexus-btn.cg-glitching::after,
+.nexus-btn:hover:not(:disabled)::after,
+.overview-filter-pill.cg-glitching::after,
+.overview-filter-pill:hover:not(:disabled)::after,
+.review-pill-btn.cg-glitching::after,
+.review-pill-btn:hover:not(:disabled)::after,
+.nexus-pill-btn.cg-glitching::after,
+.nexus-pill-btn:hover:not(:disabled)::after,
+.quick-tag-chip.cg-glitching::after,
+.quick-tag-chip:hover:not(:disabled)::after,
+.speed-btn.cg-glitching::after,
+.speed-btn:hover:not(:disabled)::after {
+  animation: 2.0s cg-text-slicing steps(2, end) forwards !important;
+}
+
+/* ── KEYFRAME 1: RED/MAGENTA BLOOM & CYAN EDGE VIBRATION ── */
+@keyframes cg-button-bloom {
+  0% {
+    box-shadow: 5px 0 0 #22e3cb;
+    background: linear-gradient(45deg, transparent 5%, #a10f1f 5%);
+    transform: none;
+  }
+  3% {
+    /* Abrupt Onset (0.06s): Saturated bloom explodes */
+    box-shadow: 6px 0 0 #00ffff, 0 0 26px rgba(248, 24, 56, 0.9), 0 0 45px rgba(252, 60, 132, 0.65);
+    background: linear-gradient(45deg, transparent 5%, #c8142b 5%);
+    transform: translateY(-1px);
+  }
+  15% {
+    box-shadow: 4px 0 0 #22e3cb, 0 0 18px rgba(248, 24, 56, 0.8), 0 0 35px rgba(252, 60, 132, 0.5);
+    transform: translateY(-1px) translateX(1px);
+  }
+  30% {
+    box-shadow: 7px 0 0 #00ffff, 0 0 28px rgba(248, 24, 56, 0.95), 0 0 50px rgba(252, 60, 132, 0.7);
+    transform: translateY(-1px) translateX(-1px);
+  }
+  45% {
+    box-shadow: 5px 0 0 #22e3cb, 0 0 20px rgba(248, 24, 56, 0.85);
+    transform: translateY(-1px);
+  }
+  60% {
+    box-shadow: 6px 0 0 #00ffff, 0 0 26px rgba(248, 24, 56, 0.9), 0 0 45px rgba(252, 60, 132, 0.6);
+  }
+  70% {
+    /* Streaks cease at 1.4s (70%) - Lingering red haze recovery begins */
+    box-shadow: 5px 0 0 #22e3cb, 0 0 16px rgba(248, 24, 56, 0.6);
+    background: linear-gradient(45deg, transparent 5%, #a10f1f 5%);
+    transform: none;
+  }
+  85% {
+    box-shadow: 5px 0 0 #22e3cb, 0 0 8px rgba(248, 24, 56, 0.3);
+  }
+  100% {
+    /* Complete crisp return to original state */
+    box-shadow: 5px 0 0 #22e3cb;
+    background: linear-gradient(45deg, transparent 5%, #a10f1f 5%);
+    transform: none;
+  }
+}
+
+/* ── KEYFRAME 2: MULTI-STREAK HORIZONTAL LASER BURSTS ── */
+@keyframes cg-laser-scanlines {
+  0% { opacity: 0; transform: none; }
+  3% {
+    opacity: 1;
+    clip-path: inset(80% -6px 0 0);
+    transform: translate(-12px, 6px);
+  }
+  10% {
+    opacity: 1;
+    clip-path: inset(45% -8px 45% 0);
+    transform: translate(10px, 0);
+  }
+  18% {
+    opacity: 1;
+    clip-path: inset(18% -6px 72% 0);
+    transform: translate(-6px, -2px);
+  }
+  28% {
+    opacity: 1;
+    clip-path: inset(82% -8px 0 0);
+    transform: translate(14px, 8px);
+  }
+  38% {
+    opacity: 1;
+    clip-path: inset(50% -6px 35% 0);
+    transform: translate(-10px, 2px);
+  }
+  48% {
+    opacity: 1;
+    clip-path: inset(5% -8px 85% 0);
+    transform: translate(8px, -4px);
+  }
+  58% {
+    opacity: 1;
+    clip-path: inset(75% -6px 5% 0);
+    transform: translate(-8px, 6px);
+  }
+  68% {
+    opacity: 0.8;
+    clip-path: inset(30% -6px 55% 0);
+    transform: translate(4px, 0);
+  }
+  70% {
+    /* Streaks cut off at 1.4s */
+    opacity: 0;
+    clip-path: inset(50% 50% 50% 50%);
+  }
+  100% { opacity: 0; }
+}
+
+/* ── KEYFRAME 3: REAL TEXT & CONTENT BAND SLICING DISPLACEMENT ── */
+@keyframes cg-text-slicing {
+  0% {
+    clip-path: inset(50% 50% 50% 50%);
+    transform: none;
+    opacity: 0;
+  }
+  3% {
+    /* Onset: Bottom slice displaces left by -18px */
+    opacity: 1;
+    clip-path: inset(80% -6px 0 0);
+    transform: translate(-18px, -8px);
+  }
+  12% {
+    /* Upper text band shifts right by +14px */
+    clip-path: inset(12% -6px 80% 0);
+    transform: translate(14px, 8px);
+  }
+  22% {
+    /* Midline text slices left by -12px */
+    clip-path: inset(48% -6px 42% 0);
+    transform: translate(-12px, 6px);
+  }
+  32% {
+    /* Lower overhanging laser bar */
+    clip-path: inset(80% -6px 2% 0);
+    transform: translate(0px, 4px);
+  }
+  44% {
+    /* Mid-upper band displacement */
+    clip-path: inset(30% -6px 58% 0);
+    transform: translate(-6px, 0px);
+  }
+  54% {
+    /* Lower band displacement */
+    clip-path: inset(68% -6px 15% 0);
+    transform: translate(8px, 6px);
+  }
+  64% {
+    /* Final slice shift */
+    clip-path: inset(20% -6px 70% 0);
+    transform: translate(-10px, -4px);
+  }
+  70% {
+    /* Slicing ceases at 1.4s */
+    clip-path: inset(50% 50% 50% 50%);
+    transform: translate(0);
+    opacity: 0;
+  }
+  100% {
+    clip-path: inset(50% 50% 50% 50%);
+    transform: translate(0);
+    opacity: 0;
+  }
+}
+
+/* Accessibility: Reduced Motion Override */
+@media (prefers-reduced-motion: reduce) {
+  button.cg-glitching,
+  button:hover:not(:disabled),
+  .btn.cg-glitching,
+  .btn:hover:not(:disabled),
+  .nexus-btn.cg-glitching,
+  .nexus-btn:hover:not(:disabled) {
+    animation: none !important;
+    box-shadow: 4px 0 0 #22e3cb !important;
+    transform: none !important;
+  }
+  button::before,
+  button::after,
+  .btn::before,
+  .btn::after {
+    display: none !important;
+  }
+}
+
+/* ── 9. Threat Monitoring Tab Details ── */
+.gauge-value,
+#gauge-value {
+  font-family: var(--font-cyber) !important;
+  color: #fcee0a !important;
+  font-weight: 800 !important;
+  text-shadow: 0 0 16px rgba(252, 238, 10, 0.65) !important;
+}
+
+.stat-value,
+#chunk-count {
+  font-family: var(--font-cyber) !important;
+  color: #fcee0a !important;
+  font-weight: 700 !important;
+}
+
+.feature-pill.active {
+  color: #fcee0a !important;
+  border: 1px solid rgba(252, 238, 10, 0.45) !important;
+  background: rgba(252, 238, 10, 0.08) !important;
+  font-family: var(--font-mono) !important;
+}
+
+.card-tag {
+  color: #fcee0a !important;
+  border: 1px solid rgba(252, 238, 10, 0.4) !important;
+  background: rgba(252, 238, 10, 0.08) !important;
+  font-family: var(--font-mono) !important;
+}
+
+/* ── 10. Phishing & URL Tab Details ── */
+.threat-command-hud {
+  border: 1px solid rgba(252, 238, 10, 0.3) !important;
+  background: #000000 !important;
+}
+
+.threat-hud-title {
+  color: #fcee0a !important;
+  font-family: var(--font-cyber) !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.8px !important;
+}
+
+.threat-pulse-beacon {
+  background: #fcee0a !important;
+  box-shadow: 0 0 8px #fcee0a !important;
+}
+
+.threat-hud-chip {
+  color: #fcee0a !important;
+  border: 1px solid rgba(252, 238, 10, 0.45) !important;
+  background: rgba(252, 238, 10, 0.06) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 9px !important;
+  font-weight: 700 !important;
+}
+
+.threat-hud-chip svg {
+  stroke: #fcee0a !important;
+  color: #fcee0a !important;
+}
+
+
 
 
