@@ -62,6 +62,8 @@ enum class ThreatAlertLevel {
 fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
     val state by viewModel.connectionState.collectAsState()
     val serverUrl by viewModel.serverUrl.collectAsState()
+    val activeEndpointType by viewModel.activeEndpointType.collectAsState()
+    val showConnectionSettings by viewModel.showConnectionSettings.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val summary by viewModel.dashboardSummary.collectAsState()
     val systemStatus by viewModel.systemStatus.collectAsState()
@@ -820,11 +822,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = when (state) {
-                            ConnectionState.CONNECTED -> "Connected via Local Network"
-                            ConnectionState.DISCOVERING -> "Scanning network for CyberGuard host..."
-                            ConnectionState.VALIDATING -> "Validating core telemetry link..."
-                            else -> "Core connection disconnected"
+                        text = when {
+                            state == ConnectionState.CONNECTED && activeEndpointType == "LOCAL_LAN" -> "Connected via Local LAN (Docker)"
+                            state == ConnectionState.CONNECTED && activeEndpointType == "CLOUD_TUNNEL" -> "Connected via Cloud Defense Node"
+                            state == ConnectionState.CONNECTED -> "Connected to CyberGuard Core"
+                            state == ConnectionState.DISCOVERING -> "Scanning network for CyberGuard host..."
+                            state == ConnectionState.VALIDATING -> "Validating core telemetry link..."
+                            else -> "Core connection disconnected (Tap to Configure)"
                         },
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = FontFamily.Monospace,
@@ -849,11 +853,12 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Online Status Pill with Glowing Green Ring
+                // Online Status Pill with Settings Trigger
                 Surface(
                     shape = CutCornerShape(4.dp),
                     color = Color(0xFF032617).copy(alpha = 0.9f),
-                    border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.75f))
+                    border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.75f)),
+                    modifier = Modifier.clickable { viewModel.openConnectionSettings() }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -863,7 +868,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                             modifier = Modifier
                                 .size(6.dp)
                                 .clip(RoundedCornerShape(3.dp))
-                                .background(StatusOnline)
+                                .background(if (state == ConnectionState.CONNECTED) StatusOnline else StatusCritical)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -884,6 +889,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                                 ConnectionState.DISCOVERING, ConnectionState.VALIDATING -> StatusWarning
                                 else -> StatusCritical
                             }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Configure Backend",
+                            tint = CyberNeonCyan,
+                            modifier = Modifier.size(11.dp)
                         )
                     }
                 }
@@ -1776,6 +1788,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
         }
 
         Spacer(modifier = Modifier.height(36.dp))
+    }
+
+    if (showConnectionSettings) {
+        com.cyberguard.client.ui.components.ConnectionSettingsModal(
+            viewModel = viewModel,
+            onDismiss = { viewModel.closeConnectionSettings() }
+        )
     }
 }
 

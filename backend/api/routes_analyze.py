@@ -241,8 +241,9 @@ async def analyze_audio_file(
                 db_path=str(app_settings.abs_path(app_settings.storage.db_path))
             )
             enrolled_emb = registry.get_embedding(speaker_id)
+            pitch_base = registry.get_pitch_profile(speaker_id)
             if enrolled_emb is not None:
-                consistency_checker.set_enrolled_profile(enrolled_emb, speaker_id)
+                consistency_checker.set_enrolled_profile(enrolled_emb, speaker_id, pitch_baseline=pitch_base)
                 needs_speaker_emb = True
         t0 = _stage("setup", t0)
 
@@ -266,7 +267,7 @@ async def analyze_audio_file(
             )
             speaker_sim = None
             if result.speaker_embedding is not None and needs_speaker_emb:
-                c_result = consistency_checker.check(result.speaker_embedding)
+                c_result = consistency_checker.check(result.speaker_embedding, current_pitch=result.pitch_analysis)
                 speaker_sim = c_result.get("similarity")
 
             snapshot = risk_engine.update(
@@ -277,6 +278,8 @@ async def analyze_audio_file(
 
             chunk_scores.append({
                 "chunk_id": i,
+                "start_time_sec": round(i * 4.0, 1),
+                "end_time_sec": round((i + 1) * 4.0, 1),
                 "detection_score": result.synthetic_probability,
                 "risk_score": snapshot.combined_risk,
                 "alert_level": snapshot.alert_level.value,
@@ -292,9 +295,26 @@ async def analyze_audio_file(
             f0_stds = [p["f0_std_hz"] for p in valid_pitches if p.get("f0_std_hz", 0) > 0]
             jitters = [p["jitter"] for p in valid_pitches if p.get("jitter", 0) > 0]
             shimmers = [p["shimmer"] for p in valid_pitches if p.get("shimmer", 0) > 0]
-            hnrs = [p["hnr_db"] for p in valid_pitches if p.get("hnr_db", 0) > 0]
+            hnrs = [p["hnr_db"] for p in valid_pitches if p.get("hnr_db") is not None]
             stabilities = [p["pitch_stability_pct"] for p in valid_pitches if "pitch_stability_pct" in p]
             anomalies = [p["is_pitch_anomaly"] for p in valid_pitches]
+
+            is_session_anomaly = bool(any(anomalies) or (jitters and np.mean(jitters) >= 0.080))
+            is_session_organic = bool(
+                not is_session_anomaly and
+                f0_means and np.mean(f0_means) >= 60.0 and
+                f0_stds and np.mean(f0_stds) >= 12.0 and
+                jitters and 0.005 <= np.mean(jitters) <= 0.065
+            )
+
+            if is_session_anomaly:
+                session_pitch_verdict = "SYNTHETIC PITCH ANOMALY"
+            elif is_session_organic:
+                session_pitch_verdict = "ORGANIC HUMAN PROSODY"
+            elif not f0_means:
+                session_pitch_verdict = "UNVOICED / NO PITCH DETECTED"
+            else:
+                session_pitch_verdict = "ANALYZED / VARIABLE PROSODY"
 
             session_pitch = {
                 "f0_mean_hz": round(float(np.mean(f0_means)), 1) if f0_means else 0.0,
@@ -303,8 +323,9 @@ async def analyze_audio_file(
                 "shimmer": round(float(np.mean(shimmers)), 4) if shimmers else 0.0,
                 "hnr_db": round(float(np.mean(hnrs)), 1) if hnrs else 0.0,
                 "pitch_stability_pct": round(float(np.mean(stabilities)), 1) if stabilities else 85.0,
-                "pitch_verdict": "SYNTHETIC PITCH ANOMALY" if any(anomalies) or (jitters and np.mean(jitters) >= 0.060) else "ORGANIC HUMAN PROSODY",
-                "is_pitch_anomaly": bool(any(anomalies) or (jitters and np.mean(jitters) >= 0.060)),
+                "pitch_verdict": session_pitch_verdict,
+                "is_pitch_anomaly": is_session_anomaly,
+                "is_organic_human": is_session_organic,
             }
         else:
             session_pitch = {
@@ -314,8 +335,9 @@ async def analyze_audio_file(
                 "shimmer": 0.0,
                 "hnr_db": 0.0,
                 "pitch_stability_pct": 90.0,
-                "pitch_verdict": "ORGANIC HUMAN PROSODY",
+                "pitch_verdict": "UNVOICED / NO PITCH DETECTED",
                 "is_pitch_anomaly": False,
+                "is_organic_human": False,
             }
 
         summary = risk_engine.get_session_summary()
@@ -326,6 +348,16 @@ async def analyze_audio_file(
         vt_result = None
 
         recommendation = threshold_engine.evaluate(summary["peak_risk"])
+        if summary["peak_risk"] < 0.35 and session_pitch.get("is_organic_human"):
+            from backend.detection.threshold_engine import AlertRecommendation, AlertLevel
+            recommendation = AlertRecommendation(
+                alert_level=AlertLevel.SAFE,
+                risk_score=float(summary["peak_risk"]),
+                title="Voice Verified — Organic Human Prosody",
+                message="Acoustic pitch dynamics and organic vocal cord biometrics confirm natural human voice.",
+                actions=["Continue conversation normally", "Organic human speech patterns verified"],
+                color="#22c55e",
+            )
 
         t_end = time.perf_counter()
         total_ms = (t_end - t_start) * 1000
@@ -476,33 +508,67 @@ async def analyze_audio_file(
             # with explicit submitted_by_user_id metadata for authorized model training
             try:
                 with central_factory() as central_db:
-                    central_record = AnalysisRecordModel(
-                        analysis_id=session_id,
-                        user_id=current_user.id,
-                        filename=file.filename or "unknown",
-                        audio_hash=file_hash_hex,
-                        audio_path=vault_rel_path,
-                        duration_sec=float(len(audio) / app_settings.audio.sample_rate),
-                        total_chunks=len(chunks),
-                        detector_version=active_version,
-                        native_probability=float(summary["peak_risk"]),
-                        peak_risk=float(summary["peak_risk"]),
-                        mean_risk=float(summary["mean_risk"]),
-                        alert_level=recommendation.alert_level.value,
-                        analysis_status="COMPLETED",
-                    )
-                    central_db.add(central_record)
+                    central_record = central_db.query(AnalysisRecordModel).filter(AnalysisRecordModel.analysis_id == session_id).first()
+                    if not central_record:
+                        central_record = AnalysisRecordModel(
+                            analysis_id=session_id,
+                            user_id=current_user.id,
+                            filename=file.filename or "unknown",
+                            audio_hash=file_hash_hex,
+                            audio_path=vault_rel_path,
+                            duration_sec=float(len(audio) / app_settings.audio.sample_rate),
+                            total_chunks=len(chunks),
+                            detector_version=active_version,
+                            native_probability=float(summary["peak_risk"]),
+                            peak_risk=float(summary["peak_risk"]),
+                            mean_risk=float(summary["mean_risk"]),
+                            alert_level=recommendation.alert_level.value,
+                            analysis_status="COMPLETED",
+                        )
+                        central_db.add(central_record)
 
-                    review_item = ReviewQueueModel(
-                        review_id=f"REV_{session_id}",
-                        analysis_id=session_id,
-                        submitted_by_user_id=current_user.id,
-                        status="PENDING",
-                    )
-                    central_db.add(review_item)
+                    existing_review = central_db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == f"REV_{session_id}").first()
+                    if not existing_review:
+                        review_item = ReviewQueueModel(
+                            review_id=f"REV_{session_id}",
+                            analysis_id=session_id,
+                            submitted_by_user_id=current_user.id,
+                            status="PENDING",
+                        )
+                        central_db.add(review_item)
                     central_db.commit()
             except Exception as c_err:
                 logger.warning(f"Failed to record audio to central admin training review queue: {c_err}")
+                try:
+                    from backend.storage.database import get_local_engine
+                    from sqlalchemy.orm import Session
+                    with Session(bind=get_local_engine()) as loc_db:
+                        if not loc_db.query(AnalysisRecordModel).filter(AnalysisRecordModel.analysis_id == session_id).first():
+                            loc_db.add(AnalysisRecordModel(
+                                analysis_id=session_id,
+                                user_id=current_user.id,
+                                filename=file.filename or "unknown",
+                                audio_hash=file_hash_hex,
+                                audio_path=vault_rel_path,
+                                duration_sec=float(len(audio) / app_settings.audio.sample_rate),
+                                total_chunks=len(chunks),
+                                detector_version=active_version,
+                                native_probability=float(summary["peak_risk"]),
+                                peak_risk=float(summary["peak_risk"]),
+                                mean_risk=float(summary["mean_risk"]),
+                                alert_level=recommendation.alert_level.value,
+                                analysis_status="COMPLETED",
+                            ))
+                        if not loc_db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == f"REV_{session_id}").first():
+                            loc_db.add(ReviewQueueModel(
+                                review_id=f"REV_{session_id}",
+                                analysis_id=session_id,
+                                submitted_by_user_id=current_user.id,
+                                status="PENDING",
+                            ))
+                        loc_db.commit()
+                except Exception as loc_err:
+                    logger.debug(f"Local review queue fallback notice: {loc_err}")
 
         det_state = app_detector.detector_state if hasattr(app_detector, "detector_state") else ("NEURAL_READY" if getattr(app_detector, "has_neural_model", False) else "HEURISTIC_ONLY")
         calib_notice = (
@@ -520,6 +586,7 @@ async def analyze_audio_file(
             final_risk=final_risk,
             alert_level=recommendation.alert_level.value,
             recommendation={
+                "alert_level": recommendation.alert_level.value,
                 "title": recommendation.title,
                 "message": recommendation.message,
                 "actions": recommendation.actions,
@@ -558,6 +625,7 @@ async def get_my_analysis_history(
     try:
         records = (
             user_db.query(AnalysisRecordModel)
+            .filter(AnalysisRecordModel.user_id == current_user.id)
             .order_by(AnalysisRecordModel.id.desc())
             .limit(limit)
             .all()

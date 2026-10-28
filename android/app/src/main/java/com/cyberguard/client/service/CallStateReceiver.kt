@@ -109,19 +109,8 @@ class CallStateReceiver : BroadcastReceiver() {
                 }
             }
             TelephonyManager.EXTRA_STATE_IDLE -> {
-                Log.d("CallStateReceiver", "Call idle / ended detected via broadcast.")
-                repository.updateTelemetry { it.copy(
-                    callState = TelephonyCallState.IDLE,
-                    callerStatusMessage = "Call ended"
-                ) }
-                val serviceIntent = Intent(context, CallMonitorService::class.java).apply {
-                    action = CallMonitorService.ACTION_STOP_MONITORING
-                }
-                try {
-                    context.startService(serviceIntent)
-                } catch (e: Exception) {
-                    Log.w("CallStateReceiver", "Failed to send stop intent: ${e.message}")
-                }
+                Log.d("CallStateReceiver", "Call idle / ended detected via broadcast. Stopping monitoring pipeline.")
+                CallMonitorService.stopMonitoringDirectly(context)
             }
         }
     }

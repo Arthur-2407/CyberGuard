@@ -58,8 +58,8 @@ class PackageChangeReceiver : BroadcastReceiver() {
         }
 
         val isOfficial = isSystem || packageName == context.packageName || isKnownOfficialStore(installer)
-        val riskScore = if (!isOfficial) 0.85f else 0.05f
-        val riskLevel = if (!isOfficial) "CRITICAL" else "SAFE"
+        val riskScore = if (!isOfficial) 0.35f else 0.05f
+        val riskLevel = if (!isOfficial) "SUSPICIOUS" else "SAFE"
 
         val event = PackageEvent(
             packageName = packageName,
@@ -81,6 +81,13 @@ class PackageChangeReceiver : BroadcastReceiver() {
 
             val appInfo = try { pm.getApplicationInfo(packageName, 0) } catch (_: Exception) { null }
             val apkPath = appInfo?.sourceDir
+            val realSha256 = computeApkSha256(apkPath) ?: "PENDING_VERIFICATION"
+            val entropy = computeShannonEntropy(apkPath)
+            val scanEvidence = when {
+                entropy != null && entropy > 7.4f -> "MEASURED_HIGH_ENTROPY (%.2f/8.0 - Packed/Encrypted)".format(entropy)
+                entropy != null -> "MEASURED_NORMAL_ENTROPY (%.2f/8.0)".format(entropy)
+                else -> "LOCAL_REPUTATION_UNVERIFIED (Awaiting Cloud AV Scan)"
+            }
 
             val alert = com.cyberguard.client.model.MalwareThreatAlert(
                 packageName = packageName,
@@ -88,12 +95,12 @@ class PackageChangeReceiver : BroadcastReceiver() {
                 riskScore = riskScore,
                 riskLevel = riskLevel,
                 installerSource = installer ?: "Direct APK Sideload",
-                sha256 = "N/A",
+                sha256 = realSha256,
                 detectedThreatDetails = "External package origin ($eventType). Bypassed official store verification and signature policy.",
-                threatCategory = "UNOFFICIAL_SIDELOAD_MALWARE",
-                virusScanResult = "HIGH_ENTROPY_EXECUTABLE",
+                threatCategory = "UNVERIFIED_SIDELOAD_ORIGIN",
+                virusScanResult = scanEvidence,
                 playProtectStatus = "NOT VERIFIED BY GOOGLE PLAY PROTECT",
-                aiAutonomousRecommendation = "Forced quarantine active. Installation temporarily frozen. Choose to delete/uninstall or authorize installation.",
+                aiAutonomousRecommendation = "Package flagged in CyberGuard monitoring database. Note: OS-level process freezing requires Android Device Owner privileges. Review declared permissions and choose to uninstall or trust application.",
                 apkPath = apkPath
             )
             repo.triggerMalwareAlert(alert)
@@ -108,7 +115,7 @@ class PackageChangeReceiver : BroadcastReceiver() {
                 putExtra("risk_score", riskScore)
                 putExtra("risk_level", riskLevel)
                 putExtra("installer_source", installer ?: "Direct APK Sideload")
-                putExtra("sha256", "N/A")
+                putExtra("sha256", realSha256)
                 putExtra("threat_details", alert.detectedThreatDetails)
                 putExtra("threat_category", alert.threatCategory)
                 putExtra("virus_scan_result", alert.virusScanResult)
@@ -123,6 +130,53 @@ class PackageChangeReceiver : BroadcastReceiver() {
             } catch (e: Exception) {
                 Log.w("PackageChangeReceiver", "Direct intercept window launch exception: ${e.message}")
             }
+        }
+    }
+
+    private fun computeApkSha256(apkPath: String?): String? {
+        if (apkPath.isNullOrBlank()) return null
+        return try {
+            val file = java.io.File(apkPath)
+            if (!file.exists() || !file.canRead()) return null
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buffer = ByteArray(8192)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun computeShannonEntropy(apkPath: String?): Float? {
+        if (apkPath.isNullOrBlank()) return null
+        return try {
+            val file = java.io.File(apkPath)
+            if (!file.exists() || !file.canRead()) return null
+            val sampleSize = 65536
+            val buffer = ByteArray(sampleSize)
+            val bytesRead = file.inputStream().use { it.read(buffer) }
+            if (bytesRead <= 0) return null
+
+            val freqs = IntArray(256)
+            for (i in 0 until bytesRead) {
+                freqs[buffer[i].toInt() and 0xFF]++
+            }
+            var entropy = 0.0
+            val total = bytesRead.toDouble()
+            for (count in freqs) {
+                if (count > 0) {
+                    val p = count / total
+                    entropy -= p * (Math.log(p) / Math.log(2.0))
+                }
+            }
+            entropy.toFloat()
+        } catch (_: Exception) {
+            null
         }
     }
 

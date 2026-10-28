@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Real-Time SMS Monitoring Permissions -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
@@ -86,6 +87,20 @@
             android:name=".service.CallMonitorService"
             android:foregroundServiceType="microphone"
             android:exported="false" />
+
+        <!-- User-Consented Transparent Local DNS Domain Filtering VpnService -->
+        <service
+            android:name=".service.CyberGuardVpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="vpn" />
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
 
         <!-- Official Android Telecommunications CallScreeningService -->
         <service

@@ -378,7 +378,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                     ) {
                         val activeDetDisplay = if (isCoreConnected) {
                             if (telemetry.activeDetector.isNotBlank()) telemetry.activeDetector
-                            else systemStatus?.activeDetectorVersion?.let { "READY ($it)" } ?: "READY (v025)"
+                            else systemStatus?.activeDetectorVersion?.let { "READY ($it)" } ?: "READY (v032)"
                         } else "WAITING FOR NODE"
                         StatusRow(
                             "DETECTOR CORE",

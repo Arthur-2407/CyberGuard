@@ -38,19 +38,22 @@ os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 
 try:
     import torch
-    torch.set_num_threads(1)
+    default_threads = int(os.getenv("TORCH_NUM_THREADS", str(min(4, os.cpu_count() or 1))))
+    torch.set_num_threads(default_threads)
     if hasattr(torch, "set_num_interop_threads"):
         try:
-            torch.set_num_interop_threads(1)
+            torch.set_num_interop_threads(min(2, default_threads))
         except Exception:
             pass
 except Exception:
     pass
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from backend.config import get_settings
 
@@ -382,6 +385,23 @@ async def lifespan(app: FastAPI):
     logger.info(f"  URLhaus:     {uh_summary}")
     logger.info("=========================")
 
+    # 8. Bidirectional Database Synchronization (Cloud PostgreSQL <-> Local SQLite)
+    sync_task = None
+    try:
+        from backend.storage.sync_service import get_sync_service
+        sync_svc = get_sync_service()
+        if sync_svc.is_cloud_available():
+            logger.info("Scheduling non-blocking baseline bidirectional database sync in background...")
+            asyncio.create_task(sync_svc.async_sync_bidirectional())
+            logger.info("✓ Continuous bidirectional database sync active (Cloud Supabase <-> Local SQLite).")
+        else:
+            logger.info("Cloud database unreachable at startup; operating in local resilient mode.")
+
+        # Always start periodic sync so reconnection automatically triggers cloud sync
+        sync_task = asyncio.create_task(sync_svc.run_periodic_sync(interval_sec=30))
+    except Exception as sync_exc:
+        logger.warning(f"Database sync service initialization notice: {sync_exc}")
+
     logger.info("CyberGuard is ready.")
     logger.info(f"  API:      http://{app_settings.server.host}:{app_settings.server.port}")
     logger.info(f"  Frontend: http://127.0.0.1:{app_settings.server.port}")
@@ -391,6 +411,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("CyberGuard shutting down...")
+    if sync_task:
+        sync_task.cancel()
     from backend.models.model_loader import unload_model
     unload_model()
     
@@ -417,7 +439,19 @@ app = FastAPI(
 )
 
 # CORS (configurable origins with cloud deployment support)
+_default_trusted_origins = [
+    "https://arthur-2407.github.io",
+    "https://cyber-guard-backend-ashen.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
 _cors_origins = list(app_settings.server.cors_origins)
+for o in _default_trusted_origins:
+    if o not in _cors_origins:
+        _cors_origins.append(o)
+
 _env_origins = os.getenv("CYBERGUARD_CORS_ORIGINS", "")
 if _env_origins:
     _cors_origins.extend([o.strip() for o in _env_origins.split(",") if o.strip()])
@@ -427,6 +461,39 @@ _cors_regex = os.getenv(
     r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.vercel\.app|.*\.pages\.dev|.*\.github\.io|.*\.trycloudflare\.com|.*\.ngrok-free\.app|.*\.loca\.lt)(:\d+)?$"
 )
 
+_cors_pattern = re.compile(_cors_regex)
+
+class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
+    """
+    Handle W3C Private Network Access (PNA) preflights and response headers.
+    Enables secure loopback / LAN connectivity from deployed HTTPS frontends (e.g. GitHub Pages, Vercel)
+    to the Docker container backend on localhost without browser CORS or PNA rejections.
+    """
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+        is_pna = request.headers.get("access-control-request-private-network") == "true"
+        is_allowed = bool(origin and (_cors_pattern.match(origin) or origin in _cors_origins))
+
+        if request.method == "OPTIONS" and is_pna:
+            resp = Response(status_code=204)
+            if is_allowed:
+                resp.headers["Access-Control-Allow-Origin"] = origin
+                resp.headers["Access-Control-Allow-Credentials"] = "true"
+            elif "*" in _cors_origins:
+                resp.headers["Access-Control-Allow-Origin"] = "*"
+            resp.headers["Access-Control-Allow-Private-Network"] = "true"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH"
+            req_headers = request.headers.get("access-control-request-headers")
+            resp.headers["Access-Control-Allow-Headers"] = req_headers or "Authorization, Content-Type, Accept, X-Requested-With, X-Session-ID, X-Threat-Scope, X-Device-Fingerprint"
+            resp.headers["Access-Control-Max-Age"] = "86400"
+            resp.headers["Vary"] = "Origin, Access-Control-Request-Private-Network, Access-Control-Request-Method, Access-Control-Request-Headers"
+            return resp
+
+        response = await call_next(request)
+        if is_pna or is_allowed:
+            response.headers["Access-Control-Allow-Private-Network"] = "true"
+        return response
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
@@ -434,11 +501,27 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    allow_private_network=True,
 )
+app.add_middleware(PrivateNetworkAccessMiddleware)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Enforcement & DDoS Shield Middleware
 from backend.security.middleware import EnforcementMiddleware
 app.add_middleware(EnforcementMiddleware)
+
+@app.middleware("http")
+async def malware_upload_limit_middleware(request: Request, call_next):
+    if request.url.path.startswith("/api/threats/malware/scan") and request.method == "POST":
+        content_length = request.headers.get("content-length")
+        max_bytes = getattr(app_settings.malware, "max_scan_size_bytes", 1073741824)
+        if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+            size_str = "1 GB" if max_bytes >= 1073741824 else f"{max_bytes / (1024*1024):.0f} MB"
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Uploaded artifact exceeds maximum authorized scan size ({size_str})."}
+            )
+    return await call_next(request)
 
 # ── Route Registration ─────────────────────────────────────────────────────────
 from backend.api.routes_stream import router as stream_router
@@ -478,11 +561,19 @@ if _FRONTEND_DIR.exists():
 
     @app.get("/styles.css", include_in_schema=False)
     async def serve_styles():
-        return FileResponse(str(_FRONTEND_DIR / "styles.css"), media_type="text/css")
+        return FileResponse(
+            str(_FRONTEND_DIR / "styles.css"),
+            media_type="text/css",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
 
     @app.get("/app.js", include_in_schema=False)
     async def serve_app():
-        return FileResponse(str(_FRONTEND_DIR / "app.js"), media_type="application/javascript")
+        return FileResponse(
+            str(_FRONTEND_DIR / "app.js"),
+            media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
 
     @app.get("/config.js", include_in_schema=False)
     async def serve_config():
@@ -526,10 +617,38 @@ async def favicon():
 @app.get("/health", tags=["Health"])
 @app.get("/api/health", tags=["Health"])
 async def health_check():
+    detector = _APP_STATE.get("detector")
+    detector_ready = detector is not None and (detector.has_neural_model or detector.is_fallback_active)
+    vt_prov = _APP_STATE.get("virustotal_provider")
+    uh_prov = _APP_STATE.get("urlhaus_provider")
+    is_docker = os.path.exists("/.dockerenv") or os.getenv("RUNNING_IN_DOCKER", "").lower() in ("true", "1")
+    backend_env = os.getenv("CYBERGUARD_BACKEND_ENV") or ("docker-local" if is_docker else "host-native")
     return {
         "status": "ok",
         "service": "CyberGuard",
         "version": "1.0.0",
+        "backend": backend_env,
+        "environment": backend_env,
+        "database": "connected",
+        "detector_ready": bool(detector_ready),
+        "threat_intel": {
+            "virustotal_configured": bool(vt_prov and vt_prov.is_configured),
+            "urlhaus_configured": bool(uh_prov and uh_prov.is_configured),
+        }
     }
+
+
+@app.get("/api/sync/status", tags=["Database"])
+async def get_db_sync_status():
+    """Return live status of Cloud PostgreSQL and Local SQLite synchronization."""
+    from backend.storage.sync_service import get_sync_service
+    return get_sync_service().get_status()
+
+
+@app.post("/api/sync/bidirectional", tags=["Database"])
+async def trigger_db_sync():
+    """Trigger an on-demand bidirectional synchronization run."""
+    from backend.storage.sync_service import get_sync_service
+    return await get_sync_service().async_sync_bidirectional()
 # Auto-reload trigger: v008 restored
 

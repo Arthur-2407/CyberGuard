@@ -35,6 +35,15 @@ function getResolvedApiBase() {
       }
     }
     if (typeof localStorage !== 'undefined') {
+      const mode = localStorage.getItem('cyberguard_connection_mode');
+      if (mode === 'local') {
+        const port = localStorage.getItem('cyberguard_local_port') || '3000';
+        return `http://127.0.0.1:${port}`;
+      } else if (mode === 'deployed') {
+        const custom = localStorage.getItem('cyberguard_custom_tunnel');
+        if (custom && custom.trim()) return custom.trim().replace(/\/+$/, '');
+        return '';
+      }
       const stored = localStorage.getItem('cyberguard_api_base');
       if (stored && stored.trim()) return stored.trim().replace(/\/+$/, '');
     }
@@ -49,7 +58,9 @@ function getResolvedApiBase() {
     if (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '0.0.0.0') {
       return (location.port === '3000') ? '' : 'http://127.0.0.1:3000';
     }
-    return '';
+    // On deployed static hosts (GitHub Pages, Vercel), default to local Docker at http://127.0.0.1:3000
+    // so the browser automatically connects to the local backend without manual configuration.
+    return 'http://127.0.0.1:3000';
   }
   return 'http://127.0.0.1:3000';
 }
@@ -91,8 +102,636 @@ function setCyberGuardApiBase(url) {
       window.WS_URL = WS_URL;
     } catch (_) {}
   }
-  if (typeof checkSystemStatus === 'function') checkSystemStatus();
+  if (window.CyberGuardConnection) {
+    window.CyberGuardConnection.scheduleCheck(100);
+  } else if (typeof checkSystemStatus === 'function') {
+    checkSystemStatus();
+  }
 }
+window.setCyberGuardApiBase = setCyberGuardApiBase;
+
+// ── CyberGuard Dual-Mode Backend Connection Manager ──────────────────────────
+const CyberGuardConnection = {
+  mode: (function() {
+    try {
+      const stored = localStorage.getItem('cyberguard_connection_mode');
+      if (stored === 'local' || stored === 'deployed') return stored;
+      if (typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname === '0.0.0.0')) {
+        return 'local';
+      }
+    } catch (_) {}
+    // Default to Mode B (Local Docker) so deployed static frontends connect to local backend out of the box
+    return 'local';
+  })(),
+
+  port: (function() {
+    try {
+      return localStorage.getItem('cyberguard_local_port') || '3000';
+    } catch (_) {
+      return '3000';
+    }
+  })(),
+
+  // Required 5 connection states: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'DEGRADED' | 'ERROR'
+  status: 'DISCONNECTED',
+  lastLatency: null,
+  lastError: null,
+  reconnectTimer: null,
+  retryDelay: 5000,
+  minRetryDelay: 5000,
+  maxRetryDelay: 30000,
+  backoffFactor: 1.5,
+  isChecking: false,
+  activeAbortController: null,
+
+  isOnline() {
+    return this.status === 'CONNECTED' || this.status === 'DEGRADED';
+  },
+
+  getApiBase() {
+    if (this.mode === 'local') {
+      return `http://127.0.0.1:${this.port}`;
+    }
+    return getResolvedApiBase();
+  },
+
+  resolveUrl(path) {
+    const base = this.getApiBase();
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    if (!base) return cleanPath;
+    return `${base.replace(/\/+$/, '')}${cleanPath}`;
+  },
+
+  init() {
+    this.updateUI();
+    if (this.mode === 'local') {
+      const p = this.port || '3000';
+      API_BASE = `http://127.0.0.1:${p}`;
+      window.API_BASE = API_BASE;
+      this.scheduleCheck(100);
+    } else {
+      this.scheduleCheck(200);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', () => {
+        if (!this.isOnline()) {
+          this.scheduleCheck(200);
+        }
+      });
+      window.addEventListener('focus', () => {
+        if (!this.isOnline()) {
+          this.scheduleCheck(500);
+        }
+      });
+      if (typeof document !== 'undefined') {
+        document.addEventListener('visibilitychange', () => {
+          if (!document.hidden && !this.isOnline()) {
+            this.scheduleCheck(300);
+          }
+        });
+      }
+    }
+  },
+
+  setMode(newMode) {
+    if (newMode !== 'local' && newMode !== 'deployed') return;
+    this.mode = newMode;
+    try {
+      localStorage.setItem('cyberguard_connection_mode', newMode);
+      if (newMode === 'local') {
+        localStorage.setItem('cyberguard_api_base', `http://127.0.0.1:${this.port}`);
+      } else {
+        const custom = localStorage.getItem('cyberguard_custom_tunnel') || '';
+        if (custom) {
+          localStorage.setItem('cyberguard_api_base', custom);
+        } else {
+          localStorage.removeItem('cyberguard_api_base');
+        }
+      }
+    } catch (_) {}
+
+    API_BASE = getResolvedApiBase();
+    WS_URL = _resolveWsUrl();
+    window.WS_URL = WS_URL;
+
+    this.retryDelay = this.minRetryDelay;
+    this.updateUI();
+    this.scheduleCheck(100);
+
+    const label = newMode === 'local' ? `Local Docker Backend (http://127.0.0.1:${this.port})` : 'Deployed Cloud Backend';
+    if (typeof showToast === 'function') {
+      showToast(`Switched to ${label}`, 'info');
+    }
+  },
+
+  setPort(p) {
+    const cleaned = String(p || '3000').trim().replace(/\D+/g, '') || '3000';
+    this.port = cleaned;
+    try {
+      localStorage.setItem('cyberguard_local_port', cleaned);
+      if (this.mode === 'local') {
+        localStorage.setItem('cyberguard_api_base', `http://127.0.0.1:${cleaned}`);
+        API_BASE = getResolvedApiBase();
+        WS_URL = _resolveWsUrl();
+        window.WS_URL = WS_URL;
+      }
+    } catch (_) {}
+    this.retryDelay = this.minRetryDelay;
+    this.scheduleCheck(100);
+  },
+
+  scheduleCheck(delayMs) {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    const effectiveDelay = (typeof document !== 'undefined' && document.hidden && this.isOnline())
+      ? Math.max(delayMs, 45000)
+      : delayMs;
+    this.reconnectTimer = setTimeout(() => {
+      this.checkConnection();
+    }, effectiveDelay);
+  },
+
+  cancelPending() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.activeAbortController) {
+      try { this.activeAbortController.abort(); } catch (_) {}
+      this.activeAbortController = null;
+    }
+  },
+
+  async checkConnection() {
+    if (this.isChecking) return;
+    this.isChecking = true;
+    this.cancelPending();
+
+    const controller = new AbortController();
+    this.activeAbortController = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
+
+    const isLocal = this.mode === 'local';
+    const currentEndpoint = getResolvedApiBase();
+    const probeBase = isLocal ? (currentEndpoint || `http://127.0.0.1:${this.port}`) : currentEndpoint;
+
+    const displayEl = document.getElementById('modal-backend-url-display');
+    if (displayEl) {
+      displayEl.textContent = probeBase || (isLocal ? `http://127.0.0.1:${this.port}` : '(Deployed Static Host / Cloud)');
+    }
+
+    // If deployed mode with no custom tunnel on a known static host, detect standalone mode cleanly
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!isLocal && !probeBase && isStaticHost) {
+      clearTimeout(timeoutId);
+      this.isChecking = false;
+      this.activeAbortController = null;
+      this.status = 'DISCONNECTED';
+      this.lastLatency = null;
+      this.lastError = 'Standalone Deployed Frontend — No cloud backend API detected on this static host. Switch to Mode B (Local Docker) to connect your local Docker engine, or configure a secure tunnel endpoint.';
+      updateSystemStatus('offline');
+      this.updateUI();
+      this.scheduleCheck(30000);
+      return;
+    }
+
+    this.status = 'CONNECTING';
+    this.updateUI();
+
+    const healthUrl = probeBase ? `${probeBase}/api/health` : '/api/health';
+    const fallbackHealthUrl = probeBase ? `${probeBase}/health` : '/health';
+    const statusUrl = probeBase ? `${probeBase}/api/config/status` : '/api/config/status';
+
+    const t0 = performance.now();
+    try {
+      let resp;
+      try {
+        resp = await cyberGuardFetch(healthUrl, {
+          method: 'GET',
+          signal: controller.signal,
+          headers: { 'Accept': 'application/json' }
+        });
+      } catch (firstErr) {
+        if (controller.signal.aborted) throw firstErr;
+        try {
+          resp = await cyberGuardFetch(fallbackHealthUrl, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/json' }
+          });
+        } catch (secondErr) {
+          if (controller.signal.aborted) throw secondErr;
+          resp = await cyberGuardFetch(statusUrl, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/json' }
+          });
+        }
+      }
+
+      clearTimeout(timeoutId);
+      const latency = Math.round(performance.now() - t0);
+      this.lastLatency = latency;
+
+      if (resp && resp.ok) {
+        const raw = await resp.text().catch(() => '');
+        let data = null;
+        try { data = JSON.parse(raw); } catch (_) { data = null; }
+
+        if (!data || typeof data !== 'object' || raw.includes('<!DOCTYPE') || raw.includes('<html')) {
+          this.status = 'ERROR';
+          this.handleFailure(new Error('Endpoint returned non-JSON/HTML content instead of CyberGuard health payload'), 'ERROR');
+          return;
+        }
+
+        const isHealthy = data.status === 'ok' || data.status === 'operational';
+        if (!isHealthy) {
+          this.status = 'ERROR';
+          this.handleFailure(new Error(`Service returned non-healthy status: ${data.status}`), 'ERROR');
+          return;
+        }
+
+        const wasDisconnected = !this.isOnline();
+        const isDegraded = data.detector_ready === false;
+        this.status = isDegraded ? 'DEGRADED' : 'CONNECTED';
+        this.lastError = isDegraded ? 'Acoustic neural detector offline — running in degraded heuristic mode.' : null;
+        this.retryDelay = this.minRetryDelay;
+
+        if (probeBase) {
+          API_BASE = probeBase;
+          window.API_BASE = probeBase;
+          try {
+            WS_URL = _resolveWsUrl();
+            window.WS_URL = WS_URL;
+          } catch (_) {}
+        }
+
+        updateSystemStatus('online');
+        this.updateUI();
+
+        if (data.status === 'operational' || data.config) {
+          if (data.wav2vec2_available && document.getElementById('pill-wav2vec')) document.getElementById('pill-wav2vec').classList.add('active');
+          if (data.ecapa_available && document.getElementById('pill-speaker')) document.getElementById('pill-speaker').classList.add('active');
+          if (data.config && data.config.thresholds) {
+            const thrLow = document.getElementById('thr-low');
+            const thrMed = document.getElementById('thr-medium');
+            const thrHigh = document.getElementById('thr-high');
+            if (thrLow) thrLow.value = data.config.thresholds.low;
+            if (thrMed) thrMed.value = data.config.thresholds.medium;
+            if (thrHigh) thrHigh.value = data.config.thresholds.high;
+          }
+        }
+        if (data.virustotal_status && data.virustotal_status !== 'UNKNOWN' && typeof renderVirusTotalBadge === 'function') {
+          renderVirusTotalBadge({ status: data.virustotal_status });
+        } else if (data.threat_intel && data.threat_intel.virustotal_configured && typeof renderVirusTotalBadge === 'function') {
+          renderVirusTotalBadge({ status: 'READY' });
+        }
+        if (data.urlhaus_status && data.urlhaus_status !== 'UNKNOWN' && typeof renderURLhausBadge === 'function') {
+          renderURLhausBadge({ status: data.urlhaus_status });
+        } else if (data.threat_intel && data.threat_intel.urlhaus_configured && typeof renderURLhausBadge === 'function') {
+          renderURLhausBadge({ status: 'READY' });
+        }
+
+        if (wasDisconnected) {
+          this.syncRealDashboardData();
+        }
+
+        this.scheduleCheck(15000);
+      } else {
+        const statusText = resp ? `HTTP ${resp.status}` : 'Unknown response';
+        this.handleFailure(new Error(`Server returned ${statusText}`), 'ERROR');
+      }
+    } catch (err) {
+      clearTimeout(timeoutId);
+      this.handleFailure(err);
+    } finally {
+      this.isChecking = false;
+      this.activeAbortController = null;
+    }
+  },
+
+  handleFailure(err, explicitState = null) {
+    updateSystemStatus('offline');
+
+    let state = explicitState || 'DISCONNECTED';
+    let reason = 'Backend service is unavailable.';
+    if (err && err.name === 'AbortError') {
+      state = 'DISCONNECTED';
+      reason = `Connection timed out (4.0s). Ensure Docker container is running on http://127.0.0.1:${this.port}.`;
+    } else if (err && err.isPnaBlock) {
+      state = 'ERROR';
+      reason = err.message;
+    } else if (err && err.isStaticHostMismatch) {
+      state = 'DISCONNECTED';
+      reason = err.message;
+    } else if (err && err.message) {
+      const msg = err.message.toLowerCase();
+      if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('refused')) {
+        if (typeof location !== 'undefined' && location.protocol === 'https:' && this.mode === 'local') {
+          state = 'DISCONNECTED';
+          reason = `Connection to http://127.0.0.1:${this.port} unavailable or blocked by browser. If prompted for Local Network Access, click Allow. Alternatively, ensure Docker is running (docker compose up -d).`;
+        } else {
+          state = 'DISCONNECTED';
+          reason = `Connection refused on http://127.0.0.1:${this.port}. Ensure Docker container is running (docker compose up -d).`;
+        }
+      } else if (msg.includes('http 404')) {
+        state = 'ERROR';
+        reason = `Backend API route not found (HTTP 404). Ensure backend is registered on http://127.0.0.1:${this.port}.`;
+      } else if (msg.includes('http 405')) {
+        state = 'ERROR';
+        reason = `HTTP 405 Method Not Allowed: Static host rejected API request. Ensure Mode B (Local Docker) is active.`;
+      } else {
+        state = 'ERROR';
+        reason = `Health check failed: ${escapeHtml(err.message)}`;
+      }
+    }
+
+    this.status = state;
+    this.lastError = reason;
+    this.lastLatency = null;
+    this.updateUI();
+
+    if (this.mode === 'local') {
+      const nextDelay = this.retryDelay;
+      this.retryDelay = Math.min(this.maxRetryDelay, Math.round(this.retryDelay * this.backoffFactor));
+      this.scheduleCheck(nextDelay);
+    } else {
+      this.scheduleCheck(30000);
+    }
+  },
+
+  syncRealDashboardData() {
+    try {
+      if (typeof updateOverview === 'function') updateOverview(false);
+      if (typeof loadAlerts === 'function') loadAlerts();
+      if (typeof loadSpeakers === 'function') loadSpeakers();
+      if (typeof loadSecurityCenterData === 'function') loadSecurityCenterData();
+      if (typeof initSecurityCenterWebSocket === 'function') initSecurityCenterWebSocket();
+      if (typeof autoLinkThreatIntelPipeline === 'function') autoLinkThreatIntelPipeline(false);
+    } catch (e) {
+      console.warn('Dashboard data sync notice:', e);
+    }
+  },
+
+  updateUI() {
+    const modeBadge = document.getElementById('sh-connection-mode-badge');
+    const statusBadge = document.getElementById('sh-connection-status-badge');
+    const diagEl = document.getElementById('sh-connection-diagnostic');
+    const btnModeA = document.getElementById('btn-mode-deployed');
+    const btnModeB = document.getElementById('btn-mode-local');
+    const portInput = document.getElementById('sh-local-port-input');
+    const modalPing = document.getElementById('modal-backend-ping');
+
+    if (portInput && portInput.value !== this.port) {
+      portInput.value = this.port;
+    }
+
+    if (modalPing) {
+      modalPing.textContent = this.lastLatency !== null ? `Latency: ${this.lastLatency}ms` : 'Latency: Offline';
+    }
+
+    if (btnModeA && btnModeB) {
+      if (this.mode === 'local') {
+        btnModeB.classList.add('active');
+        btnModeA.classList.remove('active');
+        btnModeB.style.background = 'rgba(56, 189, 248, 0.25)';
+        btnModeB.style.borderColor = '#38bdf8';
+        btnModeB.style.color = '#38bdf8';
+        btnModeA.style.background = '';
+        btnModeA.style.borderColor = '';
+        btnModeA.style.color = '';
+      } else {
+        btnModeA.classList.add('active');
+        btnModeB.classList.remove('active');
+        btnModeA.style.background = 'rgba(168, 85, 247, 0.25)';
+        btnModeA.style.borderColor = '#a855f7';
+        btnModeA.style.color = '#a855f7';
+        btnModeB.style.background = '';
+        btnModeB.style.borderColor = '';
+        btnModeB.style.color = '';
+      }
+    }
+
+    if (modeBadge) {
+      modeBadge.textContent = this.mode === 'local' ? `MODE B: LOCAL DOCKER (127.0.0.1:${this.port})` : 'MODE A: DEPLOYED BACKEND';
+      modeBadge.style.color = this.mode === 'local' ? '#38bdf8' : '#a855f7';
+    }
+
+    if (statusBadge) {
+      const nextSec = Math.round(this.retryDelay / 1000);
+      switch (this.status) {
+        case 'CONNECTED':
+          statusBadge.textContent = `CONNECTED (${this.lastLatency || 0}ms)`;
+          statusBadge.className = 'pipeline-status-badge status-ready';
+          statusBadge.style.background = 'rgba(16, 185, 129, 0.15)';
+          statusBadge.style.color = '#10b981';
+          break;
+        case 'CONNECTING':
+          statusBadge.textContent = 'CONNECTING...';
+          statusBadge.className = 'pipeline-status-badge status-warning';
+          statusBadge.style.background = 'rgba(6, 182, 212, 0.15)';
+          statusBadge.style.color = '#06b6d4';
+          break;
+        case 'DEGRADED':
+          statusBadge.textContent = `DEGRADED (${this.lastLatency || 0}ms)`;
+          statusBadge.className = 'pipeline-status-badge status-warning';
+          statusBadge.style.background = 'rgba(249, 115, 22, 0.15)';
+          statusBadge.style.color = '#f97316';
+          break;
+        case 'ERROR':
+          statusBadge.textContent = `ERROR · RETRY IN ${nextSec}S`;
+          statusBadge.className = 'pipeline-status-badge status-error';
+          statusBadge.style.background = 'rgba(239, 68, 68, 0.15)';
+          statusBadge.style.color = '#ef4444';
+          break;
+        case 'DISCONNECTED':
+        default:
+          statusBadge.textContent = this.mode === 'local' ? `DISCONNECTED · RETRY IN ${nextSec}S` : 'STANDALONE CLOUD';
+          statusBadge.className = 'pipeline-status-badge status-warning';
+          statusBadge.style.background = 'rgba(245, 158, 11, 0.15)';
+          statusBadge.style.color = '#f59e0b';
+          break;
+      }
+    }
+
+    if (diagEl) {
+      switch (this.status) {
+        case 'CONNECTED':
+          diagEl.textContent = `✓ Active connection established to ${this.mode === 'local' ? `Local Docker container (127.0.0.1:${this.port})` : 'Cloud Backend'}. Real-time telemetry streaming.`;
+          diagEl.style.color = '#10b981';
+          break;
+        case 'CONNECTING':
+          diagEl.textContent = `Connecting to ${this.mode === 'local' ? `Local Docker container (127.0.0.1:${this.port})` : 'Cloud Backend'}...`;
+          diagEl.style.color = '#06b6d4';
+          break;
+        case 'DEGRADED':
+          diagEl.textContent = `⚠ ${this.lastError || 'Backend online, but some detection services are degraded.'}`;
+          diagEl.style.color = '#f97316';
+          break;
+        case 'ERROR':
+          diagEl.textContent = `✖ ${this.lastError || 'Connection error occurred.'}`;
+          diagEl.style.color = '#ef4444';
+          break;
+        case 'DISCONNECTED':
+        default:
+          diagEl.textContent = this.lastError || (this.mode === 'local' ? `Attempting automatic reconnection to http://127.0.0.1:${this.port}...` : 'Running in standalone deployed mode.');
+          diagEl.style.color = '#f59e0b';
+          break;
+      }
+    }
+  }
+};
+
+// ── Centralized API Client & Fetch Engine with In-Flight Coalescing ──────────
+const _nativeFetch = (typeof window !== 'undefined' && window.fetch) ? window.fetch.bind(window) : (typeof fetch !== 'undefined' ? fetch : null);
+
+// In-flight GET deduplication cache: coalesces identical concurrent read requests
+const _inFlightGets = new Map();
+
+if (typeof window !== 'undefined' && window.fetch) {
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function (resource, init) {
+    const method = (init && init.method ? init.method : 'GET').toUpperCase();
+    const isGet = method === 'GET';
+    const urlStr = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+
+    // Coalesce identical in-flight GET requests to backend APIs
+    if (isGet && urlStr && (urlStr.includes('/api/') || urlStr.startsWith('/api/'))) {
+      const authHeader = (init && init.headers && (init.headers.Authorization || init.headers['authorization'])) || '';
+      const coalesceKey = `${urlStr}|${authHeader}`;
+      if (_inFlightGets.has(coalesceKey)) {
+        return _inFlightGets.get(coalesceKey).then(res => res.clone());
+      }
+      const fetchPromise = _origFetch(resource, init).finally(() => {
+        _inFlightGets.delete(coalesceKey);
+      });
+      _inFlightGets.set(coalesceKey, fetchPromise);
+      return fetchPromise.then(res => res.clone());
+    }
+    return _origFetch(resource, init);
+  };
+}
+
+function isLoopbackUrl(urlStr) {
+  try {
+    const loc = typeof location !== 'undefined' ? location.href : 'http://127.0.0.1:3000';
+    const parsed = new URL(urlStr, loc);
+    const h = parsed.hostname.toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '[::1]' || h === '0.0.0.0';
+  } catch (_) {
+    return false;
+  }
+}
+
+async function cyberGuardFetch(resource, init = {}) {
+  let url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : String(resource));
+  const isRelative = !url.startsWith('http://') && !url.startsWith('https://');
+
+  if (isRelative) {
+    const base = CyberGuardConnection.getApiBase();
+    if (!base) {
+      const isStaticHost = typeof location !== 'undefined' && 
+        (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+      if (isStaticHost) {
+        const staticErr = new Error(
+          `Cannot send API request to static deployment host (${location.hostname}). ` +
+          `No cloud backend is configured for Mode A. Please switch to Mode B (Local Docker: http://127.0.0.1:${CyberGuardConnection.port}) ` +
+          `in System Health or configure a valid tunnel URL.`
+        );
+        staticErr.isStaticHostMismatch = true;
+        throw staticErr;
+      }
+      url = url.startsWith('/') ? url : `/${url}`;
+    } else {
+      const cleanPath = url.startsWith('/') ? url : `/${url}`;
+      url = `${base.replace(/\/+$/, '')}${cleanPath}`;
+    }
+  }
+
+  const isLoopback = isLoopbackUrl(url);
+  const isSecure = typeof location !== 'undefined' && (location.protocol === 'https:' || (typeof window !== 'undefined' && window.isSecureContext));
+
+  const options = { ...init };
+  options.headers = { ...(init.headers || {}) };
+
+  // Attach auth header if available and not already specified
+  if (typeof getAuthToken === 'function' && !options.headers['Authorization']) {
+    try {
+      const token = getAuthToken();
+      if (token) options.headers['Authorization'] = `Bearer ${token}`;
+    } catch (_) {}
+  }
+
+  // W3C / Chrome Private Network Access (PNA): targetAddressSpace: 'loopback'
+  // Applies only to verified loopback destinations from secure (HTTPS) origins
+  if (isLoopback && isSecure) {
+    options.targetAddressSpace = 'loopback';
+  }
+
+  try {
+    let resp;
+    try {
+      resp = await _nativeFetch(url, options);
+    } catch (fetchErr) {
+      if (options.targetAddressSpace && /targetAddressSpace|invalid option|typeerror/i.test(fetchErr.message)) {
+        const fallback = { ...options };
+        delete fallback.targetAddressSpace;
+        resp = await _nativeFetch(url, fallback);
+      } else {
+        throw fetchErr;
+      }
+    }
+    return resp;
+  } catch (err) {
+    const msg = (err.message || '').toLowerCase();
+    if (err.name === 'AbortError') {
+      const abortErr = new Error(`Request timed out while contacting backend at ${url}`);
+      abortErr.name = 'AbortError';
+      abortErr.isTimeout = true;
+      throw abortErr;
+    }
+    if (isLoopback && isSecure && (msg.includes('failed to fetch') || msg.includes('networkerror'))) {
+      const pnaErr = new Error(
+        `Local Network Access to ${url} was blocked by browser security. ` +
+        `If Chrome prompted for Local Network Access, click Allow. ` +
+        `Alternatively, click the site settings icon in your address bar to permit access to local network devices.`
+      );
+      pnaErr.isPnaBlock = true;
+      throw pnaErr;
+    }
+    if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('refused')) {
+      const netErr = new Error(
+        `Unable to reach CyberGuard backend at ${url}. Ensure Docker container is running (docker compose up -d).`
+      );
+      netErr.isNetworkError = true;
+      throw netErr;
+    }
+    throw err;
+  }
+}
+
+window.cyberGuardFetch = cyberGuardFetch;
+window.CyberGuardClient = {
+  fetch: cyberGuardFetch,
+  getApiBase: () => CyberGuardConnection.getApiBase(),
+  resolveUrl: (path) => CyberGuardConnection.resolveUrl(path),
+  request: async (path, options = {}) => {
+    const resp = await cyberGuardFetch(path, options);
+    return await parseResponseSafely(resp, options.operationName || path, options);
+  }
+};
+
+// Intercept window.fetch for /api/ and API_BASE calls
+if (typeof window !== 'undefined' && _nativeFetch) {
+  window.fetch = function(resource, init) {
+    const urlStr = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+    if (urlStr && (urlStr.startsWith('/api/') || urlStr.startsWith('http://127.0.0.1') || urlStr.startsWith('http://localhost') || (API_BASE && (urlStr === API_BASE || urlStr.startsWith(API_BASE + '/'))))) {
+      return cyberGuardFetch(resource, init);
+    }
+    return _nativeFetch(resource, init);
+  };
+}
+
+window.CyberGuardConnection = CyberGuardConnection;
 window.setCyberGuardApiBase = setCyberGuardApiBase;
 
 // ── Single-Read HTTP Response & Error Processing Engine ──────────────────────
@@ -108,7 +747,7 @@ window.setCyberGuardApiBase = setCyberGuardApiBase;
  * @param {string} operationName - Name of the operation for diagnostics
  * @returns {Promise<any>}
  */
-async function parseResponseSafely(response, operationName = 'Request') {
+async function parseResponseSafely(response, operationName = 'Request', options = {}) {
   if (!response) {
     throw new Error(`${operationName}: No response received from server`);
   }
@@ -133,17 +772,31 @@ async function parseResponseSafely(response, operationName = 'Request') {
 
   if (!response.ok) {
     let errorDetail = '';
+    const contentType = response.headers && typeof response.headers.get === 'function' ? (response.headers.get('content-type') || '') : '';
+    const isHtmlResponse = contentType.includes('text/html') || rawText.includes('<!DOCTYPE') || rawText.includes('<html');
+
     if (isJson && jsonData && typeof jsonData === 'object') {
       errorDetail = jsonData.detail || jsonData.message || jsonData.error || JSON.stringify(jsonData);
     } else if (rawText && rawText.trim().length > 0) {
-      // Strip HTML tags if server returned an HTML error page (e.g. Vercel 404/502)
       const clean = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      errorDetail = clean.length > 250 ? clean.substring(0, 250) + '...' : clean;
+      if (isHtmlResponse) {
+        if (response.status === 405) {
+          errorDetail = `HTTP 405 Method Not Allowed: Target host rejected this request method. Static hosting platforms (e.g. GitHub Pages) do not accept POST API requests. Ensure Mode B (Local Docker: http://127.0.0.1:3000) is active.`;
+        } else if (response.status === 404) {
+          errorDetail = `HTTP 404 Not Found: Requested API route was not found on target host. Verify that the CyberGuard backend is running with current API routes.`;
+        } else {
+          errorDetail = `Server returned an HTML error document (HTTP ${response.status}) instead of API JSON.`;
+        }
+      } else {
+        errorDetail = clean.length > 200 ? clean.substring(0, 200) + '...' : clean;
+      }
     }
 
     let contextNote = '';
-    if (response.status === 404) {
-      contextNote = ' (Endpoint not found — check backend deployment and API routing)';
+    if (response.status === 404 && !errorDetail.includes('404')) {
+      contextNote = ' (Endpoint not found — check backend API routing)';
+    } else if (response.status === 405 && !errorDetail.includes('405')) {
+      contextNote = ' (Method not allowed on this endpoint)';
     } else if (response.status === 502 || response.status === 503 || response.status === 504) {
       contextNote = ' (Backend service unavailable or gateway error)';
     }
@@ -155,6 +808,20 @@ async function parseResponseSafely(response, operationName = 'Request') {
     err.data = jsonData;
     err.rawText = rawText;
     throw err;
+  }
+
+  // When HTTP 200 is returned: verify JSON when structured response is expected
+  if (options && options.expectJson !== false) {
+    if (!isJson || !jsonData || typeof jsonData !== 'object') {
+      const clean = rawText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const isHtml = rawText.includes('<!DOCTYPE') || rawText.includes('<html');
+      if (isHtml || clean.includes('NOT_FOUND') || clean.includes('File not found')) {
+        throw new Error(`${operationName}: Received HTML/error response instead of valid API JSON. Check that your backend is connected.`);
+      }
+      if (options.requireJson) {
+        throw new Error(`${operationName}: Invalid JSON format received from server`);
+      }
+    }
   }
 
   return isJson ? jsonData : rawText;
@@ -1033,10 +1700,11 @@ function updateSystemStatus(state) {
   const navDot = document.getElementById('backend-nav-dot');
   const navText = document.getElementById('backend-nav-text');
   const modalTag = document.getElementById('modal-backend-status-tag');
+  const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
   if (navDot && navText) {
     if (state === 'online') {
       navDot.className = 'backend-pulse-dot online';
-      navText.textContent = 'DOCKER ONLINE';
+      navText.textContent = isLocal ? 'DOCKER ONLINE' : 'CLOUD ONLINE';
       navText.style.color = '#10b981';
       if (modalTag) {
         modalTag.textContent = 'ONLINE';
@@ -1045,10 +1713,10 @@ function updateSystemStatus(state) {
       }
     } else {
       navDot.className = 'backend-pulse-dot offline';
-      navText.textContent = 'DOCKER OFFLINE';
+      navText.textContent = isLocal ? 'DOCKER OFFLINE' : 'CLOUD OFFLINE';
       navText.style.color = '#ef4444';
       if (modalTag) {
-        modalTag.textContent = 'OFFLINE (STOPPED)';
+        modalTag.textContent = isLocal ? 'OFFLINE (STOPPED)' : 'STANDALONE';
         modalTag.style.background = 'rgba(239,68,68,0.15)';
         modalTag.style.color = '#ef4444';
       }
@@ -1105,6 +1773,7 @@ function showTab(name) {
     updatePipelineStepper(selectedAnalyzeFile ? 1 : 0);
   }
   if (name === 'overview') updateOverview();
+  if (name === 'malware') refreshMalwareStatus();
   if (name === 'threats') {
     startPipelineAutoWatcher();
   } else {
@@ -1481,7 +2150,7 @@ async function analyzeFile() {
     const token = typeof getAuthToken === 'function' ? getAuthToken() : '';
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-    const resp = await fetch(`${API_BASE}/api/analyze`, {
+    const resp = await cyberGuardFetch('/api/analyze', {
       method: 'POST',
       body: formData,
       headers: headers,
@@ -1508,10 +2177,24 @@ async function analyzeFile() {
   } catch (err) {
     clearInterval(stageTimer);
     updatePipelineStepper(1);
-    const isNetworkErr = err instanceof TypeError || /fetch|network|failed to fetch|connect|refused/i.test(err.message);
+    const isPnaErr = err.isPnaBlock || /local network access|private network|targetaddressspace/i.test(err.message);
+    const isNetworkErr = err.isNetworkError || isPnaErr || err instanceof TypeError || /fetch|network|failed to fetch|connect|refused/i.test(err.message);
     const resultsContainer = document.getElementById('results-body');
     if (resultsContainer) {
-      if (isNetworkErr) {
+      if (isPnaErr) {
+        resultsContainer.innerHTML = `
+          <div class="results-empty" style="padding:40px 20px; text-align:center;">
+            <div style="font-size:32px; margin-bottom:8px;">🔒</div>
+            <p style="color:#f59e0b; font-size:13px; font-weight:700; font-family:'JetBrains Mono', monospace; margin-bottom:6px;">
+              LOCAL NETWORK ACCESS PERMISSION REQUIRED
+            </p>
+            <p style="color:#94a3b8; font-size:11.5px; max-width:440px; margin:0 auto 14px; line-height:1.5;">
+              Chrome requires permission for HTTPS sites to contact loopback services. Click the permissions/tune icon in the address bar, allow 'Local Network Access' for this site, and try again.
+            </p>
+            <button class="btn btn-secondary btn-xs" onclick="openSystemHealthModal()">Open System Health</button>
+          </div>
+        `;
+      } else if (isNetworkErr) {
         resultsContainer.innerHTML = `
           <div class="results-empty" style="padding:40px 20px; text-align:center;">
             <div style="font-size:32px; margin-bottom:8px;">⚠️</div>
@@ -1519,7 +2202,7 @@ async function analyzeFile() {
               BACKEND DOCKER CONTAINER OFFLINE
             </p>
             <p style="color:#94a3b8; font-size:11.5px; max-width:440px; margin:0 auto 14px; line-height:1.5;">
-              The frontend is online on Vercel / GitHub Pages. To run scans, start the CyberGuard backend in Docker on your laptop or configure your secure tunnel endpoint.
+              The CyberGuard backend could not be reached at ${escapeHtml(CyberGuardConnection.getApiBase() || 'http://127.0.0.1:' + CyberGuardConnection.port)}. Ensure the Docker container is running (<code>docker compose up -d</code>) or configure a valid tunnel URL.
             </p>
             <button class="btn btn-secondary btn-xs" onclick="openBackendModal()">Configure Backend / Tunnel</button>
           </div>
@@ -1534,6 +2217,8 @@ async function analyzeFile() {
     }
     if (err.name === 'AbortError' || didTimeout) {
       showToast('Analysis timed out. The server may be busy — please try again.', 'error');
+    } else if (isPnaErr) {
+      showToast('Local Network Access blocked by browser — check address bar permissions', 'warning');
     } else if (isNetworkErr) {
       showToast('CyberGuard Backend offline — Start Docker container or configure tunnel', 'error');
     } else {
@@ -1718,9 +2403,12 @@ function renderAnalysisResults(data) {
       const stability = pitch.pitch_stability_pct !== undefined ? pitch.pitch_stability_pct : 88;
       const isAnomaly = Boolean(pitch.is_pitch_anomaly);
       const verdict = pitch.pitch_verdict || (isAnomaly ? 'SYNTHETIC PITCH ANOMALY' : 'ORGANIC HUMAN PROSODY');
+      const isUnvoiced = verdict.toUpperCase().includes('UNVOICED') || verdict.toUpperCase().includes('SILENCE') || f0Mean <= 0;
       const badgeStyle = isAnomaly
         ? 'background:rgba(239,68,68,0.15); color:#f87171; border:1px solid rgba(239,68,68,0.35); box-shadow:0 0 10px rgba(239,68,68,0.2);'
-        : 'background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.35); box-shadow:0 0 10px rgba(16,185,129,0.2);';
+        : (isUnvoiced
+          ? 'background:rgba(148,163,184,0.15); color:#94a3b8; border:1px solid rgba(148,163,184,0.35); box-shadow:none;'
+          : 'background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.35); box-shadow:0 0 10px rgba(16,185,129,0.2);');
 
       return `
         <div class="va-pitch-deck" id="va-pitch-deck" style="margin-top:14px; background:linear-gradient(135deg, rgba(8, 18, 44, 0.75) 0%, rgba(4, 11, 28, 0.9) 100%); border:1px solid rgba(0, 212, 255, 0.25); border-radius:10px; padding:14px 16px; box-shadow:0 4px 20px rgba(0,0,0,0.35);">
@@ -1733,7 +2421,7 @@ function renderAnalysisResults(data) {
               <span class="badge" style="background:rgba(0,212,255,0.1); color:#38bdf8; font-size:9.5px; border:1px solid rgba(0,212,255,0.25); font-family:var(--font-mono);">LIBROSA YIN FFT</span>
             </div>
             <div class="badge" style="${badgeStyle} font-family:var(--font-mono); font-size:10px; font-weight:700; display:flex; align-items:center; gap:6px;">
-              <span class="soc-pulse-dot" style="background:${isAnomaly ? '#ef4444' : '#10b981'};"></span>
+              <span class="soc-pulse-dot" style="background:${isAnomaly ? '#ef4444' : (isUnvoiced ? '#94a3b8' : '#10b981')};"></span>
               ${escapeHtml(verdict)}
             </div>
           </div>
@@ -1992,7 +2680,7 @@ function buildChunkInspectorHtml(chunkIndex) {
       </div>
       <div class="va-inspector-stat">
         <div class="va-stat-label">Prosodic Verdict</div>
-        <div class="va-stat-val" style="color:${chunk.pitch_analysis.is_pitch_anomaly ? '#ef4444' : '#34d399'}; font-size:11px;">${chunk.pitch_analysis.pitch_verdict}</div>
+        <div class="va-stat-val" style="color:${chunk.pitch_analysis.is_pitch_anomaly ? '#ef4444' : (chunk.pitch_analysis.pitch_verdict && (chunk.pitch_analysis.pitch_verdict.includes('UNVOICED') || chunk.pitch_analysis.f0_mean_hz <= 0) ? '#94a3b8' : '#34d399')}; font-size:11px;">${chunk.pitch_analysis.pitch_verdict}</div>
       </div>
       ` : ''}
     </div>
@@ -2535,12 +3223,45 @@ async function updateThresholds() {
   }
 }
 
-// ── Toast Notifications ───────────────────────────────────────────────────────
+// ── Toast Notifications & Event Deduplication ────────────────────────────────
+const _activeToastHistory = new Map(); // message -> timestamp
+const MAX_CONCURRENT_TOASTS = 4;
+const TOAST_DEDUPLICATION_WINDOW_MS = 3500;
+
 function showToast(message, type = 'info', duration = 4000) {
+  if (!message || typeof message !== 'string') return;
   const container = document.getElementById('toast-container');
   if (!container) return;
+
+  const now = Date.now();
+  const msgKey = `${type}:${message.trim()}`;
+  const lastTime = _activeToastHistory.get(msgKey);
+  if (lastTime && (now - lastTime < TOAST_DEDUPLICATION_WINDOW_MS)) {
+    // Suppress rapid identical toast emissions
+    return;
+  }
+  _activeToastHistory.set(msgKey, now);
+
+  // Clean stale keys from history
+  if (_activeToastHistory.size > 50) {
+    for (const [k, t] of _activeToastHistory.entries()) {
+      if (now - t > 10000) _activeToastHistory.delete(k);
+    }
+  }
+
+  // Bound queue size to prevent visual overlap and screen flood
+  const existingToasts = container.querySelectorAll('.toast:not(.dismissing)');
+  if (existingToasts.length >= MAX_CONCURRENT_TOASTS) {
+    const oldest = existingToasts[0];
+    if (oldest) {
+      dismissToast(oldest);
+    }
+  }
+
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  toast.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
 
   const icons = {
     success: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>',
@@ -2552,68 +3273,34 @@ function showToast(message, type = 'info', duration = 4000) {
   toast.innerHTML = `
     <span style="display:flex;align-items:center;color:currentColor;flex-shrink:0;margin-top:1px;">${icons[type] || icons.info}</span>
     <span style="flex:1;line-height:1.45;word-break:break-word;">${escapeHtml(message)}</span>
-    <button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:var(--text-muted);padding:0 0 0 6px;font-size:14px;line-height:1;flex-shrink:0;">✕</button>
+    <button class="toast-close-btn" aria-label="Dismiss notification" onclick="dismissToast(this.parentElement)">✕</button>
   `;
 
   container.appendChild(toast);
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(18px)';
-    toast.style.transition = 'all 0.22s ease';
-    setTimeout(() => toast.remove(), 240);
+
+  const dismissTimer = setTimeout(() => {
+    dismissToast(toast);
   }, duration);
+
+  toast._dismissTimer = dismissTimer;
+}
+
+function dismissToast(toastEl) {
+  if (!toastEl || toastEl.classList.contains('dismissing')) return;
+  toastEl.classList.add('dismissing');
+  if (toastEl._dismissTimer) clearTimeout(toastEl._dismissTimer);
+  toastEl.style.opacity = '0';
+  toastEl.style.transform = 'translateX(18px)';
+  toastEl.style.transition = 'all 0.22s ease';
+  setTimeout(() => {
+    if (toastEl.parentElement) toastEl.remove();
+  }, 240);
 }
 
 // ── System Status Check ───────────────────────────────────────────────────────
 async function checkSystemStatus() {
-  const currentEndpoint = getResolvedApiBase();
-  const displayEl = document.getElementById('modal-backend-url-display');
-  if (displayEl) displayEl.textContent = currentEndpoint || '(Local / Origin Fallback)';
-
-  const startTime = performance.now();
-  try {
-    const targetUrl = currentEndpoint ? `${currentEndpoint}/api/config/status` : '/api/config/status';
-    const resp = await fetch(targetUrl);
-    const latency = Math.round(performance.now() - startTime);
-    const pingEl = document.getElementById('modal-backend-ping');
-    if (pingEl) pingEl.textContent = `Latency: ${latency}ms`;
-
-    if (resp.ok) {
-      const data = await parseResponseSafely(resp, 'System Status');
-      if (data && data.status === 'operational') {
-        updateSystemStatus('online');
-
-        // Update feature pill status
-        if (data.wav2vec2_available && document.getElementById('pill-wav2vec')) document.getElementById('pill-wav2vec').classList.add('active');
-        if (data.ecapa_available && document.getElementById('pill-speaker')) document.getElementById('pill-speaker').classList.add('active');
-
-        // Load current thresholds
-        if (data.config && data.config.thresholds) {
-          const thrLow = document.getElementById('thr-low');
-          const thrMed = document.getElementById('thr-medium');
-          const thrHigh = document.getElementById('thr-high');
-          if (thrLow) thrLow.value = data.config.thresholds.low;
-          if (thrMed) thrMed.value = data.config.thresholds.medium;
-          if (thrHigh) thrHigh.value = data.config.thresholds.high;
-        }
-
-        // Live Threat Intel sync from status
-        if (data.virustotal_status && data.virustotal_status !== 'UNKNOWN' && typeof renderVirusTotalBadge === 'function') {
-          renderVirusTotalBadge({ status: data.virustotal_status });
-        }
-        if (data.urlhaus_status && data.urlhaus_status !== 'UNKNOWN' && typeof renderURLhausBadge === 'function') {
-          renderURLhausBadge({ status: data.urlhaus_status });
-        }
-      } else {
-        updateSystemStatus('offline');
-      }
-    } else {
-      updateSystemStatus('offline');
-    }
-  } catch (_) {
-    const pingEl = document.getElementById('modal-backend-ping');
-    if (pingEl) pingEl.textContent = 'Latency: Offline';
-    updateSystemStatus('offline');
+  if (window.CyberGuardConnection) {
+    return window.CyberGuardConnection.checkConnection();
   }
 }
 
@@ -3068,6 +3755,7 @@ function updateIOCTypeBadges(val) {
 
 // ── Initialization ────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  if (window.CyberGuardConnection) window.CyberGuardConnection.init();
   drawGauge(0);
   initTimeline();
   checkSystemStatus();
@@ -3138,6 +3826,11 @@ async function scanThreat() {
   formData.append('source', 'web_dashboard');
 
   try {
+    const currentBase = getResolvedApiBase();
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!currentBase && isStaticHost) {
+      throw new Error('No backend API connected. To perform scans, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+    }
     const scanHeaders = { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' };
     delete scanHeaders['Content-Type'];
     const res = await fetch(`${API_BASE}${endpoint}`, {
@@ -3145,8 +3838,7 @@ async function scanThreat() {
       body: formData,
       headers: scanHeaders
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || 'Scan failed');
+    const data = await parseResponseSafely(res, 'Threat Scan', { requireJson: true });
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -3204,7 +3896,16 @@ async function searchIOC() {
   }, 60000);
 
   try {
-    const res = await fetch(`${API_BASE}/api/threats/search?ioc=${encodeURIComponent(ioc)}`, {
+    const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
+    const currentBase = isLocal ? (getResolvedApiBase() || `http://127.0.0.1:${window.CyberGuardConnection.port || '3000'}`) : getResolvedApiBase();
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!isLocal && !currentBase && isStaticHost) {
+      throw new Error('No backend API connected. To perform Threat Intelligence queries, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+    }
+    const targetUrl = (window.CyberGuardConnection && typeof window.CyberGuardConnection.resolveUrl === 'function')
+      ? window.CyberGuardConnection.resolveUrl(`/api/threats/search?ioc=${encodeURIComponent(ioc)}`)
+      : `${currentBase || API_BASE}/api/threats/search?ioc=${encodeURIComponent(ioc)}`;
+    const res = await fetch(targetUrl, {
       headers: { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' },
       signal: controller.signal
     });
@@ -3212,7 +3913,7 @@ async function searchIOC() {
     if (!res.ok && (res.status === 503 || res.status === 401 || res.status === 429)) {
       autoLinkThreatIntelPipeline(true);
     }
-    const data = await parseResponseSafely(res, 'Threat Intelligence Search');
+    const data = await parseResponseSafely(res, 'Threat Intelligence Search', { requireJson: true });
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -3269,14 +3970,23 @@ async function scanQR() {
   formData.append('source', 'web_dashboard');
 
   try {
+    const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
+    const currentBase = isLocal ? (getResolvedApiBase() || `http://127.0.0.1:${window.CyberGuardConnection.port || '3000'}`) : getResolvedApiBase();
+    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    if (!isLocal && !currentBase && isStaticHost) {
+      throw new Error('No backend API connected. To perform QR forensic scans, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+    }
     const qrHeaders = { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' };
     delete qrHeaders['Content-Type'];
-    const res = await fetch(`${API_BASE}/api/threats/qr`, {
+    const targetUrl = (window.CyberGuardConnection && typeof window.CyberGuardConnection.resolveUrl === 'function')
+      ? window.CyberGuardConnection.resolveUrl('/api/threats/qr')
+      : `${currentBase || API_BASE}/api/threats/qr`;
+    const res = await fetch(targetUrl, {
       method: 'POST',
       body: formData,
       headers: qrHeaders
     });
-    const data = await parseResponseSafely(res, 'QR Forensic Scanner');
+    const data = await parseResponseSafely(res, 'QR Forensic Scanner', { requireJson: true });
     window._lastScannedThreat = data;
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
     if (llmBtn) llmBtn.style.display = 'inline-flex';
@@ -7740,9 +8450,7 @@ async function updateOverview(forceRefresh = false) {
     if (statIncidents) statIncidents.textContent = openCount;
     if (statHighCritical) statHighCritical.textContent = criticalCount;
 
-    if (forceRefresh) {
-      showToast('Security posture synchronized with live telemetry.', 'success');
-    }
+    // Single unified status toast emitted at end of updateOverview when forceRefresh is true
 
     const postureEl = document.getElementById('overview-posture');
     const descEl = document.getElementById('overview-posture-desc');
@@ -8115,13 +8823,13 @@ function fillAuthPreset(role) {
   const pInput = document.getElementById('auth-input-password');
   if (role === 'admin') {
     if (uInput) uInput.value = 'admin';
-    if (pInput) pInput.value = 'Admin@CyberGuard2026!';
+    if (pInput) pInput.value = '';
   } else if (role === 'analyst') {
     if (uInput) uInput.value = 'analyst';
-    if (pInput) pInput.value = 'Analyst@CyberGuard2026!';
+    if (pInput) pInput.value = '';
   } else if (role === 'auditor') {
     if (uInput) uInput.value = 'auditor';
-    if (pInput) pInput.value = 'Auditor@CyberGuard2026!';
+    if (pInput) pInput.value = '';
   }
   if (pInput) updatePasswordEntropy(pInput.value);
 }
@@ -8517,7 +9225,7 @@ async function handleAuthSubmit(e) {
     closeAuthModal();
 
     // Automatically load authenticated account's telemetry and records without manual page refresh
-    await updateOverview(true);
+    await updateOverview(false);
     await loadSecurityCenterData();
     if (typeof loadEnrolledSpeakers === 'function') {
       loadEnrolledSpeakers();
@@ -8988,28 +9696,6 @@ function renderQueueAuthGate(tbody, reason = 'EXPIRED') {
 }
 
 async function quickAdminLogin() {
-  showToast('Restoring administrator session...', 'info');
-  try {
-    const res = await fetch(`${API_BASE}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username_or_email: 'admin',
-        username: 'admin',
-        password: 'Admin@CyberGuard2026!'
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setAuthToken(data.token);
-      saveCurrentUser(data.user);
-      syncAuthUI();
-      showToast('✓ Administrator session restored!', 'success');
-      await checkAuthStatus();
-      await loadReviewQueue();
-      return;
-    }
-  } catch (_) {}
   openAuthModal('login');
 }
 
@@ -14618,7 +15304,10 @@ window.switchAuthTab = switchAuthTab;
 window.logoutUser = logoutUser;
 
 // Initial application startup
+let _appInitialized = false;
 function initApp() {
+  if (_appInitialized) return;
+  _appInitialized = true;
   syncAuthUI();
   try { fetchActiveDetectorVersion(); } catch (e) { console.debug(e); }
   if (window.CyberGuardAudio && typeof window.CyberGuardAudio.init === 'function') {
@@ -14631,10 +15320,10 @@ function initApp() {
   try { loadSecurityCenterData(); } catch (e) { console.debug(e); }
   try { initSecurityCenterWebSocket(); } catch (e) { console.debug(e); }
 
-  // Periodic heartbeat: refresh Overview posture & telemetry while user views Overview
+  // Periodic heartbeat: refresh Overview posture & telemetry only while user views Overview panel
   setInterval(() => {
-    const activeTab = document.querySelector('.nav-tab.active');
-    if (!activeTab || activeTab.getAttribute('data-tab') === 'overview') {
+    const overviewPanel = document.getElementById('panel-overview');
+    if (overviewPanel && overviewPanel.classList.contains('active') && !overviewPanel.classList.contains('hidden')) {
       updateOverview(false);
     }
   }, 20000);
@@ -15790,3 +16479,680 @@ function syncGlitchButtonAttributes() {
     }
   });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Malware Analysis Lab Subsystem
+// ═══════════════════════════════════════════════════════════════════════════
+
+let selectedMalwareFile = null;
+let lastMalwareReport = null;
+
+function handleMalwareDragOver(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const zone = document.getElementById('malware-dropzone');
+  if (zone) zone.classList.add('dragover');
+}
+
+function handleMalwareDragLeave(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const zone = document.getElementById('malware-dropzone');
+  if (zone) zone.classList.remove('dragover');
+}
+
+function handleMalwareDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const zone = document.getElementById('malware-dropzone');
+  if (zone) zone.classList.remove('dragover');
+  if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+    setSelectedMalwareFile(e.dataTransfer.files[0]);
+  }
+}
+
+function handleMalwareFileSelect(e) {
+  if (e.target.files && e.target.files.length > 0) {
+    setSelectedMalwareFile(e.target.files[0]);
+  }
+}
+
+function setSelectedMalwareFile(file) {
+  if (!file) return;
+  // Bounded intake protection against files exceeding 1 GB limit
+  const maxBytes = 1073741824; // 1 GB
+  if (file.size > maxBytes) {
+    if (typeof showToast === 'function') {
+      showToast(`Selected artifact exceeds maximum 1 GB limit (${(file.size / (1024*1024*1024)).toFixed(2)} GB). Intake rejected.`, 'error');
+    }
+    clearSelectedMalwareFile();
+    return;
+  }
+
+  selectedMalwareFile = file;
+  const chip = document.getElementById('malware-selected-file-chip');
+  const nameEl = document.getElementById('malware-selected-name');
+  const sizeEl = document.getElementById('malware-selected-size');
+  const btn = document.getElementById('btn-scan-malware');
+
+  if (chip && nameEl && sizeEl) {
+    nameEl.textContent = file.name;
+    const kb = (file.size / 1024).toFixed(1);
+    const mb = (file.size / (1024 * 1024)).toFixed(2);
+    sizeEl.textContent = file.size > 1048576 ? `${mb} MB` : `${kb} KB`;
+    chip.classList.remove('hidden');
+  }
+  if (btn) btn.disabled = false;
+}
+
+function clearSelectedMalwareFile(e) {
+  if (e) e.stopPropagation();
+  selectedMalwareFile = null;
+  const input = document.getElementById('malware-file-input');
+  if (input) input.value = '';
+  const chip = document.getElementById('malware-selected-file-chip');
+  if (chip) chip.classList.add('hidden');
+  const btn = document.getElementById('btn-scan-malware');
+  if (btn) btn.disabled = true;
+  const explainBtn = document.getElementById('btn-malware-explain-verdict');
+  if (explainBtn) explainBtn.style.display = 'none';
+  if (typeof closeMalwareExplanationModal === 'function') {
+    closeMalwareExplanationModal();
+  }
+}
+
+function loadSampleMalware(type) {
+  if (type === 'eicar') {
+    const eicarStr = 'X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*';
+    const blob = new Blob([eicarStr], { type: 'application/octet-stream' });
+    const file = new File([blob], 'eicar_test_sample.com', { type: 'application/octet-stream' });
+    setSelectedMalwareFile(file);
+    if (typeof showToast === 'function') {
+      showToast('Loaded standard harmless EICAR test sample', 'info');
+    }
+  } else if (type === 'dropper') {
+    const dropperScript = 'powershell.exe -w hidden -EncodedCommand JABhID0... # Suspicious Dropper Script';
+    const blob = new Blob([dropperScript], { type: 'text/plain' });
+    const file = new File([blob], 'suspicious_payload.ps1', { type: 'text/plain' });
+    setSelectedMalwareFile(file);
+    if (typeof showToast === 'function') {
+      showToast('Loaded suspicious script dropper sample', 'info');
+    }
+  }
+}
+
+async function refreshMalwareStatus(force = false) {
+  try {
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/threats/malware/status`, { headers });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const textEl = document.getElementById('malware-engine-status-text');
+    const dotEl = document.getElementById('malware-pulse-dot');
+    const clamStatusEl = document.getElementById('malware-clam-status');
+    const yaraStatusEl = document.getElementById('malware-yara-status');
+    const maxScanSizeEl = document.getElementById('malware-max-scan-size');
+
+    if (textEl) {
+      const isOp = data.status === 'OPERATIONAL';
+      const isDeg = data.status === 'DEGRADED';
+      textEl.textContent = data.status || 'OPERATIONAL';
+      textEl.style.color = isOp ? '#10b981' : (isDeg ? '#f59e0b' : '#ef4444');
+    }
+    if (dotEl) {
+      dotEl.className = data.status === 'OPERATIONAL' ? 'sc-live-dot' : 'sc-live-dot warning';
+    }
+
+    // Dynamic Max Scan Size
+    if (maxScanSizeEl && data.max_scan_size_display) {
+      maxScanSizeEl.textContent = data.max_scan_size_display;
+    }
+
+    // ClamAV
+    const clamDot = document.getElementById('dot-clamav');
+    const clamBadge = document.getElementById('badge-clamav');
+    const clamDetails = document.getElementById('details-clamav');
+    if (data.clamav && data.clamav.available) {
+      if (clamStatusEl) { clamStatusEl.textContent = 'ONLINE'; clamStatusEl.style.color = '#10b981'; }
+      if (clamDot) clamDot.className = 'engine-indicator-dot online';
+      if (clamBadge) {
+        clamBadge.textContent = 'ACTIVE';
+        clamBadge.style.background = 'rgba(16,185,129,0.15)';
+        clamBadge.style.color = '#10b981';
+      }
+      const dbTag = data.clamav.database_version ? ` [DB v${data.clamav.database_version}]` : '';
+      if (clamDetails) clamDetails.textContent = `${data.clamav.mode.toUpperCase()}: ${data.clamav.version || 'Operational'}${dbTag}`;
+    } else if (data.clamav && data.clamav.status === 'INITIALIZING') {
+      if (clamStatusEl) { clamStatusEl.textContent = 'INITIALIZING'; clamStatusEl.style.color = '#f59e0b'; }
+      if (clamDot) clamDot.className = 'engine-indicator-dot warning';
+      if (clamBadge) {
+        clamBadge.textContent = 'INITIALIZING';
+        clamBadge.style.background = 'rgba(245,158,11,0.15)';
+        clamBadge.style.color = '#f59e0b';
+      }
+      if (clamDetails) clamDetails.textContent = data.clamav.details || 'Downloading virus signature database...';
+    } else {
+      if (clamStatusEl) { clamStatusEl.textContent = 'UNAVAILABLE'; clamStatusEl.style.color = 'var(--text-muted)'; }
+      if (clamDot) clamDot.className = 'engine-indicator-dot offline';
+      if (clamBadge) {
+        clamBadge.textContent = 'UNAVAILABLE';
+        clamBadge.style.background = 'rgba(100,116,139,0.15)';
+        clamBadge.style.color = 'var(--text-muted)';
+      }
+      if (clamDetails) clamDetails.textContent = data.clamav ? data.clamav.version : 'Daemon/clamscan not installed';
+    }
+
+    // YARA
+    const yaraDot = document.getElementById('dot-yara');
+    const yaraBadge = document.getElementById('badge-yara');
+    const yaraDetails = document.getElementById('details-yara');
+    if (data.yara && data.yara.available) {
+      const count = data.yara.rules_loaded || 0;
+      if (data.yara.native_engine) {
+        if (yaraStatusEl) { yaraStatusEl.textContent = `${count} RULES`; yaraStatusEl.style.color = '#10b981'; }
+        if (yaraDot) yaraDot.className = 'engine-indicator-dot online';
+        if (yaraBadge) {
+          yaraBadge.textContent = `${count} RULES LOADED`;
+          yaraBadge.style.background = 'rgba(16,185,129,0.15)';
+          yaraBadge.style.color = '#10b981';
+        }
+        if (yaraDetails) {
+          yaraDetails.textContent = `Native yara-python engine (v${data.yara.version})`;
+        }
+      } else {
+        if (yaraStatusEl) { yaraStatusEl.textContent = `FALLBACK (${count})`; yaraStatusEl.style.color = '#f59e0b'; }
+        if (yaraDot) yaraDot.className = 'engine-indicator-dot warning';
+        if (yaraBadge) {
+          yaraBadge.textContent = 'PATTERN FALLBACK';
+          yaraBadge.style.background = 'rgba(245,158,11,0.15)';
+          yaraBadge.style.color = '#f59e0b';
+        }
+        if (yaraDetails) {
+          yaraDetails.textContent = `Pure-Python pattern matcher fallback (v${data.yara.version})`;
+        }
+      }
+    } else {
+      if (yaraStatusEl) { yaraStatusEl.textContent = 'UNAVAILABLE'; yaraStatusEl.style.color = 'var(--text-muted)'; }
+      if (yaraDot) yaraDot.className = 'engine-indicator-dot offline';
+      if (yaraBadge) {
+        yaraBadge.textContent = 'UNAVAILABLE';
+        yaraBadge.style.background = 'rgba(100,116,139,0.15)';
+        yaraBadge.style.color = 'var(--text-muted)';
+      }
+      if (yaraDetails) yaraDetails.textContent = 'YARA rule engine offline';
+    }
+
+    if (force && typeof showToast === 'function') {
+      showToast('Engine telemetry updated from backend', 'success');
+    }
+  } catch (err) {
+    console.warn('Malware engine status probe error:', err);
+  }
+}
+
+async function executeMalwareScan() {
+  if (!selectedMalwareFile) return;
+
+  const emptyState = document.getElementById('malware-empty-state');
+  const scanningState = document.getElementById('malware-scanning-state');
+  const reportState = document.getElementById('malware-report-state');
+  const scanBtn = document.getElementById('btn-scan-malware');
+
+  if (emptyState) emptyState.classList.add('hidden');
+  if (reportState) reportState.classList.add('hidden');
+  if (scanningState) scanningState.classList.remove('hidden');
+  if (scanBtn) scanBtn.disabled = true;
+
+  try {
+    const formData = new FormData();
+    formData.append('file', selectedMalwareFile);
+    formData.append('correlation_id', 'malware-' + Math.random().toString(36).substring(2, 10));
+
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
+    const headers = {};
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/threats/malware/scan`, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || `Scan request failed with HTTP ${res.status}`);
+    }
+
+    const report = await res.json();
+    lastMalwareReport = report;
+    renderMalwareReport(report);
+
+    if (typeof showToast === 'function') {
+      const isThreat = report.status === 'MALICIOUS' || report.status === 'SUSPICIOUS';
+      const isPartial = report.status === 'PARTIAL_SCAN';
+      if (isPartial) {
+        showToast('Scan completed with partial engine coverage (ClamAV unavailable)', 'warning');
+      } else {
+        showToast(isThreat ? `Detection verdict: ${report.status}` : 'Malware scan completed cleanly', isThreat ? 'error' : 'success');
+      }
+    }
+  } catch (err) {
+    if (typeof showToast === 'function') {
+      showToast(err.message || 'Malware analysis failed', 'error');
+    }
+    if (scanningState) scanningState.classList.add('hidden');
+    if (emptyState) emptyState.classList.remove('hidden');
+  } finally {
+    if (scanBtn) scanBtn.disabled = false;
+  }
+}
+
+function renderMalwareReport(report) {
+  const scanningState = document.getElementById('malware-scanning-state');
+  const reportState = document.getElementById('malware-report-state');
+  if (scanningState) scanningState.classList.add('hidden');
+  if (reportState) reportState.classList.remove('hidden');
+
+  const verdict = report.verdict || {};
+  const meta = report.file_metadata || {};
+  const status = report.status || verdict.verdict || 'NO_DETECTION';
+  const severity = verdict.severity || report.severity || 'SAFE';
+  const riskScore = verdict.risk_score !== undefined ? verdict.risk_score : (report.risk_score || 0.0);
+  const isPartial = status === 'PARTIAL_SCAN';
+
+  // Verdict Banner
+  const banner = document.getElementById('malware-verdict-banner');
+  const verdictText = document.getElementById('malware-verdict-text');
+  const verdictSummary = document.getElementById('malware-verdict-summary');
+  const riskScoreEl = document.getElementById('malware-risk-score');
+  const sevBadge = document.getElementById('malware-severity-badge');
+
+  if (banner) {
+    banner.className = 'malware-verdict-banner ' + status.toLowerCase();
+  }
+  if (verdictText) verdictText.textContent = isPartial ? 'PARTIAL SCAN (DEGRADED COVERAGE)' : status;
+  if (verdictSummary) verdictSummary.textContent = verdict.summary || report.summary || 'Security inspection completed.';
+  if (riskScoreEl) riskScoreEl.textContent = Number(riskScore).toFixed(2);
+  if (sevBadge) {
+    if (isPartial) {
+      sevBadge.textContent = 'UNVERIFIED / PARTIAL';
+      sevBadge.className = 'card-tag warning';
+    } else {
+      sevBadge.textContent = severity;
+      sevBadge.className = 'card-tag ' + severity.toLowerCase();
+    }
+  }
+
+  // Explanation Trigger Button setup
+  const explainBtn = document.getElementById('btn-malware-explain-verdict');
+  const explainLabel = document.getElementById('btn-malware-explain-label');
+  if (explainBtn) {
+    activeMalwareScanId = report.scan_id || report.correlation_id || (meta && meta.sha256) || 'scan_active';
+    explainBtn.style.display = 'inline-flex';
+    if (explainLabel) {
+      explainLabel.textContent = (status === 'MALICIOUS' || status === 'SUSPICIOUS') ? 'Why flagged?' : 'Explain verdict';
+    }
+    explainBtn.setAttribute('title', (status === 'MALICIOUS' || status === 'SUSPICIOUS')
+      ? 'View evidence-grounded AI explanation of why this artifact was flagged'
+      : 'View evidence-grounded forensic explanation of scan verdict');
+  }
+
+  // Extension Mismatch Alert
+  const mismatchAlert = document.getElementById('malware-mismatch-alert');
+  const mismatchDetails = document.getElementById('malware-mismatch-details');
+  if (meta.is_extension_mismatch) {
+    if (mismatchAlert) mismatchAlert.classList.remove('hidden');
+    if (mismatchDetails) mismatchDetails.textContent = meta.mismatch_details || 'Deceptive file extension mismatch detected.';
+  } else if (mismatchAlert) {
+    mismatchAlert.classList.add('hidden');
+  }
+
+  // File Metadata
+  const formatEl = document.getElementById('malware-meta-format');
+  const mimeEl = document.getElementById('malware-meta-mime');
+  const sizeEl = document.getElementById('malware-meta-size');
+  const latEl = document.getElementById('malware-meta-latency');
+
+  if (formatEl) formatEl.textContent = meta.detected_format || 'BINARY';
+  if (mimeEl) mimeEl.textContent = meta.mime_type || 'application/octet-stream';
+  if (sizeEl) {
+    const bytes = meta.size_bytes || report.size_bytes || 0;
+    sizeEl.textContent = bytes > 1048576 ? `${(bytes / 1048576).toFixed(2)} MB` : `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  if (latEl) latEl.textContent = `${Math.round(report.processing_time_ms || verdict.total_processing_ms || 0)} ms`;
+
+  // Hashes
+  const sha256El = document.getElementById('malware-hash-sha256');
+  const md5El = document.getElementById('malware-hash-md5');
+  if (sha256El) sha256El.textContent = meta.sha256 || report.sha256 || '-';
+  if (md5El) md5El.textContent = meta.md5 || '-';
+
+  // Entropy
+  const entropyVal = document.getElementById('malware-entropy-val');
+  const entropyBar = document.getElementById('malware-entropy-bar');
+  const entropy = meta.entropy !== undefined ? Number(meta.entropy) : 0.0;
+  if (entropyVal) entropyVal.textContent = `${entropy.toFixed(2)} / 8.00 (${meta.entropy_assessment || 'NORMAL'})`;
+  if (entropyBar) {
+    const pct = Math.min(100, Math.max(0, (entropy / 8.0) * 100));
+    entropyBar.style.width = `${pct}%`;
+  }
+
+  // Multi-Engine Table
+  const tbody = document.getElementById('malware-engine-table-body');
+  if (tbody) {
+    tbody.innerHTML = '';
+    const engines = verdict.engines || report.engine_results || [];
+    engines.forEach(eng => {
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid var(--border-subtle)';
+
+      const statusBadge = eng.status === 'MALICIOUS'
+        ? '<span class="card-tag critical" style="font-size:9.5px;">MALICIOUS</span>'
+        : (eng.status === 'NO_DETECTION'
+          ? '<span class="card-tag safe" style="font-size:9.5px;">CLEAN / NO MATCH</span>'
+          : `<span class="card-tag" style="background:rgba(100,116,139,0.15); color:var(--text-muted); font-size:9.5px;">${escapeHtml(eng.status)}</span>`);
+
+      tr.innerHTML = `
+        <td style="padding:8px 12px; font-weight:600; color:#f8fafc;">${escapeHtml(eng.name)}</td>
+        <td style="padding:8px 12px;">${statusBadge}</td>
+        <td style="padding:8px 12px; font-family:'JetBrains Mono', monospace; color:${eng.detections > 0 ? '#ef4444' : 'var(--text-muted)'};">${eng.detections}</td>
+        <td style="padding:8px 12px; font-family:'JetBrains Mono', monospace; color:var(--text-muted);">${Math.round(eng.execution_ms || 0)} ms</td>
+        <td style="padding:8px 12px; font-size:10.5px; color:#cbd5e1;">${escapeHtml(eng.details || eng.signature || 'Completed')}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // MITRE & Incident Actions
+  const mitreTag = document.getElementById('malware-mitre-tag');
+  if (mitreTag) mitreTag.textContent = verdict.mitre_technique || 'T1204.002 (Malicious File)';
+
+  const incBtn = document.getElementById('btn-malware-create-incident');
+  if (incBtn) {
+    if (status === 'MALICIOUS' || status === 'SUSPICIOUS') {
+      incBtn.style.display = 'inline-flex';
+    } else {
+      incBtn.style.display = 'none';
+    }
+  }
+}
+
+function copyMalwareHash() {
+  const sha = document.getElementById('malware-hash-sha256');
+  if (sha && sha.textContent && sha.textContent !== '-') {
+    navigator.clipboard.writeText(sha.textContent).then(() => {
+      if (typeof showToast === 'function') showToast('SHA-256 copied to clipboard', 'info');
+    });
+  }
+}
+
+function downloadMalwareReportJson() {
+  if (!lastMalwareReport) return;
+  const str = JSON.stringify(lastMalwareReport, null, 2);
+  const blob = new Blob([str], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `malware_report_${lastMalwareReport.sha256 ? lastMalwareReport.sha256.substring(0, 12) : 'scan'}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function escalateMalwareToIncident() {
+  if (!lastMalwareReport) return;
+  if (typeof showTab === 'function') {
+    showTab('security-center');
+    if (typeof showToast === 'function') {
+      showToast('Navigated to Security Center incident management', 'info');
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EVIDENCE-GROUNDED AI EXPLANATION POPUP CONTROLLER FOR MALWARE LAB
+// ═══════════════════════════════════════════════════════════════════════════
+
+let activeMalwareScanId = null;
+let currentExplanationFetchController = null;
+
+function openMalwareExplanationModal() {
+  if (!activeMalwareScanId) {
+    if (lastMalwareReport) {
+      activeMalwareScanId = lastMalwareReport.scan_id || lastMalwareReport.correlation_id || lastMalwareReport.sha256;
+    }
+    if (!activeMalwareScanId) return;
+  }
+
+  const modal = document.getElementById('malware-explanation-modal');
+  const trigger = document.getElementById('btn-malware-explain-verdict');
+  if (trigger) trigger.setAttribute('aria-expanded', 'true');
+  if (modal) {
+    modal.classList.remove('hidden');
+    // Focus close button for keyboard accessibility
+    const closeBtn = document.getElementById('btn-close-malware-expl');
+    if (closeBtn) closeBtn.focus();
+  }
+
+  fetchMalwareExplanation(activeMalwareScanId, false);
+}
+
+function closeMalwareExplanationModal() {
+  const modal = document.getElementById('malware-explanation-modal');
+  const trigger = document.getElementById('btn-malware-explain-verdict');
+  if (trigger) {
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.focus();
+  }
+  if (modal) modal.classList.add('hidden');
+}
+
+function retryFetchMalwareExplanation() {
+  if (activeMalwareScanId) {
+    fetchMalwareExplanation(activeMalwareScanId, true);
+  }
+}
+
+async function fetchMalwareExplanation(scanId, forceRefresh = false) {
+  const loadingEl = document.getElementById('malware-expl-loading');
+  const errorEl = document.getElementById('malware-expl-error');
+  const contentEl = document.getElementById('malware-expl-content');
+
+  if (loadingEl) loadingEl.classList.remove('hidden');
+  if (errorEl) errorEl.classList.add('hidden');
+  if (contentEl) contentEl.classList.add('hidden');
+
+  // Cancel any ongoing fetch to prevent stale responses
+  if (currentExplanationFetchController) {
+    currentExplanationFetchController.abort();
+  }
+  currentExplanationFetchController = new AbortController();
+
+  try {
+    const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+
+    const res = await fetch(`${API_BASE}/api/threats/malware/explain`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        scan_id: scanId,
+        force_refresh: forceRefresh,
+      }),
+      signal: currentExplanationFetchController.signal,
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || `Server returned HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    // Guard against race conditions if scan changed while request was in-flight
+    if (data.scan_id && data.scan_id !== activeMalwareScanId && activeMalwareScanId !== 'scan_active') {
+      return;
+    }
+    renderMalwareExplanation(data);
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    console.warn('Malware explanation error:', err);
+    if (loadingEl) loadingEl.classList.add('hidden');
+    if (errorEl) {
+      errorEl.classList.remove('hidden');
+      const msgEl = document.getElementById('malware-expl-error-msg');
+      if (msgEl) msgEl.textContent = err.message || 'Unable to retrieve explanation for this artifact.';
+    }
+  }
+}
+
+function renderMalwareExplanation(data) {
+  const loadingEl = document.getElementById('malware-expl-loading');
+  const errorEl = document.getElementById('malware-expl-error');
+  const contentEl = document.getElementById('malware-expl-content');
+
+  if (loadingEl) loadingEl.classList.add('hidden');
+  if (errorEl) errorEl.classList.add('hidden');
+  if (contentEl) contentEl.classList.remove('hidden');
+
+  // Asset Info & Badge
+  const assetLine = document.getElementById('malware-expl-asset-line');
+  const badgeEl = document.getElementById('malware-expl-badge');
+  const titleEl = document.getElementById('malware-expl-modal-title');
+
+  if (assetLine) {
+    const fname = data.filename || 'inspected_artifact';
+    const sha = data.sha256 ? data.sha256.substring(0, 16) + '...' : '-';
+    assetLine.textContent = `Artifact: ${fname} · SHA-256: ${sha} · Verdict: ${data.verdict || 'UNKNOWN'}`;
+  }
+
+  if (badgeEl) {
+    if (data.is_fallback) {
+      badgeEl.textContent = 'DETERMINISTIC FALLBACK';
+      badgeEl.style.background = 'rgba(245, 158, 11, 0.15)';
+      badgeEl.style.color = '#f59e0b';
+    } else {
+      badgeEl.textContent = 'QWEN AI EXPLANATION';
+      badgeEl.style.background = 'rgba(6, 182, 212, 0.15)';
+      badgeEl.style.color = 'var(--accent-primary)';
+    }
+  }
+
+  if (titleEl) {
+    const isThreat = data.verdict === 'MALICIOUS' || data.verdict === 'SUSPICIOUS';
+    titleEl.textContent = isThreat
+      ? 'WHY FLAGGED — EVIDENCE-GROUNDED FORENSIC ANALYSIS'
+      : 'EXPLAIN VERDICT — MULTI-ENGINE COVERAGE AUDIT';
+  }
+
+  // Section A: Why Flagged Summary
+  const summaryEl = document.getElementById('malware-expl-summary-text');
+  if (summaryEl) {
+    summaryEl.textContent = data.why_flagged_summary || 'No explanation summary available.';
+  }
+
+  // Section B: Evidence Observed
+  const evidenceList = document.getElementById('malware-expl-evidence-list');
+  if (evidenceList) {
+    evidenceList.innerHTML = '';
+    const items = data.evidence_observed || [];
+    if (items.length === 0) {
+      evidenceList.innerHTML = '<div style="font-size:11px; color:var(--text-muted);">No specific threat anomalies recorded.</div>';
+    } else {
+      items.forEach(item => {
+        const div = document.createElement('div');
+        const st = (item.status || 'CLEAN').toLowerCase();
+        div.className = `malware-expl-evidence-item ${st}`;
+
+        div.innerHTML = `
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:11px; font-weight:700; color:#f8fafc;">
+            <span>${escapeHtml(item.source || 'Inspection Engine')}</span>
+            <span class="card-tag ${st}" style="font-size:9px;">${escapeHtml(item.status || 'REPORTED')}</span>
+          </div>
+          <div style="font-size:11.5px; color:#cbd5e1; font-family:'JetBrains Mono', monospace;">
+            ${escapeHtml(item.finding || '')}
+          </div>
+          ${item.significance ? `<div style="font-size:10.5px; color:var(--text-muted); line-height:1.4;">${escapeHtml(item.significance)}</div>` : ''}
+        `;
+        evidenceList.appendChild(div);
+      });
+    }
+  }
+
+  // Section C: Engine Agreement & Disagreement
+  const pillsContainer = document.getElementById('malware-expl-disagreement-pills');
+  const disagText = document.getElementById('malware-expl-disagreement-text');
+  const agreement = data.engine_agreement || {};
+
+  if (pillsContainer) {
+    pillsContainer.innerHTML = '';
+    const detecting = agreement.detecting_engines || [];
+    const clean = agreement.clean_engines || [];
+    const unavail = agreement.unavailable_engines || [];
+
+    detecting.forEach(eng => {
+      const p = document.createElement('span');
+      p.className = 'malware-expl-pill malicious';
+      p.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#ef4444;"></span>${escapeHtml(eng)}: DETECTED`;
+      pillsContainer.appendChild(p);
+    });
+
+    clean.forEach(eng => {
+      const p = document.createElement('span');
+      p.className = 'malware-expl-pill clean';
+      p.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#10b981;"></span>${escapeHtml(eng)}: CLEAN / NO MATCH`;
+      pillsContainer.appendChild(p);
+    });
+
+    unavail.forEach(eng => {
+      const p = document.createElement('span');
+      p.className = 'malware-expl-pill unavailable';
+      p.innerHTML = `<span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#94a3b8;"></span>${escapeHtml(eng)}: UNAVAILABLE`;
+      pillsContainer.appendChild(p);
+    });
+  }
+
+  if (disagText) {
+    disagText.textContent = agreement.synthesis || 'Multi-engine consensus evaluated across operational inspection layers.';
+  }
+
+  // Section D: Confidence & Limitations
+  const scoreDisplay = document.getElementById('malware-expl-risk-score-display');
+  const limText = document.getElementById('malware-expl-limitations-text');
+  const conf = data.confidence_and_limitations || {};
+
+  if (scoreDisplay) {
+    scoreDisplay.textContent = `${Number(data.risk_score || 0).toFixed(2)} (${data.severity || 'SAFE'})`;
+  }
+
+  if (limText) {
+    const explText = conf.explanation ? `${conf.explanation} ` : '';
+    const limSub = conf.limitations ? `Limitations: ${conf.limitations}` : '';
+    limText.textContent = `${explText}${limSub}`.trim() || 'Evaluated within configured heuristic scanner parameters.';
+  }
+
+  // Section E: Recommended Next Action
+  const actionText = document.getElementById('malware-expl-action-text');
+  if (actionText) {
+    actionText.textContent = data.recommended_next_action || 'Review asset in accordance with standard organizational policy.';
+  }
+
+  // Footer Engine & Record Info
+  const engineEl = document.getElementById('malware-expl-footer-engine');
+  const scanIdEl = document.getElementById('malware-expl-footer-scanid');
+  if (engineEl) engineEl.textContent = data.analyst_engine || 'CyberGuard Security Engine';
+  if (scanIdEl) scanIdEl.textContent = `Record: ${data.scan_id || '-'}`;
+}
+
+// Global Escape Key Listener for Explanation Modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('malware-explanation-modal');
+    if (modal && !modal.classList.contains('hidden')) {
+      closeMalwareExplanationModal();
+    }
+  }
+});

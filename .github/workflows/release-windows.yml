@@ -1,0 +1,75 @@
+name: CyberGuard Windows Desktop Installer Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    paths:
+      - 'desktop/**'
+      - 'frontend/**'
+      - '.github/workflows/release-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    name: Build & Package CyberGuard-Setup.exe
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "desktop/package-lock.json"
+
+      - name: Install Desktop Build Dependencies
+        working-directory: desktop
+        run: |
+          npm ci || npm install
+
+      - name: Sync Latest Frontend Assets
+        shell: pwsh
+        run: |
+          Copy-Item -Path "frontend/*" -Destination "desktop/frontend" -Recurse -Force -Exclude ".backup*"
+
+      - name: Build & Package Windows NSIS Installer
+        working-directory: desktop
+        run: |
+          npm run dist
+
+      - name: Verify Installer Artifact
+        shell: pwsh
+        run: |
+          $installerPath = "dist/windows/CyberGuard-Setup.exe"
+          if (-not (Test-Path $installerPath)) {
+            Write-Error "Installer artifact was not generated at expected location: $installerPath"
+            exit 1
+          }
+          $hash = Get-FileHash -Algorithm SHA256 $installerPath
+          $size = (Get-Item $installerPath).Length / 1MB
+          Write-Host "✓ Verified Windows Installer: $installerPath"
+          Write-Host "Size: $([math]::Round($size, 2)) MB"
+          Write-Host "SHA-256: $($hash.Hash)"
+
+      - name: Upload Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyberGuard-Setup-Windows-x64
+          path: dist/windows/CyberGuard-Setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release Asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/windows/CyberGuard-Setup.exe
+          generate_release_notes: true

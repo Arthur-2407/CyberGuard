@@ -31,7 +31,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from backend.services.continuous_learning import ContinuousLearningService
-from backend.storage.auth import ROLE_ADMIN, ROLE_USER, AuthService, hash_password, require_admin
+from backend.storage.auth import ROLE_ADMIN, ROLE_USER, AuthService, hash_password, require_admin, require_user
 from backend.storage.database import (
     AdminAuditLogModel,
     AnalysisRecordModel,
@@ -370,11 +370,7 @@ async def get_review_detail(
     db: Session = Depends(get_db_session),
 ):
     """Retrieve deep forensics detail for a specific review queue entry."""
-    review = db.query(ReviewQueueModel).filter(
-        (ReviewQueueModel.review_id == str(review_id)) |
-        (ReviewQueueModel.id == (int(review_id) if str(review_id).isdigit() else -1)) |
-        (ReviewQueueModel.analysis_id == str(review_id))
-    ).first()
+    review = ContinuousLearningService.get_review_item(db, str(review_id))
 
     analysis = None
     if review:
@@ -463,11 +459,7 @@ async def stream_review_audio(
     db: Session = Depends(get_db_session),
 ):
     """Stream audio recording for authorized admin review playback."""
-    review = db.query(ReviewQueueModel).filter(
-        (ReviewQueueModel.review_id == str(review_id)) |
-        (ReviewQueueModel.id == (int(review_id) if str(review_id).isdigit() else -1)) |
-        (ReviewQueueModel.analysis_id == str(review_id))
-    ).first()
+    review = ContinuousLearningService.get_review_item(db, str(review_id))
     analysis = None
     if review:
         analysis = db.query(AnalysisRecordModel).filter(
@@ -549,11 +541,7 @@ async def submit_review_decision(
     if not gt:
         raise HTTPException(status_code=400, detail="Missing ground-truth label.")
 
-    review = db.query(ReviewQueueModel).filter(
-        (ReviewQueueModel.review_id == str(target_id)) |
-        (ReviewQueueModel.id == (int(target_id) if str(target_id).isdigit() else -1)) |
-        (ReviewQueueModel.analysis_id == str(target_id))
-    ).first()
+    review = ContinuousLearningService.get_review_item(db, str(target_id))
     if not review:
         raise HTTPException(status_code=404, detail=f"Review item {target_id} not found.")
 
@@ -1055,41 +1043,52 @@ async def unblock_entity_manually(
 @router.get("/alerts/emails")
 async def get_email_alert_journal(
     limit: int = Query(50, ge=1, le=100),
-    admin: UserModel = Depends(require_admin),
+    current_user: UserModel = Depends(require_user),
 ):
     """View recent threshold-triggered security alert emails dispatched by CyberGuard."""
     from backend.alerts.email_notifier import get_email_notifier
     notifier = get_email_notifier()
-    emails = notifier.get_recent_email_alerts(limit=limit)
+    if getattr(current_user, "role", "") == ROLE_ADMIN:
+        emails = notifier.get_recent_email_alerts(limit=limit)
+    else:
+        # Non-admin user: strictly return records scoped to their authenticated user_id and email
+        emails = notifier.get_recent_email_alerts(
+            limit=limit,
+            user_id=getattr(current_user, "id", None),
+            recipient=getattr(current_user, "email", None),
+        )
     return {"emails": emails, "email_alerts": emails}
 
 
 @router.post("/email-alerts/test")
 async def send_test_email_alert(
     req: TestEmailAlertRequest,
-    admin: UserModel = Depends(require_admin),
+    current_user: UserModel = Depends(require_user),
 ):
     """Dispatch a simulated high-severity threshold alert to verify notification pipeline."""
     from backend.alerts.email_notifier import get_email_notifier
     from backend.threats.models import ThreatEvent, ThreatCategory, RiskLevel, Explanation
     notifier = get_email_notifier()
-    test_event = ThreatEvent(
-        source="AdminTestConsole",
-        source_type="manual_test",
-        modality="security_test",
-        threat_category=ThreatCategory.ANOMALOUS_BEHAVIOUR,
-        severity=RiskLevel.CRITICAL if req.severity == "CRITICAL" else RiskLevel.HIGH,
-        classification="TEST_ALERT",
-        explanation=Explanation(
-            summary=req.subject or "Simulated Executive Security Escalation Test",
-            reasoning="Administrator manual verification of threshold email alert pipeline."
-        ),
-        detector="AdminTestDispatcher"
-    )
+
+    # Authoritative recipient routing:
+    # If admin, caller can specify recipient or fall back to their email / configured recipient.
+    # If regular user, recipient is strictly enforced as the user's verified account email.
+    if getattr(current_user, "role", "") == ROLE_ADMIN:
+        target_recipient = req.recipient or getattr(current_user, "email", None)
+    else:
+        target_recipient = getattr(current_user, "email", None)
+        if not target_recipient:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User account does not have an eligible associated email address.",
+            )
+
     result = await notifier.send_test_alert(
-        severity=req.severity,
+        severity=req.severity or "CRITICAL",
         subject=req.subject,
-        recipient=req.recipient,
+        recipient=target_recipient,
+        user_id=getattr(current_user, "id", None),
+        username=getattr(current_user, "username", None),
     )
     if not isinstance(result, dict):
         result = {}
@@ -1098,7 +1097,7 @@ async def send_test_email_alert(
         "delivery_status": result.get("delivery_status", "PROVIDER_ACCEPTED"),
         "provider": result.get("provider", "brevo"),
         "provider_message_id": result.get("provider_message_id"),
-        "recipient": result.get("recipient"),
+        "recipient": result.get("recipient") or target_recipient,
         "error": result.get("error"),
         "message": result.get("message", "Simulated security alert email logged and dispatched."),
     }

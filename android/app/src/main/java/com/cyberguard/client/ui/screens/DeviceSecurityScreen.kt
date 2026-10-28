@@ -9,6 +9,9 @@ import android.content.pm.PackageManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.net.VpnService
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.os.BatteryManager
 import android.os.Build
 import android.provider.Settings
@@ -75,6 +78,21 @@ fun DeviceSecurityScreen(@Suppress("UNUSED_PARAMETER") navController: NavControl
 
     val packageEvents by viewModel.packageEvents.collectAsState()
     val isWatchdogArmed by viewModel.isPackageWatchdogArmed.collectAsState()
+
+    // Website & Domain Filtering (VpnService)
+    val isVpnShieldArmed by viewModel.isVpnShieldArmed.collectAsState()
+    val blockedDomains by viewModel.blockedDomains.collectAsState()
+    val interceptedDomainEvents by viewModel.interceptedDomainEvents.collectAsState()
+
+    val vpnConsentLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            viewModel.setVpnShieldArmed(true)
+        } else {
+            viewModel.setVpnShieldArmed(false)
+        }
+    }
 
     // Host Hardware & System Baseline
     val hardwareInfoState by viewModel.deviceHardwareInfo.collectAsState()
@@ -582,6 +600,150 @@ fun DeviceSecurityScreen(@Suppress("UNUSED_PARAMETER") navController: NavControl
                         if (hardwareInfo.isBluetoothActive) "ONLINE" else "OFFLINE",
                         TextSecondary
                     )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // LOCAL DNS DOMAIN SHIELD (VPN PROTECTION)
+        SectionHeader("LOCAL DNS DOMAIN SHIELD")
+        CyberGuardCard(
+            borderColor = if (isVpnShieldArmed) HologramTeal else StatusWarning,
+            containerColor = ElevatedSurface
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "LOCAL DNS DOMAIN SHIELD",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = TextPrimary
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                if (isVpnShieldArmed) "ACTIVE (PROTECTED)" else "STANDBY",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 9.sp
+                                ),
+                                color = if (isVpnShieldArmed) HologramTeal else StatusWarning
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            "Transparent on-device DNS filter. Evaluates outbound domain lookups on UDP port 53 against CyberGuard's malicious domain blocklist.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = TextSecondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = isVpnShieldArmed,
+                        onCheckedChange = { armed ->
+                            if (armed) {
+                                val intent = VpnService.prepare(context)
+                                if (intent != null) {
+                                    vpnConsentLauncher.launch(intent)
+                                } else {
+                                    viewModel.setVpnShieldArmed(true)
+                                }
+                            } else {
+                                viewModel.setVpnShieldArmed(false)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = DeepSpaceBackground,
+                            checkedTrackColor = HologramTeal,
+                            uncheckedThumbColor = TextTertiary,
+                            uncheckedTrackColor = HighlightSurface
+                        )
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    StatusRow(
+                        "BLOCKED SIGNATURES",
+                        "${blockedDomains.size} DOMAINS",
+                        if (blockedDomains.isNotEmpty()) CyberBlue else TextSecondary
+                    )
+                    StatusRow(
+                        "INTERCEPTED QUERIES",
+                        "${interceptedDomainEvents.size} DETECTIONS",
+                        if (interceptedDomainEvents.isNotEmpty()) StatusCritical else TextSecondary
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "PRIVACY BOUNDARY: Operates strictly via on-device DNS packet filtering. No TLS decryption, no proxy routing, no personal browsing content collected.",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 9.sp
+                    ),
+                    color = TextTertiary
+                )
+
+                if (interceptedDomainEvents.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    HorizontalDivider(color = DividerColor)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        "RECENT INTERCEPTED DOMAINS",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = CyberAmber
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    interceptedDomainEvents.take(5).forEach { event ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    event.domain,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = StatusCritical,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                    "${event.reason} • ${SimpleDateFormat("HH:mm:ss", Locale.US).format(Date(event.timestamp))}",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                                    color = TextSecondary
+                                )
+                            }
+                            TextButton(
+                                onClick = { viewModel.removeBlockedDomain(event.domain) },
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    "UNBLOCK",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = HologramTeal
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

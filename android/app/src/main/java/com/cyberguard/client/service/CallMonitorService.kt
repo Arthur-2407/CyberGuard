@@ -47,6 +47,42 @@ class CallMonitorService : Service() {
         private const val ALERT_CHANNEL_ID = "CyberGuardSecurityAlert"
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID = 1002
+
+        @Volatile
+        var activeInstance: CallMonitorService? = null
+            private set
+
+        fun stopMonitoringDirectly(context: Context) {
+            val inst = activeInstance
+            if (inst != null) {
+                try {
+                    inst.stopMonitoring()
+                } catch (e: Exception) {
+                    Log.w("CallMonitorService", "Error stopping monitor via active instance: ${e.message}")
+                }
+            } else {
+                val intent = Intent(context, CallMonitorService::class.java).apply {
+                    action = ACTION_STOP_MONITORING
+                }
+                try {
+                    context.startService(intent)
+                } catch (_: Exception) {}
+            }
+            val repo = CallMonitorRepository.getInstance(context.applicationContext)
+            repo.updateTelemetry {
+                it.copy(
+                    callState = com.cyberguard.client.model.TelephonyCallState.IDLE,
+                    monitorState = MonitorState.IDLE,
+                    audioState = AudioCaptureState.IDLE,
+                    detectorState = DetectorState.IDLE,
+                    callerStatusMessage = "Call ended",
+                    currentRisk = 0.0,
+                    alertLevel = "STANDBY",
+                    voiceClassification = "STANDBY",
+                    audioLevelRms = 0.0
+                )
+            }
+        }
     }
 
     private var telephonyManager: TelephonyManager? = null
@@ -72,6 +108,7 @@ class CallMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         repository = CallMonitorRepository.getInstance(applicationContext)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
@@ -374,7 +411,7 @@ class CallMonitorService : Service() {
                 // Connect Backend or maintain Local Autonomous Mode
                 if (detectedUrl != null) {
                     repository.updateTelemetry { it.copy(backendState = BackendState.CONNECTING) }
-                    webSocketClient = WebSocketEventClient(okHttpClient, detectedUrl)
+                    webSocketClient = WebSocketEventClient(repository.connectionManager.okHttpClient, detectedUrl)
                     webSocketClient?.connect()
                 } else {
                     repository.updateTelemetry { it.copy(backendState = BackendState.DISCONNECTED) }
@@ -383,7 +420,7 @@ class CallMonitorService : Service() {
                         repository.connectionManager.serverUrl.collect { newUrl ->
                             if (!newUrl.isNullOrBlank() && webSocketClient == null) {
                                 repository.updateTelemetry { it.copy(backendState = BackendState.CONNECTING) }
-                                webSocketClient = WebSocketEventClient(okHttpClient, newUrl)
+                                webSocketClient = WebSocketEventClient(repository.connectionManager.okHttpClient, newUrl)
                                 webSocketClient?.connect()
                             }
                         }
@@ -432,22 +469,45 @@ class CallMonitorService : Service() {
                                 }
                             }
                             is WsEvent.Disconnected -> {
-                                repository.updateTelemetry { it.copy(
-                                    monitorState = MonitorState.UNAVAILABLE,
-                                    backendState = BackendState.ERROR,
-                                    detectorState = DetectorState.UNAVAILABLE,
-                                    diagnosticReason = "WebSocket Disconnected"
-                                ) }
-                                updateStatusNotification("Monitoring unavailable: WebSocket Disconnected")
+                                if (monitoringJob?.isActive == true) {
+                                    repository.updateTelemetry { it.copy(backendState = BackendState.CONNECTING) }
+                                    launch {
+                                        delay(2000)
+                                        if (monitoringJob?.isActive == true && webSocketClient?.isConnected?.value != true) {
+                                            Log.d("CallMonitorService", "Attempting WebSocket reconnect...")
+                                            webSocketClient?.connect()
+                                        }
+                                    }
+                                } else {
+                                    repository.updateTelemetry { it.copy(
+                                        backendState = BackendState.DISCONNECTED,
+                                        detectorState = DetectorState.UNAVAILABLE,
+                                        diagnosticReason = "WebSocket Disconnected"
+                                    ) }
+                                }
                             }
                             is WsEvent.Error -> {
-                                repository.updateTelemetry { it.copy(
-                                    monitorState = MonitorState.UNAVAILABLE,
-                                    backendState = BackendState.ERROR,
-                                    detectorState = DetectorState.UNAVAILABLE,
-                                    diagnosticReason = "Backend Error: ${event.message}"
-                                ) }
-                                updateStatusNotification("Monitoring unavailable: ${event.message}")
+                                if (monitoringJob?.isActive == true) {
+                                    repository.updateTelemetry { it.copy(
+                                        backendState = BackendState.ERROR,
+                                        diagnosticReason = "Uplink Notice: ${event.message}. Reconnecting..."
+                                    ) }
+                                    launch {
+                                        delay(2500)
+                                        if (monitoringJob?.isActive == true && webSocketClient?.isConnected?.value != true) {
+                                            Log.d("CallMonitorService", "Attempting WebSocket reconnect after error: ${event.message}")
+                                            webSocketClient?.connect()
+                                        }
+                                    }
+                                } else {
+                                    repository.updateTelemetry { it.copy(
+                                        monitorState = MonitorState.UNAVAILABLE,
+                                        backendState = BackendState.ERROR,
+                                        detectorState = DetectorState.UNAVAILABLE,
+                                        diagnosticReason = "Backend Error: ${event.message}"
+                                    ) }
+                                    updateStatusNotification("Monitoring unavailable: ${event.message}")
+                                }
                             }
                             else -> {}
                         }
@@ -492,7 +552,7 @@ class CallMonitorService : Service() {
         }
     }
 
-    private fun stopMonitoring() {
+    fun stopMonitoring() {
         monitoringJob?.cancel()
         monitoringJob = null
         audioPipeline?.stop()
@@ -516,7 +576,21 @@ class CallMonitorService : Service() {
             Log.w("CallMonitorService", "Audio routing reset notice: ${audioResetEx.message}")
         }
         
-        repository.resetTelemetry()
+        repository.updateTelemetry {
+            it.copy(
+                callState = com.cyberguard.client.model.TelephonyCallState.IDLE,
+                monitorState = MonitorState.IDLE,
+                audioState = AudioCaptureState.IDLE,
+                detectorState = DetectorState.IDLE,
+                callerStatusMessage = "Call ended",
+                currentRisk = 0.0,
+                alertLevel = "STANDBY",
+                voiceClassification = "STANDBY",
+                audioLevelRms = 0.0
+            )
+        }
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        notificationManager?.cancel(ALERT_NOTIFICATION_ID)
         updateStatusNotification("Actively monitoring Calls, SMS & Apps")
     }
 
@@ -1164,13 +1238,17 @@ class CallMonitorService : Service() {
                     val tm = telephonyManager
                     val am = audioManager
                     val callState = tm?.callState ?: TelephonyManager.CALL_STATE_IDLE
-                    val isAudioInCall = am?.mode == AudioManager.MODE_IN_CALL || am?.mode == AudioManager.MODE_IN_COMMUNICATION
+                    // Only true hardware cellular telephony mode indicates active call.
+                    // MODE_IN_COMMUNICATION is held by CyberGuard itself and must never prevent detecting call end.
+                    val isAudioInCall = am?.mode == AudioManager.MODE_IN_CALL
                     val currentRepoCallState = repository.telemetry.value.callState
+                    val isCurrentlyMonitoring = repository.telemetry.value.monitorState == MonitorState.ANALYZING ||
+                            repository.telemetry.value.monitorState == MonitorState.STREAMING
 
                     if ((callState == TelephonyManager.CALL_STATE_OFFHOOK || isAudioInCall) && currentRepoCallState != TelephonyCallState.ACTIVE) {
                         Log.d("CallMonitorService", "Background Watchdog detected active in-progress call! Auto-activating pipeline.")
                         handleCallStateChange(TelephonyManager.CALL_STATE_OFFHOOK)
-                    } else if (callState == TelephonyManager.CALL_STATE_IDLE && !isAudioInCall && currentRepoCallState == TelephonyCallState.ACTIVE) {
+                    } else if (callState == TelephonyManager.CALL_STATE_IDLE && !isAudioInCall && (currentRepoCallState == TelephonyCallState.ACTIVE || isCurrentlyMonitoring)) {
                         Log.d("CallMonitorService", "Background Watchdog detected call end. Stopping pipeline.")
                         handleCallStateChange(TelephonyManager.CALL_STATE_IDLE)
                     }
@@ -1224,6 +1302,9 @@ class CallMonitorService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (activeInstance == this) {
+            activeInstance = null
+        }
         stopMonitoring()
         unregisterDynamicReceivers()
         unregisterPackageInstallerCallback()

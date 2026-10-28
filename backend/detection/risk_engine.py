@@ -111,9 +111,18 @@ class RiskEngine:
         # Exponential smoothing (Hysteresis): fast attack escalation, controlled decay
         if self.config.temporal_smoothing:
             if not self._history:
-                self._last_smoothed_risk = rolling_risk
+                if getattr(self, "session_type", "LIVE_MONITOR") == "CALL_MONITOR":
+                    self._last_smoothed_risk = rolling_risk * 0.60
+                    rolling_risk = self._last_smoothed_risk
+                else:
+                    self._last_smoothed_risk = rolling_risk
             else:
-                alpha = 0.85 if rolling_risk > self._last_smoothed_risk else self.config.smoothing_alpha
+                # In CALL_MONITOR mode with fewer than 3 accumulated chunks, use progressive alpha
+                # so a single cellular codec burst or acoustic coupling transient does not cause an immediate false alert spike
+                if getattr(self, "session_type", "LIVE_MONITOR") == "CALL_MONITOR" and len(self._scores) < 3:
+                    alpha = 0.50
+                else:
+                    alpha = 0.85 if rolling_risk > self._last_smoothed_risk else self.config.smoothing_alpha
                 self._last_smoothed_risk = alpha * rolling_risk + (1 - alpha) * self._last_smoothed_risk
             rolling_risk = self._last_smoothed_risk
 
@@ -138,8 +147,8 @@ class RiskEngine:
         # Alert level
         alert_level = self._classify_risk(combined_risk)
 
-        # Track peak risk across chunks (captures peak synthetic evidence)
-        effective_risk = max(combined_risk, detection_score) if speaker_similarity is None else combined_risk
+        # Track peak risk across chunks (sustained evidence after temporal smoothing)
+        effective_risk = combined_risk
         if effective_risk > self._peak_risk:
             self._peak_risk = float(effective_risk)
 

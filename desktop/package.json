@@ -1,0 +1,56 @@
+{
+  "name": "cyberguard",
+  "version": "1.0.0",
+  "description": "CyberGuard SOC Threat Intelligence & Multi-Modal AI Defense Console",
+  "main": "main.js",
+  "author": "CyberGuard Core Security Team",
+  "license": "MIT",
+  "scripts": {
+    "sync-frontend": "node -e \"const fs=require('fs'); fs.cpSync('../frontend', './frontend', {recursive: true, filter: (src) => !src.includes('.backup')});\"",
+    "start": "npm run sync-frontend && electron .",
+    "pack": "npm run sync-frontend && electron-builder --dir",
+    "dist": "npm run sync-frontend && electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.cyberguard.desktop",
+    "productName": "CyberGuard",
+    "artifactName": "CyberGuard-Setup.${ext}",
+    "copyright": "Copyright © 2026 CyberGuard SOC AI",
+    "directories": {
+      "output": "../dist/windows",
+      "app": "."
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "frontend/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "CyberGuard",
+      "uninstallDisplayName": "CyberGuard",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    }
+  }
+}

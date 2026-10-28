@@ -122,16 +122,17 @@ switch ($Command) {
     "tunnel-url" {
         Write-Host "[INFO] Fetching Cloudflare Tunnel endpoint from logs..." -ForegroundColor Cyan
         $m = cmd /c "docker logs cyberguard-tunnel 2>&1" | Select-String -Pattern "https://[a-zA-Z0-9-]+\.trycloudflare\.com"
-        if ($m -and $m.Matches.Count -gt 0) {
-            $url = $m.Matches[0].Value
+        if ($m) {
+            $lastMatch = if ($m -is [array]) { $m[-1] } else { $m }
+            $url = $lastMatch.Matches[0].Value
             Write-Host "----------------------------------------------------------------" -ForegroundColor Green
             Write-Host "  LIVE SECURE TUNNEL URL:" -ForegroundColor White
             Write-Host "  $url" -ForegroundColor Yellow -BackgroundColor Black
             Write-Host "----------------------------------------------------------------" -ForegroundColor Green
-            Write-Host "Copy and paste this URL into your Vercel or GitHub Pages frontend:" -ForegroundColor Gray
-            Write-Host "  1. Open CyberGuard Console (Vercel or GitHub Pages)" -ForegroundColor Gray
-            Write-Host "  2. Click the 'Backend Endpoint' pill in the top-right navbar" -ForegroundColor Gray
-            Write-Host "  3. Paste the URL above and click 'Save and Test'" -ForegroundColor Gray
+            Write-Host "Copy and paste this URL into your Vercel or GitHub Pages frontend or Android app:" -ForegroundColor Gray
+            Write-Host "  1. Open CyberGuard Console or Android App" -ForegroundColor Gray
+            Write-Host "  2. Go to 'Connection Settings' / 'Configure Endpoint'" -ForegroundColor Gray
+            Write-Host "  3. Set Cloud URL to the address above and click 'Save and Test'" -ForegroundColor Gray
         } else {
             Write-Host "[WARN] Quick Tunnel URL not yet found in logs or named token tunnel is active." -ForegroundColor Yellow
             Write-Host "Run 'docker logs cyberguard-tunnel' to inspect tunnel connection output." -ForegroundColor Gray

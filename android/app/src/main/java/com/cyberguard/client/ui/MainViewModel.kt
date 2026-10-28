@@ -15,9 +15,16 @@ import com.cyberguard.client.network.ConnectionState
 import com.cyberguard.client.network.InstalledAppInfo
 import com.cyberguard.client.network.DeviceHardwareInfo
 import com.cyberguard.client.network.toUserFacingErrorMessage
+import com.cyberguard.client.network.ConnectionConfig
+import com.cyberguard.client.network.ConnectionMode
+import com.cyberguard.client.network.EndpointHealthResult
+import com.cyberguard.client.network.HybridPriority
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     
@@ -28,6 +35,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val serverUrl: StateFlow<String?> = connectionManager.serverUrl
     val discoveryStatus: StateFlow<String> = connectionManager.discoveryStatus
     val detectedGatewayIp: String? get() = connectionManager.getDetectedGatewayOrHostIp()
+
+    val connectionConfig: StateFlow<ConnectionConfig> = connectionManager.connectionConfig
+    val activeMode: StateFlow<ConnectionMode> = connectionManager.activeMode
+    val activeEndpoint: StateFlow<String?> = connectionManager.activeEndpoint
+    val activeEndpointType: StateFlow<String?> = connectionManager.activeEndpointType
+    val cloudHealth: StateFlow<EndpointHealthResult?> = connectionManager.cloudHealth
+    val localHealth: StateFlow<EndpointHealthResult?> = connectionManager.localHealth
+    val failoverNotice: StateFlow<String?> = connectionManager.failoverNotice
+    val isFailoverActive: StateFlow<Boolean> = connectionManager.isFailoverActive
+
+    val showConnectionSettings = MutableStateFlow(false)
     
     val telemetry = repository.telemetry
     
@@ -56,6 +74,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val callScreeningPolicy = repository.callScreeningPolicy
     val screenedCalls = repository.screenedCalls
 
+    // Website & Domain Filtering (Local VpnService)
+    val isVpnShieldArmed = repository.isVpnShieldArmed
+    val blockedDomains = repository.blockedDomains
+    val interceptedDomainEvents = repository.interceptedDomainEvents
+
+    fun setVpnShieldArmed(armed: Boolean) {
+        repository.setVpnShieldArmed(armed)
+        if (armed) {
+            com.cyberguard.client.service.CyberGuardVpnService.start(getApplication())
+        } else {
+            com.cyberguard.client.service.CyberGuardVpnService.stop(getApplication())
+        }
+    }
+
+    fun addBlockedDomain(domain: String, reason: String) {
+        repository.addBlockedDomain(com.cyberguard.client.model.BlockedDomainRecord(domain, reason))
+    }
+
+    fun removeBlockedDomain(domain: String) {
+        repository.removeBlockedDomain(domain)
+    }
+
+    fun clearInterceptedDomains() {
+        repository.clearInterceptedDomains()
+    }
+
     fun checkScreeningRoleStatus() {
         repository.checkScreeningRoleStatus()
     }
@@ -81,6 +125,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         connectionManager.startDiscovery()
     }
     
+    fun openConnectionSettings() {
+        showConnectionSettings.value = true
+    }
+
+    fun closeConnectionSettings() {
+        showConnectionSettings.value = false
+    }
+
+    fun applyConnectionConfig(config: ConnectionConfig) {
+        connectionManager.applyConfigAndConnect(config)
+    }
+
+    suspend fun testEndpoint(url: String, port: Int = 3000): EndpointHealthResult {
+        return withContext(Dispatchers.IO) {
+            connectionManager.verifyEndpoint(url, port)
+        }
+    }
+
+    fun restoreDefaultConnectionConfig(): ConnectionConfig {
+        return connectionManager.restoreDefaultConfig()
+    }
+
+    fun disconnectBackend() {
+        connectionManager.disconnect()
+    }
+
     fun connectManually(host: String, port: String) {
         val p = port.toIntOrNull() ?: if (host.startsWith("https://") || host.contains(".vercel.app")) 443 else 3000
         connectionManager.connectManually(host, p)
@@ -91,7 +161,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun retryDiscovery() {
-        connectionManager.startDiscovery()
+        connectionManager.applyConfigAndConnect()
     }
 
     fun scanSubnet(onFound: (String) -> Unit, onFinished: () -> Unit) {
@@ -452,7 +522,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     threatEvent = threatEvent,
                     llmAnalysis = llmResponse,
                     vtDetections = vtHits,
-                    vtTotalEngines = if (vtTotal > 0) vtTotal else 72,
+                    vtTotalEngines = vtTotal,
                     urlhausStatus = urlhausText,
                     finalVerdict = finalSeverity,
                     executiveSummary = execSummary,

@@ -33,6 +33,22 @@ class CallMonitorRepository private constructor(context: Context) {
     private val _activeMalwareAlert = MutableStateFlow<MalwareThreatAlert?>(null)
     val activeMalwareAlert: StateFlow<MalwareThreatAlert?> = _activeMalwareAlert
 
+    // Real-Time Local VPN Website & Domain Filtering State
+    private val _isVpnShieldArmed = MutableStateFlow(false)
+    val isVpnShieldArmed: StateFlow<Boolean> = _isVpnShieldArmed
+
+    private val _blockedDomains = MutableStateFlow<List<BlockedDomainRecord>>(
+        listOf(
+            BlockedDomainRecord("malware.wicar.org", "Verified Malware Test Site", "MALWARE_DISTRIBUTION"),
+            BlockedDomainRecord("testsafebrowsing.appspot.com", "Google SafeBrowsing Synthetic Test Indicator", "MALICIOUS_PHISHING"),
+            BlockedDomainRecord("phishing-test.cyberguard.local", "CyberGuard Synthetic Phishing Simulation Domain", "PHISHING_CREDENTIAL_HARVESTING")
+        )
+    )
+    val blockedDomains: StateFlow<List<BlockedDomainRecord>> = _blockedDomains
+
+    private val _interceptedDomainEvents = MutableStateFlow<List<InterceptedDomainEvent>>(emptyList())
+    val interceptedDomainEvents: StateFlow<List<InterceptedDomainEvent>> = _interceptedDomainEvents
+
     // Real-Time Official Call Screening State
     private val appContext = context.applicationContext
     private val dbHelper = com.cyberguard.client.telecom.CallScreeningDatabaseHelper.getInstance(appContext)
@@ -129,6 +145,43 @@ class CallMonitorRepository private constructor(context: Context) {
 
     fun clearPackageEvents() {
         _packageEvents.value = emptyList()
+    }
+
+    // ── Real-Time Local Domain Filtering & VPN Shield Controls ──
+    fun setVpnShieldArmed(armed: Boolean) {
+        _isVpnShieldArmed.value = armed
+    }
+
+    fun isDomainBlocked(domain: String): Boolean {
+        val clean = domain.trim().lowercase()
+        return _blockedDomains.value.any { b ->
+            val target = b.domain.trim().lowercase()
+            clean == target || clean.endsWith(".$target")
+        }
+    }
+
+    fun addBlockedDomain(record: BlockedDomainRecord) {
+        _blockedDomains.update { current ->
+            if (current.none { it.domain.equals(record.domain, ignoreCase = true) }) {
+                listOf(record) + current
+            } else current
+        }
+    }
+
+    fun removeBlockedDomain(domain: String) {
+        _blockedDomains.update { current ->
+            current.filter { !it.domain.equals(domain, ignoreCase = true) }
+        }
+    }
+
+    fun recordInterceptedDomain(event: InterceptedDomainEvent) {
+        _interceptedDomainEvents.update { current ->
+            listOf(event) + current.take(99)
+        }
+    }
+
+    fun clearInterceptedDomains() {
+        _interceptedDomainEvents.value = emptyList()
     }
 
     // ── Persistent Device Security App Inventory & Hardware Baseline ──
@@ -394,4 +447,18 @@ data class MalwareThreatAlert(
     val sessionId: Int = -1,
     val isPreInstall: Boolean = false,
     val apkPath: String? = null
+)
+
+data class BlockedDomainRecord(
+    val domain: String,
+    val reason: String,
+    val threatCategory: String = "PHISHING_MALICIOUS_DESTINATION",
+    val addedTimestamp: Long = System.currentTimeMillis()
+)
+
+data class InterceptedDomainEvent(
+    val domain: String,
+    val reason: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val actionTaken: String = "SINKHOLED_NXDOMAIN"
 )

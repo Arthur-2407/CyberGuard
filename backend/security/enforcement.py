@@ -48,8 +48,9 @@ class EnforcementEngine:
         self._blocked_hashes: Dict[str, Dict[str, Any]] = {}
         self._allowlist_ips: Set[str] = {"127.0.0.1", "::1", "localhost", "testclient"}
 
-        # DDoS rate limiting: ip -> deque of request timestamps
+        # DDoS rate limiting: ip/key -> deque of request timestamps
         self._request_history: Dict[str, collections.deque] = collections.defaultdict(collections.deque)
+        self._burst_violation_counts: Dict[str, int] = collections.defaultdict(int)
         self._failed_logins: Dict[str, int] = collections.defaultdict(int)
 
         # Policy cache
@@ -92,10 +93,14 @@ class EnforcementEngine:
 
             with self._mem_lock:
                 for b in active_blocks:
-                    # Check expiration
-                    if b.expires_at and b.expires_at < now:
-                        b.is_active = False
-                        continue
+                    # Check expiration safely across timezone-aware and timezone-naive formats
+                    if b.expires_at:
+                        exp = b.expires_at
+                        exp_cmp = exp.astimezone(datetime.timezone.utc).replace(tzinfo=None) if exp.tzinfo is not None else exp
+                        now_cmp = now.astimezone(datetime.timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
+                        if exp_cmp < now_cmp:
+                            b.is_active = False
+                            continue
 
                     entry = {
                         "id": b.id,
@@ -517,17 +522,52 @@ class EnforcementEngine:
 
     # ── Volumetric DDoS Detection & Rate Limiting ─────────────────────────────
 
-    def check_and_record_request(self, ip: str) -> Tuple[bool, Optional[str], int]:
+    # Lightweight health/telemetry endpoints that should not exhaust the main API burst budget
+    _LIGHTWEIGHT_PATHS = {
+        "/health", "/api/health", "/api/sync/status",
+        "/api/threats/pipeline/status", "/api/threats/malware/status",
+        "/api/models", "/api/threats/virustotal/status", "/api/threats/urlhaus/status",
+        "/api/config/status",
+        "/api/incidents/dashboard/summary",
+        "/api/incidents/activity/timeline",
+        "/api/incidents/events",
+        "/api/alerts/recent",
+        "/api/speakers",
+        "/api/incidents",
+        "/api/incidents/",
+        "/api/auth/me",
+        "/api/auth/session",
+        "/api/security/status",
+        "/api/security/policy",
+        "/api/security/events",
+        "/api/threats/feed",
+        "/api/threats/live",
+        "/api/overview",
+    }
+
+    def check_and_record_request(
+        self,
+        ip_or_key: str,
+        path: str = "",
+        client_ip: Optional[str] = None,
+        method: str = "GET",
+    ) -> Tuple[bool, Optional[str], int]:
         """
-        Record an incoming HTTP request timestamp for IP and verify against DDoS policy.
+        Record an incoming HTTP request timestamp for IP/key and verify against DDoS policy.
+        Applies tiered rate limiting:
+          - Lightweight status/health checks are accommodated with elevated thresholds.
+          - Transient bursts trigger HTTP 429 Too Many Requests (with Retry-After) rather than an instant 60-minute ban.
+          - Sustained, severe volumetric attacks (e.g. 5x burst threshold or repeated violations) trigger automated quarantine.
         Returns: (allowed: bool, violation_reason: Optional[str], retry_after: int)
         """
-        ip_clean = (ip or "").strip().lower()
-        if not ip_clean or ip_clean in self._allowlist_ips:
+        key_clean = (ip_or_key or "").strip().lower()
+        effective_ip = (client_ip or (key_clean.split("#")[0] if "#" in key_clean else key_clean)).strip().lower()
+
+        if not key_clean or key_clean in self._allowlist_ips or effective_ip in self._allowlist_ips:
             return True, None, 0
 
-        # Check if already banned
-        blocked, reason = self.is_ip_blocked(ip_clean)
+        # Check if IP address is already explicitly banned
+        blocked, reason = self.is_ip_blocked(effective_ip)
         if blocked:
             return False, f"Access Forbidden: {reason}", 300
 
@@ -535,12 +575,27 @@ class EnforcementEngine:
         if not policy.get("ddos_protection_enabled", True):
             return True, None, 0
 
-        rpm_limit = policy.get("ddos_rpm_limit", 120)
-        burst_limit = policy.get("ddos_burst_limit", 30)
         now_ts = time.time()
+        base_rpm = policy.get("ddos_rpm_limit", 120)
+        base_burst = policy.get("ddos_burst_limit", 45)
+
+        # Tiered threshold allocation: GET requests and telemetry endpoints get elevated burst budget to prevent client lockouts
+        clean_path = path.split("?")[0].rstrip("/") if path else ""
+        is_read_or_telemetry = (
+            method.upper() == "GET"
+            or clean_path in self._LIGHTWEIGHT_PATHS
+            or path in self._LIGHTWEIGHT_PATHS
+            or any(clean_path.startswith(p) for p in ("/api/incidents", "/api/alerts", "/api/threats", "/api/security", "/api/speakers"))
+        )
+        if is_read_or_telemetry:
+            burst_limit = base_burst * 5
+            rpm_limit = base_rpm * 5
+        else:
+            burst_limit = base_burst
+            rpm_limit = base_rpm
 
         with self._mem_lock:
-            history = self._request_history[ip_clean]
+            history = self._request_history[key_clean]
             history.append(now_ts)
 
             # Purge timestamps older than 60 seconds
@@ -551,17 +606,58 @@ class EnforcementEngine:
             burst_window_start = now_ts - 5.0
             burst_count = sum(1 for ts in history if ts >= burst_window_start)
             if burst_count > burst_limit:
-                # Automatic temporary ban
-                ban_mins = policy.get("ban_duration_minutes", 60)
-                self.block_entity(
-                    entity_type="IP",
-                    entity_value=ip_clean,
-                    reason=f"DDoS Mitigation: Exceeded burst rate ({burst_count} req/5s, limit {burst_limit})",
-                    severity="CRITICAL",
-                    duration_minutes=ban_mins,
-                    blocked_by="DDOS_SHIELD",
-                )
-                return False, f"DDoS Shield Triggered: Excessive request burst ({burst_count}/5s)", 60
+                violations = self._burst_violation_counts[key_clean] + 1
+                self._burst_violation_counts[key_clean] = violations
+
+                # Automatic quarantine ban is strictly reserved for sustained volumetric floods
+                # (e.g. 5x burst threshold, or 25+ repeated consecutive violations on non-GET mutating paths)
+                is_severe_flood = (burst_count >= (burst_limit * 5)) or (violations >= 25 and method.upper() != "GET")
+                if is_severe_flood:
+                    ban_mins = policy.get("ban_duration_minutes", 60)
+
+                    # Detect if effective_ip is a shared Docker bridge gateway (172.16.0.0/12)
+                    is_bridge = False
+                    parts = effective_ip.split(".")
+                    if len(parts) == 4 and parts[0] == "172":
+                        try:
+                            is_bridge = 16 <= int(parts[1]) <= 31
+                        except ValueError:
+                            pass
+
+                    if is_bridge:
+                        # For shared Docker bridge gateways, isolate and quarantine the specific device fingerprint
+                        # rather than banning the shared container gateway IP for all users and services.
+                        if "#" in key_clean:
+                            dev_fp = key_clean.split("#")[1]
+                            self.block_entity(
+                                entity_type="DEVICE",
+                                entity_value=dev_fp,
+                                reason=f"DDoS Mitigation: Sustained volumetric attack ({burst_count} req/5s, {violations} violations)",
+                                severity="CRITICAL",
+                                duration_minutes=ban_mins,
+                                blocked_by="DDOS_SHIELD",
+                            )
+                            return False, f"DDoS Shield Triggered: Device quarantined for volumetric attack ({burst_count}/5s)", 60
+                        else:
+                            return False, f"DDoS Shield Rate Limit: Sustained volumetric flood from gateway ({burst_count} req/5s)", 60
+                    else:
+                        self.block_entity(
+                            entity_type="IP",
+                            entity_value=effective_ip,
+                            reason=f"DDoS Mitigation: Sustained volumetric attack ({burst_count} req/5s, {violations} violations)",
+                            severity="CRITICAL",
+                            duration_minutes=ban_mins,
+                            blocked_by="DDOS_SHIELD",
+                        )
+                        return False, f"DDoS Shield Triggered: Sustained volumetric attack ({burst_count}/5s)", 60
+
+                # Standard rate limit response: HTTP 429 Too Many Requests (Retry-After)
+                retry_sec = min(5 * violations, 30)
+                return False, f"DDoS Shield Rate Limit: Exceeded burst rate ({burst_count} req/5s, limit {burst_limit})", retry_sec
+
+            # Reset violation counter if traffic has normalized below burst limit
+            if self._burst_violation_counts[key_clean] > 0 and burst_count <= (burst_limit // 2):
+                self._burst_violation_counts[key_clean] = max(0, self._burst_violation_counts[key_clean] - 1)
 
             # 2. RPM check (last 60 seconds)
             rpm_count = len(history)

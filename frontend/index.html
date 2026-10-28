@@ -50,6 +50,10 @@
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
         Phishing &amp; URL
       </button>
+      <button class="nav-link" onclick="showTab('malware')" id="tab-malware" role="tab" aria-selected="false">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Malware Lab
+      </button>
       <button class="nav-link" onclick="showTab('enroll')" id="tab-enroll" role="tab" aria-selected="false">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
         Voice Identity
@@ -110,8 +114,8 @@
         </button>
       </div>
 
-      <!-- Docker SOC Backend & Tunnel Status Indicator Pill -->
-      <div class="backend-tunnel-widget" id="backend-tunnel-widget">
+      <!-- Docker SOC Backend & Tunnel Status Indicator Pill (Hidden from Overview page navbar; diagnostics preserved) -->
+      <div class="backend-tunnel-widget" id="backend-tunnel-widget" style="display:none !important;" aria-hidden="true">
         <button class="nav-backend-btn" id="nav-backend-btn" onclick="openBackendModal()" title="CyberGuard Docker Backend &amp; Secure Tunnel Settings">
           <span class="backend-pulse-dot offline" id="backend-nav-dot"></span>
           <span class="backend-nav-text" id="backend-nav-text">DOCKER OFFLINE</span>
@@ -203,7 +207,7 @@
               <div class="defcon-tactical-matrix autonomous-defcon-matrix" id="overview-defcon-matrix" onclick="handleDefconMatrixClick()" title="Autonomous AI Defense Posture — Real-time telemetry driven (Medium+ threats today)">
                 <div class="defcon-matrix-header">
                   <span class="defcon-label">DEFCON:</span>
-                  <span class="defcon-auto-indicator" id="defcon-auto-indicator" title="Autonomous Defense Level is dynamically calculated from today's Medium+ threats and cannot be manipulated">AUTO</span>
+                  <span class="defcon-auto-indicator" id="defcon-auto-indicator" style="display:none !important;" aria-hidden="true" title="Autonomous Defense Level is dynamically calculated from today's Medium+ threats and cannot be manipulated">AUTO</span>
                 </div>
                 <div class="defcon-pills-wrap" id="defcon-pills-wrap">
                   <div class="defcon-pill defcon-5" data-level="5" title="DEFCON 5: Baseline Monitoring (0 Medium+ threats today)">5</div>
@@ -1283,6 +1287,348 @@
               </div>
             </div>
           </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════════════════════
+         TAB 5B: MALWARE ANALYSIS LAB — EVIDENCE-BASED MULTI-ENGINE INSPECTION
+         ════════════════════════════════════════════════════════════════════════ -->
+    <div class="tab-panel hidden" id="panel-malware">
+      <div class="malware-lab-container" style="display:flex; flex-direction:column; gap:14px;">
+
+        <!-- Header Hero Card -->
+        <div class="card malware-hero-card" style="padding:16px 20px; border-left:3px solid var(--accent-primary);">
+          <div class="malware-live-stats-bar" style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; font-size:11px; font-family:'JetBrains Mono', monospace;">
+            <div class="sc-live-chip">
+              <span class="sc-live-dot" id="malware-pulse-dot"></span>
+              <span>ENGINE STATUS:</span>
+              <span class="chip-val text-cyan" id="malware-engine-status-text">INITIALIZING...</span>
+            </div>
+            <div class="sc-live-divider"></div>
+            <div class="sc-live-chip">
+              <span>CLAMAV AV:</span>
+              <span class="chip-val" id="malware-clam-status" style="color:var(--text-muted);">PROBING</span>
+            </div>
+            <div class="sc-live-divider"></div>
+            <div class="sc-live-chip">
+              <span>YARA RULES:</span>
+              <span class="chip-val" id="malware-yara-status" style="color:var(--risk-safe);">LOADED</span>
+            </div>
+            <div class="sc-live-divider"></div>
+            <div class="sc-live-chip">
+              <span>ENTROPY RADAR:</span>
+              <span class="chip-val" style="color:var(--accent-primary);">ACTIVE</span>
+            </div>
+            <div class="sc-live-divider"></div>
+            <div class="sc-live-chip">
+              <span>MAX SCAN SIZE:</span>
+              <span class="chip-val" id="malware-max-scan-size" style="color:#f59e0b;">1 GB</span>
+            </div>
+            <button class="btn btn-secondary btn-xs" onclick="refreshMalwareStatus(true)" style="margin-left:auto; font-size:10px; padding:3px 8px;" title="Probe live scanner availability">
+              ↻ Probe Engines
+            </button>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px;">
+            <div>
+              <div style="font-size:10.5px; font-weight:700; letter-spacing:0.08em; color:var(--accent-primary); text-transform:uppercase; margin-bottom:4px; font-family:'JetBrains Mono', monospace;">
+                FORENSIC ARTIFACT &amp; EXECUTABLE ANALYSIS
+              </div>
+              <h1 class="card-title" style="font-size:18px; margin:0; color:#f8fafc; display:flex; align-items:center; gap:8px;">
+                MALWARE ANALYSIS LAB
+                <span class="card-tag" style="background:rgba(6,182,212,0.15); color:var(--accent-primary); font-size:10px;">MULTI-ENGINE STATIC &amp; HEURISTIC</span>
+              </h1>
+              <div style="font-size:12px; color:var(--text-secondary); margin-top:4px;">
+                Inspect executables, packages, archives, and unknown payloads with local ClamAV, YARA pattern matching, Shannon entropy, and threat intelligence.
+              </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-secondary btn-xs" onclick="loadSampleMalware('eicar')" title="Load Harmless EICAR Antivirus Test Pattern">
+                Load EICAR Sample
+              </button>
+              <button class="btn btn-secondary btn-xs" onclick="loadSampleMalware('dropper')" title="Load Suspicious Dropper Script Sample">
+                Load Dropper Sample
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2-Column Workstation Grid -->
+        <div style="display:grid; grid-template-columns:minmax(340px, 420px) minmax(450px, 1fr); gap:14px; align-items:start;">
+
+          <!-- Left Column: Intake & Engine Diagnostics -->
+          <div style="display:flex; flex-direction:column; gap:14px;">
+
+            <!-- Intake Dropzone Card -->
+            <div class="card" style="padding:16px;">
+              <div class="card-header" style="margin-bottom:12px;">
+                <h2 class="card-title" style="font-size:13px; display:flex; align-items:center; gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  Artifact Intake &amp; Sandbox
+                </h2>
+                <span class="card-tag" style="background:rgba(255,255,255,0.06); color:var(--text-muted); font-size:9.5px;">STREAMING (BOUNDED)</span>
+              </div>
+
+              <!-- Interactive Dropzone -->
+              <div id="malware-dropzone" class="malware-dropzone" onclick="document.getElementById('malware-file-input').click()" ondragover="handleMalwareDragOver(event)" ondragleave="handleMalwareDragLeave(event)" ondrop="handleMalwareDrop(event)">
+                <input type="file" id="malware-file-input" style="display:none;" onchange="handleMalwareFileSelect(event)" />
+                <div class="dropzone-icon" style="color:var(--accent-primary); margin-bottom:8px;">
+                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+                </div>
+                <div style="font-weight:600; color:#f8fafc; font-size:13px; margin-bottom:4px;">
+                  Drop binary artifact or click to browse
+                </div>
+                <div style="font-size:11px; color:var(--text-muted); line-height:1.4;">
+                  Supported: EXE, DLL, APK, ELF, ZIP, 7Z, TAR, GZ, PDF, BAT, PS1, VBS, BIN (Max 1 GB)
+                </div>
+              </div>
+
+              <!-- Selected File Preview Chip -->
+              <div id="malware-selected-file-chip" class="hidden" style="margin-top:10px; padding:10px 12px; background:rgba(6,182,212,0.08); border:1px solid rgba(6,182,212,0.25); border-radius:6px; display:flex; align-items:center; justify-content:space-between;">
+                <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    <div id="malware-selected-name" style="font-size:12px; font-weight:600; color:#f8fafc; font-family:'JetBrains Mono', monospace;">artifact.bin</div>
+                    <div id="malware-selected-size" style="font-size:10px; color:var(--text-muted);">0 KB</div>
+                  </div>
+                </div>
+                <button class="btn btn-secondary btn-xs" onclick="clearSelectedMalwareFile(event)" style="padding:2px 6px; font-size:10px;">✕</button>
+              </div>
+
+              <!-- Scan Action Button -->
+              <button id="btn-scan-malware" class="btn btn-primary btn-full" onclick="executeMalwareScan()" style="margin-top:12px; padding:10px;" disabled>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline-block; vertical-align:middle; margin-right:4px;"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                Execute Multi-Engine Scan
+              </button>
+            </div>
+
+            <!-- Engine Health Matrix Card -->
+            <div class="card" style="padding:16px;">
+              <div class="card-header" style="margin-bottom:10px;">
+                <h2 class="card-title" style="font-size:12.5px; display:flex; align-items:center; gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                  Engine Telemetry &amp; Availability
+                </h2>
+              </div>
+              <div class="malware-engine-telemetry-grid" style="display:flex; flex-direction:column; gap:8px; font-size:11.5px;">
+                <!-- ClamAV Telemetry Row -->
+                <div class="engine-row" style="padding:8px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div style="font-weight:600; color:#f8fafc; display:flex; align-items:center; gap:6px;">
+                      <span id="dot-clamav" class="engine-indicator-dot offline"></span>
+                      ClamAV Local AV
+                    </div>
+                    <div id="details-clamav" style="font-size:10px; color:var(--text-muted);">Probing host daemon / binary...</div>
+                  </div>
+                  <span id="badge-clamav" class="card-tag" style="font-size:9.5px;">PROBING</span>
+                </div>
+
+                <!-- YARA Telemetry Row -->
+                <div class="engine-row" style="padding:8px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div style="font-weight:600; color:#f8fafc; display:flex; align-items:center; gap:6px;">
+                      <span id="dot-yara" class="engine-indicator-dot online"></span>
+                      YARA Rule Engine
+                    </div>
+                    <div id="details-yara" style="font-size:10px; color:var(--text-muted);">Curated pattern heuristics loaded</div>
+                  </div>
+                  <span id="badge-yara" class="card-tag" style="background:rgba(16,185,129,0.15); color:var(--risk-safe); font-size:9.5px;">ACTIVE</span>
+                </div>
+
+                <!-- Shannon Entropy Row -->
+                <div class="engine-row" style="padding:8px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div style="font-weight:600; color:#f8fafc; display:flex; align-items:center; gap:6px;">
+                      <span class="engine-indicator-dot online"></span>
+                      Shannon Entropy Analyzer
+                    </div>
+                    <div style="font-size:10px; color:var(--text-muted);">0.0 - 8.0 bits/byte packing detection</div>
+                  </div>
+                  <span class="card-tag" style="background:rgba(6,182,212,0.15); color:var(--accent-primary); font-size:9.5px;">READY</span>
+                </div>
+
+                <!-- Threat Intelligence Row -->
+                <div class="engine-row" style="padding:8px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                  <div>
+                    <div style="font-weight:600; color:#f8fafc; display:flex; align-items:center; gap:6px;">
+                      <span class="engine-indicator-dot online"></span>
+                      VirusTotal &amp; URLhaus Intel
+                    </div>
+                    <div style="font-size:10px; color:var(--text-muted);">Global multi-vendor hash reputation</div>
+                  </div>
+                  <span class="card-tag" style="background:rgba(16,185,129,0.15); color:var(--risk-safe); font-size:9.5px;">ARMED</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Right Column: Forensic Results Console -->
+          <div class="card" id="malware-results-card" style="padding:20px; min-height:480px;">
+
+            <!-- Empty Placeholder State -->
+            <div id="malware-empty-state" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:60px 20px; color:var(--text-muted);">
+              <div style="width:54px; height:54px; border-radius:50%; background:rgba(255,255,255,0.02); border:1px solid var(--border-medium); display:flex; align-items:center; justify-content:center; margin-bottom:14px; color:var(--accent-primary);">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              </div>
+              <div style="font-size:14px; font-weight:600; color:#f8fafc; margin-bottom:6px;">
+                No Artifact Analyzed Yet
+              </div>
+              <div style="font-size:11.5px; max-width:380px; line-height:1.5;">
+                Select a binary file, application package, or script on the left to execute genuine multi-engine analysis across ClamAV, YARA rules, structural entropy, and threat intelligence.
+              </div>
+            </div>
+
+            <!-- Scanning In-Progress State -->
+            <div id="malware-scanning-state" class="hidden" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:70px 20px;">
+              <div class="biometric-radar-circle" style="width:70px; height:70px; margin-bottom:16px;">
+                <div class="biometric-radar-sweep"></div>
+                <div class="biometric-radar-reticle"></div>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+              </div>
+              <div style="font-size:14px; font-weight:700; color:#f8fafc; font-family:'JetBrains Mono', monospace; letter-spacing:0.04em;">
+                EXECUTING MULTI-ENGINE INSPECTION
+              </div>
+              <div id="malware-scan-progress-msg" style="font-size:11.5px; color:var(--accent-primary); margin-top:6px;">
+                Evaluating ClamAV daemon and YARA heuristics...
+              </div>
+            </div>
+
+            <!-- Completed Report State -->
+            <div id="malware-report-state" class="hidden" style="display:flex; flex-direction:column; gap:16px;">
+
+              <!-- Verdict Banner -->
+              <div id="malware-verdict-banner" class="malware-verdict-banner safe" style="padding:14px 18px; border-radius:6px; border:1px solid; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div>
+                  <div style="font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.08em; font-family:'JetBrains Mono', monospace; opacity:0.85;">
+                    CONSOLIDATED EVIDENCE VERDICT
+                  </div>
+                  <div style="display:flex; align-items:center; gap:10px; margin-top:2px; flex-wrap:wrap;">
+                    <div id="malware-verdict-text" style="font-size:18px; font-weight:800; font-family:'JetBrains Mono', monospace; letter-spacing:0.02em;">
+                      NO_DETECTION
+                    </div>
+                    <!-- Small Interactive Explanation Trigger Control -->
+                    <button id="btn-malware-explain-verdict" class="btn btn-secondary btn-xs malware-explain-trigger" onclick="openMalwareExplanationModal()" title="Explain why this artifact was flagged or cleared using genuine scan evidence" aria-haspopup="dialog" aria-expanded="false" style="display:none; align-items:center; gap:5px; font-size:10px; padding:3px 9px; font-family:'JetBrains Mono', monospace; border-color:rgba(6,182,212,0.4); color:var(--accent-primary); background:rgba(6,182,212,0.08);">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="trigger-sparkle"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                      <span id="btn-malware-explain-label">Why flagged?</span>
+                    </button>
+                  </div>
+                  <div id="malware-verdict-summary" style="font-size:11.5px; margin-top:4px; max-width:550px;">
+                    No signatures or pattern anomalies detected.
+                  </div>
+                </div>
+                <div style="text-align:right;">
+                  <div style="font-size:10px; font-family:'JetBrains Mono', monospace; color:var(--text-muted);">RISK SCORE</div>
+                  <div id="malware-risk-score" style="font-size:22px; font-weight:800; font-family:'JetBrains Mono', monospace;">0.05</div>
+                  <div id="malware-severity-badge" class="card-tag" style="font-size:10px;">SAFE</div>
+                </div>
+              </div>
+
+              <!-- Extension Mismatch Alert (Hidden by default, shown if extension doesn't match content) -->
+              <div id="malware-mismatch-alert" class="hidden" style="padding:10px 14px; background:rgba(239,68,68,0.12); border:1px solid rgba(239,68,68,0.35); border-radius:6px; display:flex; align-items:center; gap:10px; color:#fca5a5; font-size:11.5px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                <div id="malware-mismatch-details">Extension mismatch: File format does not match file extension.</div>
+              </div>
+
+              <!-- Artifact Forensic Metadata Grid -->
+              <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">
+                <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; padding:10px;">
+                  <div style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">DETECTED FORMAT</div>
+                  <div id="malware-meta-format" style="font-size:12px; font-weight:700; color:#f8fafc; font-family:'JetBrains Mono', monospace; margin-top:2px;">PE32 Executable</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; padding:10px;">
+                  <div style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">MIME TYPE</div>
+                  <div id="malware-meta-mime" style="font-size:12px; font-weight:600; color:#f8fafc; font-family:'JetBrains Mono', monospace; margin-top:2px;">application/x-dosexec</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; padding:10px;">
+                  <div style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">FILE SIZE</div>
+                  <div id="malware-meta-size" style="font-size:12px; font-weight:600; color:#f8fafc; font-family:'JetBrains Mono', monospace; margin-top:2px;">0 KB</div>
+                </div>
+                <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; padding:10px;">
+                  <div style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace;">SCAN LATENCY</div>
+                  <div id="malware-meta-latency" style="font-size:12px; font-weight:600; color:#f8fafc; font-family:'JetBrains Mono', monospace; margin-top:2px;">0 ms</div>
+                </div>
+              </div>
+
+              <!-- Cryptographic Integrity Hashes -->
+              <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; padding:12px;">
+                <div style="font-size:10.5px; font-weight:700; color:var(--accent-primary); letter-spacing:0.06em; font-family:'JetBrains Mono', monospace; margin-bottom:8px;">
+                  CRYPTOGRAPHIC HASHESTAMP
+                </div>
+                <div style="display:flex; flex-direction:column; gap:6px; font-family:'JetBrains Mono', monospace; font-size:11px;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="color:var(--text-muted); min-width:60px;">SHA-256:</span>
+                    <span id="malware-hash-sha256" style="color:#f8fafc; word-break:break-all;">-</span>
+                    <button class="btn btn-secondary btn-xs" onclick="copyMalwareHash()" style="padding:1px 6px; font-size:9.5px; margin-left:auto;">Copy</button>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <span style="color:var(--text-muted); min-width:60px;">MD5:</span>
+                    <span id="malware-hash-md5" style="color:#cbd5e1; word-break:break-all;">-</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Shannon Entropy Meter -->
+              <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; padding:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                  <span style="font-size:10.5px; font-weight:700; color:var(--accent-primary); letter-spacing:0.06em; font-family:'JetBrains Mono', monospace;">
+                    SHANNON ENTROPY DISTRIBUTION
+                  </span>
+                  <span id="malware-entropy-val" style="font-size:12px; font-weight:700; font-family:'JetBrains Mono', monospace; color:#f8fafc;">0.00 / 8.00</span>
+                </div>
+                <div style="height:8px; background:rgba(255,255,255,0.06); border-radius:4px; overflow:hidden; position:relative;">
+                  <div id="malware-entropy-bar" style="height:100%; width:0%; background:linear-gradient(90deg, #10b981 0%, #38bdf8 60%, #f59e0b 80%, #ef4444 100%); transition:width 0.5s ease;"></div>
+                </div>
+                <div style="display:flex; justify-content:space-between; font-size:9.5px; color:var(--text-muted); font-family:'JetBrains Mono', monospace; margin-top:4px;">
+                  <span>0.0 (Plaintext)</span>
+                  <span>4.0 - 6.5 (Standard Code)</span>
+                  <span>7.2+ (Packed / Encrypted)</span>
+                  <span>8.0 (Maximum)</span>
+                </div>
+              </div>
+
+              <!-- Multi-Engine Breakdown Table -->
+              <div style="background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:4px; overflow:hidden;">
+                <div style="padding:10px 12px; background:rgba(255,255,255,0.03); border-bottom:1px solid var(--border-subtle); font-size:11px; font-weight:700; color:#f8fafc; font-family:'JetBrains Mono', monospace;">
+                  MULTI-ENGINE AUDIT BREAKDOWN
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:11px; text-align:left;">
+                  <thead>
+                    <tr style="border-bottom:1px solid var(--border-subtle); color:var(--text-muted); font-family:'JetBrains Mono', monospace; font-size:10px;">
+                      <th style="padding:8px 12px;">ENGINE</th>
+                      <th style="padding:8px 12px;">STATUS</th>
+                      <th style="padding:8px 12px;">DETECTIONS</th>
+                      <th style="padding:8px 12px;">LATENCY</th>
+                      <th style="padding:8px 12px;">DIAGNOSTIC EVIDENCE</th>
+                    </tr>
+                  </thead>
+                  <tbody id="malware-engine-table-body">
+                    <!-- Populated dynamically -->
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- Mitigation & Forensic Actions -->
+              <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; padding-top:4px;">
+                <div style="font-size:11px; color:var(--text-muted);">
+                  MITRE ATT&amp;CK: <strong id="malware-mitre-tag" class="text-cyan">T1204.002</strong>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button class="btn btn-secondary btn-xs" onclick="downloadMalwareReportJson()">
+                    Export JSON Telemetry
+                  </button>
+                  <button id="btn-malware-create-incident" class="btn btn-emergency-containment btn-xs" onclick="escalateMalwareToIncident()" style="display:none;">
+                    Escalate to Incident
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+
         </div>
 
       </div>
@@ -2410,6 +2756,142 @@
     </div>
   </div>
 
+  <!-- ════════════════════════════════════════════════════════════════════════
+       EVIDENCE-GROUNDED AI EXPLANATION MODAL FOR MALWARE LAB
+       ════════════════════════════════════════════════════════════════════════ -->
+  <div class="modal-overlay hidden" id="malware-explanation-modal" onclick="if(event.target===this) closeMalwareExplanationModal()" role="dialog" aria-modal="true" aria-labelledby="malware-expl-modal-title">
+    <div class="card modal-card malware-explanation-dialog" id="malware-explanation-dialog">
+      <!-- Modal Header -->
+      <div class="card-header malware-expl-header" style="padding:12px 16px; border-bottom:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between; background:rgba(11,18,36,0.98);">
+        <div style="display:flex; align-items:center; gap:10px; overflow:hidden;">
+          <div class="malware-expl-icon-wrap" id="malware-expl-icon-wrap" style="width:28px; height:28px; border-radius:6px; background:rgba(6,182,212,0.12); border:1px solid rgba(6,182,212,0.3); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+          </div>
+          <div style="overflow:hidden;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <h2 id="malware-expl-modal-title" class="card-title" style="font-size:12.5px; margin:0; letter-spacing:0.04em; font-family:'JetBrains Mono', monospace; color:#f8fafc;">
+                WHY FLAGGED — EVIDENCE-GROUNDED FORENSIC ANALYSIS
+              </h2>
+              <span id="malware-expl-badge" class="card-tag" style="font-size:9.5px; background:rgba(6,182,212,0.15); color:var(--accent-primary);">AI EXPLANATION</span>
+            </div>
+            <div id="malware-expl-asset-line" style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; margin-top:2px;">
+              Inspected Artifact Telemetry
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-xs btn-secondary" onclick="closeMalwareExplanationModal()" aria-label="Close explanation dialog" id="btn-close-malware-expl" style="padding:2px 8px; font-size:11px;">✕</button>
+      </div>
+
+      <!-- Modal Body -->
+      <div class="modal-body malware-expl-body" id="malware-expl-body" style="padding:16px; overflow-y:auto; max-height:calc(85vh - 90px); display:flex; flex-direction:column; gap:12px;">
+
+        <!-- Loading State -->
+        <div id="malware-expl-loading" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:35px 20px;">
+          <div class="biometric-radar-circle" style="width:48px; height:48px; margin-bottom:12px;">
+            <div class="biometric-radar-sweep"></div>
+            <div class="biometric-radar-reticle"></div>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-cyan"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          </div>
+          <div style="font-size:12px; font-weight:700; color:#f8fafc; font-family:'JetBrains Mono', monospace;">
+            SYNTHESIZING EVIDENCE-GROUNDED EXPLANATION
+          </div>
+          <div style="font-size:11px; color:var(--accent-primary); margin-top:4px;">
+            Correlating multi-engine findings with configured Qwen LLM...
+          </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="malware-expl-error" class="hidden" style="display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:30px 20px; gap:10px;">
+          <div style="width:38px; height:38px; border-radius:50%; background:rgba(239,68,68,0.15); border:1px solid rgba(239,68,68,0.4); display:flex; align-items:center; justify-content:center; color:#ef4444;">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <div id="malware-expl-error-msg" style="font-size:11.5px; color:#fca5a5; max-width:400px; line-height:1.5;">
+            Unable to retrieve authoritative explanation for this artifact scan.
+          </div>
+          <button class="btn btn-secondary btn-xs" onclick="retryFetchMalwareExplanation()" id="btn-retry-malware-expl" style="margin-top:4px;">
+            ↻ Retry Request
+          </button>
+        </div>
+
+        <!-- Content Container -->
+        <div id="malware-expl-content" class="hidden" style="display:flex; flex-direction:column; gap:12px;">
+
+          <!-- SECTION A: Why Flagged -->
+          <div class="malware-expl-card malware-expl-summary-card" style="padding:12px; background:rgba(6,182,212,0.06); border:1px solid rgba(6,182,212,0.25); border-radius:6px;">
+            <div class="malware-expl-section-header" style="display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; color:var(--accent-primary); font-family:'JetBrains Mono', monospace; letter-spacing:0.06em; margin-bottom:6px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+              <span>WHY CYBERGUARD FLAGGED THIS ARTIFACT</span>
+            </div>
+            <div id="malware-expl-summary-text" class="malware-expl-summary-text" style="font-size:12px; color:#f8fafc; line-height:1.55;">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <!-- SECTION B: Evidence Observed -->
+          <div class="malware-expl-card" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:6px;">
+            <div class="malware-expl-section-header" style="display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; color:var(--accent-primary); font-family:'JetBrains Mono', monospace; letter-spacing:0.06em; margin-bottom:8px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              <span>EVIDENCE OBSERVED</span>
+            </div>
+            <div id="malware-expl-evidence-list" class="malware-expl-evidence-list" style="display:flex; flex-direction:column; gap:6px;">
+              <!-- Populated dynamically -->
+            </div>
+          </div>
+
+          <!-- SECTION C: Engine Agreement & Disagreement -->
+          <div class="malware-expl-card" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:6px;">
+            <div class="malware-expl-section-header" style="display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; color:var(--accent-primary); font-family:'JetBrains Mono', monospace; letter-spacing:0.06em; margin-bottom:8px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/><polyline points="18 8 22 12 18 16"/><line x1="6" y1="12" x2="22" y2="12"/></svg>
+              <span>ENGINE AGREEMENT &amp; DISAGREEMENT</span>
+            </div>
+            <div id="malware-expl-disagreement-pills" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px;">
+              <!-- Detecting / Clean / Unavailable badges -->
+            </div>
+            <div id="malware-expl-disagreement-text" style="font-size:11.5px; color:var(--text-secondary); line-height:1.5;">
+              <!-- Synthesis text -->
+            </div>
+          </div>
+
+          <!-- SECTION D: Confidence & Limitations -->
+          <div class="malware-expl-card" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-radius:6px;">
+            <div class="malware-expl-section-header" style="display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; color:var(--accent-primary); font-family:'JetBrains Mono', monospace; letter-spacing:0.06em; margin-bottom:6px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>CONFIDENCE &amp; COVERAGE LIMITATIONS</span>
+            </div>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; font-family:'JetBrains Mono', monospace; font-size:11px;">
+              <span style="color:var(--text-muted);">Application Risk Score:</span>
+              <strong id="malware-expl-risk-score-display" class="text-cyan">0.95 (CRITICAL)</strong>
+            </div>
+            <div id="malware-expl-limitations-text" style="font-size:11px; color:#94a3b8; line-height:1.5;">
+              <!-- Limitations text -->
+            </div>
+          </div>
+
+          <!-- SECTION E: Recommended Next Action -->
+          <div class="malware-expl-card" style="padding:12px; background:rgba(255,255,255,0.02); border:1px solid var(--border-subtle); border-left:3px solid var(--accent-primary); border-radius:6px;">
+            <div class="malware-expl-section-header" style="display:flex; align-items:center; gap:6px; font-size:10px; font-weight:700; color:var(--accent-primary); font-family:'JetBrains Mono', monospace; letter-spacing:0.06em; margin-bottom:6px;">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 12 14 22 4"/></svg>
+              <span>RECOMMENDED NEXT ACTION</span>
+            </div>
+            <div id="malware-expl-action-text" style="font-size:11.5px; font-weight:600; color:#f8fafc; line-height:1.4;">
+              <!-- Action text -->
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="card-footer malware-expl-footer" style="padding:10px 16px; border-top:1px solid var(--border-subtle); display:flex; align-items:center; justify-content:space-between; background:rgba(11,18,36,0.98);">
+        <div style="font-size:10px; color:var(--text-muted); font-family:'JetBrains Mono', monospace; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:400px;">
+          Engine: <span id="malware-expl-footer-engine" class="text-cyan">Qwen3.5-4B-Q4_K_M</span> · <span id="malware-expl-footer-scanid">Record: -</span>
+        </div>
+        <button class="btn btn-secondary btn-xs" onclick="closeMalwareExplanationModal()">Done</button>
+      </div>
+    </div>
+  </div>
+
   <!-- System Health & Engine Diagnostics Modal -->
   <div class="modal-overlay hidden" id="system-health-modal" onclick="if(event.target===this) closeSystemHealthModal()">
     <div class="card modal-card" style="max-width:860px; width:95%; max-height:88vh; overflow-y:auto; margin:auto;">
@@ -2428,6 +2910,36 @@
       </div>
       <div class="modal-body" style="padding:16px;">
         
+        <!-- Backend Connection Architecture & Mode Controller -->
+        <div class="health-group" style="background:rgba(2,6,23,0.7); border:1px solid rgba(56,189,248,0.25); border-radius:8px; padding:12px; margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+              <span style="font-size:12px; font-weight:700; font-family:'JetBrains Mono', monospace; color:#f8fafc;" id="sh-connection-mode-badge">MODE A: DEPLOYED BACKEND</span>
+            </div>
+            <span class="pipeline-status-badge status-ready" id="sh-connection-status-badge">CHECKING...</span>
+          </div>
+
+          <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap;">
+            <button class="btn btn-xs btn-secondary" id="btn-mode-deployed" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('deployed')">
+              Mode A: Deployed Cloud
+            </button>
+            <button class="btn btn-xs btn-secondary" id="btn-mode-local" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('local')">
+              Mode B: Local Docker (127.0.0.1)
+            </button>
+            <div style="display:flex; align-items:center; gap:4px; margin-left:auto;">
+              <span style="font-size:11px; color:#94a3b8; font-family:'JetBrains Mono', monospace;">Port:</span>
+              <input type="text" id="sh-local-port-input" value="3000" style="width:55px; height:24px; font-size:11px; font-family:'JetBrains Mono', monospace; padding:2px 6px; background:#0f172a; border:1px solid #334155; border-radius:4px; color:#f8fafc;" onchange="window.CyberGuardConnection && window.CyberGuardConnection.setPort(this.value)" />
+              <button class="btn btn-xs btn-secondary" onclick="window.CyberGuardConnection && window.CyberGuardConnection.checkConnection()" title="Ping endpoint immediately">Ping</button>
+              <button class="btn btn-xs btn-secondary" onclick="openBackendModal()" title="Advanced Tunnel & Port Settings">⚙ Advanced</button>
+            </div>
+          </div>
+
+          <div id="sh-connection-diagnostic" style="font-size:11px; font-family:'JetBrains Mono', monospace; color:#94a3b8; line-height:1.5;">
+            Initial connection probe in progress...
+          </div>
+        </div>
+
         <!-- Group 1: Voice & Biometrics -->
         <div class="health-group">
           <div class="health-group-title">
@@ -3911,8 +4423,10 @@
           <div id="backend-test-result" style="margin-top:6px; font-size:11.5px; font-family:'JetBrains Mono', monospace; min-height:18px;"></div>
         </div>
 
-        <!-- Quick Presets -->
+        <!-- Quick Presets & Mode Toggles -->
         <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button class="btn btn-secondary btn-xs" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('local')">Switch to Mode B (Local Docker)</button>
+          <button class="btn btn-secondary btn-xs" onclick="window.CyberGuardConnection && window.CyberGuardConnection.setMode('deployed')">Switch to Mode A (Deployed Cloud)</button>
           <button class="btn btn-secondary btn-xs" onclick="setPresetBackend('http://127.0.0.1:3000')">Local Docker (127.0.0.1:3000)</button>
           <button class="btn btn-secondary btn-xs" onclick="setPresetBackend('')">Current Origin Fallback</button>
           <button class="btn btn-secondary btn-xs" onclick="clearCustomBackend()">Reset / Auto-Detect</button>

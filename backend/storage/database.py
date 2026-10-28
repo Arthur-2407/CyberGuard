@@ -16,15 +16,23 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any, Optional
+from dotenv import load_dotenv
+
+# Ensure .env is loaded independently of import order
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+load_dotenv(_PROJECT_ROOT / ".env.email")
+load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
 try:
     from sqlalchemy import (
         Column, DateTime, Float, Integer, String, Text, create_engine, event,
-        ForeignKey, Boolean
+        ForeignKey, Boolean, text
     )
     from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
     from sqlalchemy.pool import QueuePool, StaticPool
@@ -90,10 +98,29 @@ if _SQLALCHEMY_AVAILABLE:
             )
 
         def get_embedding(self) -> np.ndarray:
-            return np.array(json.loads(self.embedding_json), dtype=np.float32)
+            try:
+                data = json.loads(self.embedding_json)
+                if isinstance(data, dict):
+                    return np.array(data.get("embedding", []), dtype=np.float32)
+                return np.array(data, dtype=np.float32)
+            except Exception:
+                return np.zeros(self.embedding_dim or 192, dtype=np.float32)
 
-        def set_embedding(self, emb: np.ndarray) -> None:
-            self.embedding_json = json.dumps(emb.tolist())
+        def get_pitch_profile(self) -> Optional[dict]:
+            try:
+                data = json.loads(self.embedding_json)
+                if isinstance(data, dict):
+                    return data.get("pitch")
+                return None
+            except Exception:
+                return None
+
+        def set_embedding(self, emb: np.ndarray, pitch_meta: Optional[dict] = None) -> None:
+            emb_list = emb.tolist() if isinstance(emb, np.ndarray) else list(emb)
+            if pitch_meta:
+                self.embedding_json = json.dumps({"embedding": emb_list, "pitch": pitch_meta})
+            else:
+                self.embedding_json = json.dumps(emb_list)
 
     class AuditLogEntry(Base):
         """Compliance audit log — feature vectors and risk scores only, no raw audio."""
@@ -467,6 +494,27 @@ if _SQLALCHEMY_AVAILABLE:
     _session_factories: dict[str, Any] = {}
     _engine_lock = threading.RLock()
 
+    def _get_effective_url(db_path: str = "data/cyberguard.db") -> str:
+        """Resolve database connection string, prioritizing DATABASE_URL or Supabase configuration."""
+        if os.getenv("TESTING", "").lower() in ("true", "1", "yes"):
+            return ""
+        if str(db_path).startswith("postgresql://") or str(db_path).startswith("postgresql+psycopg2://"):
+            return str(db_path)
+        if str(db_path) in (":memory:", "sqlite:///:memory:") or str(db_path).startswith("sqlite:"):
+            return ""
+        norm_path = str(db_path).replace("\\", "/").lower()
+        if (
+            db_path in ("data/cyberguard.db", "data/voiceguard.db", None, "")
+            or norm_path.endswith("data/cyberguard.db")
+            or norm_path.endswith("data/voiceguard.db")
+            or norm_path.endswith("/cyberguard.db")
+            or norm_path.endswith("/voiceguard.db")
+        ):
+            env_url = (os.getenv("DATABASE_URL") or os.getenv("SUPABASE_DB_URL") or "").strip()
+            if env_url and ("postgres" in env_url):
+                return env_url
+        return ""
+
     def _resolve_db_file(db_path: str = "data/cyberguard.db") -> Path:
         """Resolve database path relative to project root."""
         if str(db_path) in (":memory:", "sqlite:///:memory:"):
@@ -480,9 +528,124 @@ if _SQLALCHEMY_AVAILABLE:
             db_file = project_root / db_path
         return db_file
 
+    class HybridSession(Session):
+        """
+        Dual-active hybrid database session.
+        Automatically commits locally and mirrors additions, updates, and deletions
+        to the counterpart database (Local SQLite <-> Cloud PostgreSQL) when online.
+        Transparently switches active bind to local SQLite WAL whenever Cloud PostgreSQL
+        circuit breaker is engaged or connection pool is exhausted.
+        """
+        def get_bind(self, mapper=None, clause=None, **kw):
+            bind = None
+            try:
+                bind = super().get_bind(mapper=mapper, clause=clause, **kw)
+            except Exception:
+                pass
+
+            if bind is not None and getattr(bind.dialect, "name", "") == "postgresql":
+                if is_cloud_circuit_broken():
+                    return get_local_engine()
+
+            return bind or get_local_engine()
+
+        def commit(self):
+            new_items = list(self.new)
+            dirty_items = list(self.dirty)
+            deleted_items = list(self.deleted)
+
+            super().commit()
+
+            if new_items or dirty_items or deleted_items:
+                try:
+                    from backend.storage.sync_service import get_sync_service
+                    sync_svc = get_sync_service()
+                    is_pg = getattr(self.bind.dialect, "name", "") == "postgresql"
+                    target_is_cloud = not is_pg
+                    if not (target_is_cloud and is_cloud_circuit_broken()):
+                        sync_svc.mirror_session_changes(
+                            new_items=new_items,
+                            dirty_items=dirty_items,
+                            deleted_items=deleted_items,
+                            target_is_cloud=target_is_cloud,
+                        )
+                except Exception as mir_err:
+                    logger.debug(f"Hybrid session mirror notice: {mir_err}")
+
+    def _attach_sqlite_pragmas(eng) -> None:
+        """Enable WAL mode (or DELETE mode fallback on network/bind-mounted filesystems) and busy timeout."""
+        @event.listens_for(eng, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            default_mode = "DELETE" if (os.path.exists("/.dockerenv") or os.getenv("DOCKER_CONTAINER")) else "WAL"
+            mode = os.getenv("SQLITE_JOURNAL_MODE", default_mode).upper()
+            try:
+                cursor.execute(f"PRAGMA journal_mode={mode}")
+            except Exception:
+                try:
+                    cursor.execute("PRAGMA journal_mode=DELETE")
+                except Exception:
+                    pass
+            try:
+                cursor.execute("PRAGMA synchronous=NORMAL")
+            except Exception:
+                pass
+            try:
+                cursor.execute("PRAGMA busy_timeout=30000")
+            except Exception:
+                pass
+            cursor.close()
+
+    def get_local_engine():
+        """Direct getter for local SQLite engine."""
+        db_file = _resolve_db_file("data/cyberguard.db")
+        key = f"sqlite_local_{db_file.resolve()}"
+        with _engine_lock:
+            if key not in _engines:
+                db_file.parent.mkdir(parents=True, exist_ok=True)
+                eng = create_engine(
+                    f"sqlite:///{db_file}",
+                    connect_args={"check_same_thread": False, "timeout": 30},
+                    poolclass=QueuePool,
+                    pool_size=20,
+                    max_overflow=30,
+                    pool_timeout=30,
+                )
+                _attach_sqlite_pragmas(eng)
+                _engines[key] = eng
+            return _engines[key]
+
+    def get_cloud_engine():
+        """Direct getter for Cloud PostgreSQL engine if configured."""
+        eff_url = _get_effective_url("data/cyberguard.db")
+        if eff_url:
+            return get_engine(eff_url)
+        return None
+
     def get_engine(db_path: str = "data/cyberguard.db"):
-        """Get or create SQLAlchemy engine for the specified database path with connection pooling."""
+        """Get or create SQLAlchemy engine for the specified database path/URL with connection pooling."""
         global _engines
+        eff_url = _get_effective_url(db_path)
+        if eff_url:
+            pg_url = eff_url
+            if pg_url.startswith("postgresql://"):
+                pg_url = "postgresql+psycopg2://" + pg_url[len("postgresql://"):]
+            key = pg_url
+            with _engine_lock:
+                if key not in _engines:
+                    eng = create_engine(
+                        pg_url,
+                        poolclass=QueuePool,
+                        pool_size=3,
+                        max_overflow=2,
+                        pool_timeout=15,
+                        pool_recycle=60,
+                        pool_pre_ping=True,
+                        connect_args={"connect_timeout": 8},
+                    )
+                    _engines[key] = eng
+                return _engines[key]
+
         if str(db_path) in (":memory:", "sqlite:///:memory:"):
             key = ":memory:"
             with _engine_lock:
@@ -519,33 +682,15 @@ if _SQLALCHEMY_AVAILABLE:
                         pool_timeout=30,
                     )
 
-                # Enable WAL mode (or DELETE mode fallback on network/bind-mounted filesystems) and busy timeout
-                @event.listens_for(eng, "connect")
-                def set_sqlite_pragma(dbapi_connection, connection_record):
-                    cursor = dbapi_connection.cursor()
-                    try:
-                        cursor.execute("PRAGMA journal_mode=WAL")
-                    except Exception:
-                        try:
-                            cursor.execute("PRAGMA journal_mode=DELETE")
-                        except Exception:
-                            pass
-                    try:
-                        cursor.execute("PRAGMA synchronous=NORMAL")
-                    except Exception:
-                        pass
-                    try:
-                        cursor.execute("PRAGMA busy_timeout=30000")
-                    except Exception:
-                        pass
-                    cursor.close()
-
+                _attach_sqlite_pragmas(eng)
                 _engines[key] = eng
 
             return _engines[key]
 
     def _migrate_columns_if_missing(engine) -> None:
         """Safely add newly introduced columns to existing SQLite tables if not present."""
+        if getattr(engine.dialect, "name", "") != "sqlite":
+            return
         try:
             with engine.connect() as conn:
                 res = conn.exec_driver_sql("PRAGMA table_info(threat_events)").fetchall()
@@ -567,21 +712,120 @@ if _SQLALCHEMY_AVAILABLE:
             logger.debug(f"Column migration check notice: {exc}")
 
     def init_db(db_path: str = "data/cyberguard.db") -> None:
-        """Create all tables in the specified database if they don't exist."""
-        engine = get_engine(db_path)
-        Base.metadata.create_all(bind=engine)
-        _migrate_columns_if_missing(engine)
-        logger.info(f"Database initialized at {db_path}")
+        """
+        Initialize all tables in both Local SQLite and Cloud PostgreSQL (when configured),
+        safely migrate columns, align all PostgreSQL sequences, and prepare the hybrid pipeline.
+        """
+        # 1. Local SQLite initialization
+        local_eng = get_local_engine()
+        Base.metadata.create_all(bind=local_eng)
+        _migrate_columns_if_missing(local_eng)
+
+        # 2. Cloud Supabase initialization
+        eff_url = _get_effective_url(db_path)
+        if eff_url:
+            try:
+                cloud_eng = get_engine(eff_url)
+                Base.metadata.create_all(bind=cloud_eng)
+                from backend.storage.sync_service import get_sync_service
+                sync_svc = get_sync_service()
+                if sync_svc.is_cloud_available():
+                    cs = sync_svc.get_cloud_session()
+                    if cs:
+                        sync_svc._align_postgres_sequences(cs)
+                        cs.close()
+                logger.info("✓ Hybrid Database initialized: Local (SQLite WAL) + Cloud (Supabase PostgreSQL)")
+                return
+            except Exception as cloud_init_err:
+                trip_cloud_circuit_breaker(60.0)
+                logger.warning(f"Cloud database init notice (operating with local resilient fallback): {cloud_init_err}")
+
+        logger.info(f"Database initialized for {db_path}")
+
+    _cloud_circuit_broken_until: float = 0.0
+
+    def is_cloud_circuit_broken() -> bool:
+        """Check whether the cloud database circuit breaker is active (temporary offline fallback mode)."""
+        return time.time() < _cloud_circuit_broken_until
+
+    def trip_cloud_circuit_breaker(duration: float = 30.0) -> None:
+        """Engage the local resilient fallback circuit breaker for all subsequent operations."""
+        global _cloud_circuit_broken_until
+        _cloud_circuit_broken_until = time.time() + duration
+
+    class ResilientSessionFactory:
+        """
+        Resilient session factory that connects to Cloud PostgreSQL if reachable,
+        transparently falling back to local SQLite WAL if Cloud PostgreSQL encounters
+        connection pool saturation (EMAXCONNSESSION) or transient network timeouts.
+        Engages a 30s circuit breaker to guarantee database session consistency across concurrent operations.
+        """
+        def __init__(self, primary_factory, fallback_factory):
+            self.primary_factory = primary_factory
+            self.fallback_factory = fallback_factory
+
+        def __call__(self, **kwargs):
+            if is_cloud_circuit_broken():
+                return self.fallback_factory(**kwargs)
+
+            session = None
+            try:
+                session = self.primary_factory(**kwargs)
+                if getattr(session.bind.dialect, "name", "") == "postgresql":
+                    session.execute(text("SELECT 1;"))
+                return session
+            except Exception as exc:
+                trip_cloud_circuit_breaker(30.0)
+                logger.warning(f"Cloud database connection unavailable ({exc}) — falling back to local SQLite WAL.")
+                try:
+                    if session:
+                        session.close()
+                except Exception:
+                    pass
+                return self.fallback_factory(**kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.primary_factory, name)
 
     def get_session_factory(db_path: str = "data/cyberguard.db"):
-        """Return the session factory for the specified database (cached per path)."""
+        """Return the session factory for the specified database (cached per path or URL)."""
         global _session_factories
+        eff_url = _get_effective_url(db_path)
+        if eff_url:
+            pg_url = eff_url
+            if pg_url.startswith("postgresql://"):
+                pg_url = "postgresql+psycopg2://" + pg_url[len("postgresql://"):]
+            key = pg_url
+            with _engine_lock:
+                if key not in _session_factories:
+                    engine = get_engine(pg_url)
+                    pg_sessionmaker = sessionmaker(
+                        autocommit=False,
+                        autoflush=False,
+                        bind=engine,
+                        class_=HybridSession,
+                    )
+                    local_eng = get_local_engine()
+                    local_sessionmaker = sessionmaker(
+                        autocommit=False,
+                        autoflush=False,
+                        bind=local_eng,
+                        class_=HybridSession,
+                    )
+                    _session_factories[key] = ResilientSessionFactory(pg_sessionmaker, local_sessionmaker)
+                return _session_factories[key]
+
         if str(db_path) in (":memory:", "sqlite:///:memory:"):
             key = ":memory:"
             with _engine_lock:
                 if key not in _session_factories:
                     engine = get_engine(":memory:")
-                    _session_factories[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                    _session_factories[key] = sessionmaker(
+                        autocommit=False,
+                        autoflush=False,
+                        bind=engine,
+                        class_=HybridSession,
+                    )
                 return _session_factories[key]
 
         db_file = _resolve_db_file(db_path)
@@ -591,13 +835,34 @@ if _SQLALCHEMY_AVAILABLE:
             if key not in _session_factories:
                 engine = get_engine(db_path)
                 _migrate_columns_if_missing(engine)
-                _session_factories[key] = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+                _session_factories[key] = sessionmaker(
+                    autocommit=False,
+                    autoflush=False,
+                    bind=engine,
+                    class_=HybridSession,
+                )
             return _session_factories[key]
 
     def get_db_session(db_path: str = "data/cyberguard.db"):
-        """FastAPI dependency: yields a database session for the default/system database."""
-        SessionLocal = get_session_factory(db_path)
-        db = SessionLocal()
+        """FastAPI dependency: yields a resilient hybrid database session."""
+        try:
+            SessionLocal = get_session_factory(db_path)
+            db = SessionLocal()
+            if getattr(db.bind.dialect, "name", "") == "postgresql":
+                try:
+                    db.execute(text("SELECT 1;"))
+                except Exception:
+                    trip_cloud_circuit_breaker(30.0)
+                    db.close()
+                    local_eng = get_local_engine()
+                    FallbackSession = sessionmaker(bind=local_eng, class_=HybridSession)
+                    db = FallbackSession()
+        except Exception:
+            trip_cloud_circuit_breaker(30.0)
+            local_eng = get_local_engine()
+            FallbackSession = sessionmaker(bind=local_eng, class_=HybridSession)
+            db = FallbackSession()
+
         try:
             yield db
         finally:
@@ -611,6 +876,8 @@ if _SQLALCHEMY_AVAILABLE:
 
     def init_user_db(db_path: str) -> None:
         """Ensure all required tenant tables exist in the user's isolated database."""
+        if _get_effective_url(db_path):
+            return
         engine = get_engine(db_path)
         Base.metadata.create_all(bind=engine)
         _migrate_columns_if_missing(engine)
@@ -620,15 +887,19 @@ if _SQLALCHEMY_AVAILABLE:
         Auto-create, initialize, and verify the isolated database for a user account.
         Guarantee complete schema readiness and thread-safe WAL access.
         """
+        eff_url = _get_effective_url()
+        if eff_url:
+            logger.info(f"Multi-tenant PostgreSQL isolation active for user_id={user_id}")
+            return eff_url
         db_path = get_user_db_path(user_id, username)
         init_user_db(db_path)
-        logger.info(f"✓ Provisioned isolated user database at {db_path} for user_id={user_id}")
+        logger.info(f"[OK] Provisioned isolated user database at {db_path} for user_id={user_id}")
         return db_path
 
     def close_user_database(db_path: str) -> None:
         """Dispose of the engine and connection pool for an isolated database, allowing safe file operations."""
         global _engines, _session_factories
-        if str(db_path) in (":memory:", "sqlite:///:memory:"):
+        if str(db_path) in (":memory:", "sqlite:///:memory:") or _get_effective_url(db_path):
             return
         db_file = _resolve_db_file(db_path)
         key = str(db_file.resolve())
@@ -648,6 +919,10 @@ if _SQLALCHEMY_AVAILABLE:
         if user and getattr(user, "id", None):
             db_path = getattr(user, "db_path", None) or get_user_db_path(user.id, user.username)
         else:
+            eff_url = _get_effective_url()
+            if eff_url:
+                SessionLocal = get_session_factory(eff_url)
+                return SessionLocal()
             db_path = ":memory:"
         init_user_db(db_path)
         SessionLocal = get_session_factory(db_path)

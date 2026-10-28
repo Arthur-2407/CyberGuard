@@ -75,7 +75,10 @@ async def enroll_speaker(
             "5+ files recommended for better accuracy (per 1802.06006v3)."
         )
 
+    from backend.features.prosodic_extractor import extract_prosodic_features
     embeddings = []
+    f0_means_collected = []
+    f0_stds_collected = []
     processed_count = 0
     skipped_count = 0
 
@@ -99,6 +102,16 @@ async def enroll_speaker(
                 sr=app_settings.audio.sample_rate,
                 model_name=app_settings.detection.ecapa_model,
             )
+
+            # Extract baseline pitch for speaker
+            try:
+                pros = extract_prosodic_features(audio, sr=app_settings.audio.sample_rate)
+                if len(pros) > 1 and pros[0] > 0:
+                    f0_means_collected.append(float(pros[0]))
+                    f0_stds_collected.append(float(pros[1]))
+            except Exception as p_err:
+                logger.debug(f"Could not extract enrollment pitch: {p_err}")
+
             # extract_speaker_embedding returns None on failure.
             # A zero-norm vector is also invalid (should not occur now, but check defensively).
             if emb is None:
@@ -134,6 +147,13 @@ async def enroll_speaker(
     # Average embeddings into profile
     avg_embedding = average_embeddings(embeddings)
 
+    pitch_baseline = None
+    if f0_means_collected:
+        pitch_baseline = {
+            "f0_mean_hz": round(float(np.mean(f0_means_collected)), 1),
+            "f0_std_hz": round(float(np.mean(f0_stds_collected)), 1) if f0_stds_collected else 0.0,
+        }
+
     from backend.storage.database import get_user_db_path
     user_db_path = getattr(current_user, "db_path", None) or get_user_db_path(current_user.id, current_user.username)
 
@@ -146,6 +166,7 @@ async def enroll_speaker(
         organization=organization,
         role=role,
         num_samples=processed_count,
+        pitch_meta=pitch_baseline,
     )
 
     return EnrollResponse(

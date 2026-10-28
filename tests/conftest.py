@@ -11,10 +11,14 @@ from __future__ import annotations
 import os
 import pytest
 
+# Ensure testing flag is established immediately before any other module imports
+os.environ["TESTING"] = "true"
+
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_suite_environment():
     """Ensure test environment variables and database are initialized deterministically."""
+    os.environ["TESTING"] = "true"
     os.environ.setdefault("CYBERGUARD_ADMIN_PASSWORD", "Admin@CyberGuard2026!")
     os.environ.setdefault("EMAIL_TEST_MODE", "true")
     os.environ.setdefault("VIRUSTOTAL_ENABLED", "true")

@@ -247,3 +247,12 @@ Problem_Statement_9.pdf
 # ------------------------------------------------------------------------------
 verification/
 
+
+# ------------------------------------------------------------------------------
+# 13. Node.js & Electron Desktop Packaging Artifacts
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+desktop/node_modules/
+desktop/frontend/
+desktop/dist/

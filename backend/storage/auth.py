@@ -232,11 +232,54 @@ class AuthService:
         db.add(session)
         db.commit()
 
+        # Resilient hybrid session replication: ensure local SQLite WAL also holds this active session
+        try:
+            if getattr(db.bind.dialect, "name", "") != "sqlite":
+                from backend.storage.database import get_local_engine
+                local_eng = get_local_engine()
+                with Session(bind=local_eng) as loc_db:
+                    loc_sess = loc_db.query(AuthSessionModel).filter(
+                        AuthSessionModel.token_hash == t_hash
+                    ).first()
+                    if not loc_sess:
+                        loc_u = loc_db.query(UserModel).filter(UserModel.id == user.id).first()
+                        if not loc_u:
+                            loc_db.add(UserModel(
+                                id=user.id,
+                                username=user.username,
+                                email=user.email,
+                                password_hash=user.password_hash,
+                                role=user.role,
+                                is_active=user.is_active,
+                                created_at=user.created_at,
+                            ))
+                            loc_db.flush()
+                        loc_db.add(AuthSessionModel(
+                            user_id=user.id,
+                            token_hash=t_hash,
+                            created_at=session.created_at,
+                            expires_at=session.expires_at,
+                        ))
+                        loc_db.commit()
+        except Exception as mir_loc_err:
+            logger.debug(f"Local session caching notice: {mir_loc_err}")
+
         return user, raw_token
 
     @staticmethod
+    def _is_session_expired(session: AuthSessionModel) -> bool:
+        """Safely verify session expiration handling naive (SQLite) and tz-aware (PostgreSQL) datetimes."""
+        if not session or not session.expires_at:
+            return False
+        now = _utcnow()
+        exp = session.expires_at
+        exp_cmp = exp.astimezone(datetime.timezone.utc).replace(tzinfo=None) if exp.tzinfo is not None else exp
+        now_cmp = now.astimezone(datetime.timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
+        return exp_cmp <= now_cmp
+
+    @staticmethod
     def get_user_from_token(db: Session, raw_token: str) -> Optional[UserModel]:
-        """Look up user from session token with timezone-resilient expiration check."""
+        """Look up user from session token with timezone-resilient expiration check and hybrid database fallback."""
         if not raw_token or db is None:
             return None
         try:
@@ -246,17 +289,101 @@ class AuthService:
                 AuthSessionModel.revoked_at.is_(None),
             ).first()
 
+            # Resilient hybrid fallback: check counterpart database if connection pool failed over
+            if not session:
+                is_pg = getattr(db.bind.dialect, "name", "") == "postgresql"
+                if is_pg:
+                    # Current session is Cloud PostgreSQL; verify in local SQLite WAL
+                    try:
+                        from backend.storage.database import get_local_engine
+                        local_eng = get_local_engine()
+                        with Session(bind=local_eng) as fallback_db:
+                            fb_session = fallback_db.query(AuthSessionModel).filter(
+                                AuthSessionModel.token_hash == t_hash,
+                                AuthSessionModel.revoked_at.is_(None),
+                            ).first()
+                            if fb_session and not AuthService._is_session_expired(fb_session):
+                                user = db.query(UserModel).filter(UserModel.id == fb_session.user_id).first()
+                                if not user:
+                                    fb_user = fallback_db.query(UserModel).filter(UserModel.id == fb_session.user_id).first()
+                                    if fb_user:
+                                        user = UserModel(
+                                            id=fb_user.id,
+                                            username=fb_user.username,
+                                            email=fb_user.email,
+                                            password_hash=fb_user.password_hash,
+                                            role=fb_user.role,
+                                            is_active=fb_user.is_active,
+                                            created_at=fb_user.created_at,
+                                        )
+                                        db.add(user)
+                                        db.flush()
+                                if user and user.is_active:
+                                    try:
+                                        db.add(AuthSessionModel(
+                                            user_id=fb_session.user_id,
+                                            token_hash=fb_session.token_hash,
+                                            created_at=fb_session.created_at,
+                                            expires_at=fb_session.expires_at,
+                                        ))
+                                        db.commit()
+                                    except Exception:
+                                        db.rollback()
+                                    return user
+                    except Exception as loc_fb_err:
+                        logger.debug(f"Counterpart auth check (local) notice: {loc_fb_err}")
+                else:
+                    # Current session is local SQLite WAL; verify in Cloud PostgreSQL
+                    try:
+                        from backend.storage.sync_service import get_sync_service
+                        sync_svc = get_sync_service()
+                        if sync_svc.is_cloud_available():
+                            cs = sync_svc.get_cloud_session()
+                            if cs:
+                                try:
+                                    cloud_session = cs.query(AuthSessionModel).filter(
+                                        AuthSessionModel.token_hash == t_hash,
+                                        AuthSessionModel.revoked_at.is_(None),
+                                    ).first()
+                                    if cloud_session and not AuthService._is_session_expired(cloud_session):
+                                        user = db.query(UserModel).filter(UserModel.id == cloud_session.user_id).first()
+                                        if not user:
+                                            cloud_u = cs.query(UserModel).filter(UserModel.id == cloud_session.user_id).first()
+                                            if cloud_u:
+                                                user = UserModel(
+                                                    id=cloud_u.id,
+                                                    username=cloud_u.username,
+                                                    email=cloud_u.email,
+                                                    password_hash=cloud_u.password_hash,
+                                                    role=cloud_u.role,
+                                                    is_active=cloud_u.is_active,
+                                                    created_at=cloud_u.created_at,
+                                                )
+                                                db.add(user)
+                                                db.flush()
+                                        if user and user.is_active:
+                                            try:
+                                                db.add(AuthSessionModel(
+                                                    user_id=cloud_session.user_id,
+                                                    token_hash=cloud_session.token_hash,
+                                                    created_at=cloud_session.created_at,
+                                                    expires_at=cloud_session.expires_at,
+                                                ))
+                                                db.commit()
+                                            except Exception:
+                                                db.rollback()
+                                            return user
+                                finally:
+                                    cs.close()
+                    except Exception as cld_fb_err:
+                        logger.debug(f"Counterpart auth check (cloud) notice: {cld_fb_err}")
+
             if not session:
                 return None
 
             # Check expiration safely handling both naive (SQLite) and aware datetimes
-            if session.expires_at:
-                now = _utcnow()
-                exp = session.expires_at
-                exp_cmp = exp.astimezone(datetime.timezone.utc).replace(tzinfo=None) if exp.tzinfo is not None else exp
-                now_cmp = now.astimezone(datetime.timezone.utc).replace(tzinfo=None) if now.tzinfo is not None else now
-                if exp_cmp <= now_cmp:
-                    return None
+            if AuthService._is_session_expired(session):
+                return None
 
             user = db.query(UserModel).filter(UserModel.id == session.user_id).first()
             if user and user.is_active:
