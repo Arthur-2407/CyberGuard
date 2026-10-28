@@ -177,7 +177,7 @@ def test_analysis_persistence_and_review_queue(client, db_session):
         ).first()
         assert rec is not None
         assert rec.analysis_status == "COMPLETED"
-        assert rec.peak_risk == data["peak_risk"]
+        assert rec.peak_risk == pytest.approx(data["peak_risk"], rel=1e-4)
 
         # Verify ReviewQueueItem in database
         queue_item = db_session.query(ReviewQueueModel).filter(

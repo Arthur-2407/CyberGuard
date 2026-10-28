@@ -203,8 +203,45 @@ class UnifiedThreatPipeline:
                 except Exception as os_err:
                     logger.debug(f"File hash OSINT notice: {os_err}")
 
-            # Route by media type
-            if fn_lower.endswith((".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".webm")):
+            # Route by media / artifact type
+            from backend.analysis.malware.file_analyzer import FileAnalyzer
+            file_meta = FileAnalyzer().analyze(file_bytes, filename)
+            is_malware_candidate = (
+                file_meta.is_executable
+                or file_meta.is_archive
+                or file_meta.extension_mismatch
+                or fn_lower.endswith((
+                    ".exe", ".dll", ".sys", ".scr", ".bat", ".cmd", ".ps1", ".vbs",
+                    ".apk", ".dex", ".jar", ".msi", ".bin", ".elf", ".sh", ".iso",
+                    ".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz"
+                ))
+            )
+
+            if is_malware_candidate:
+                detected_modality = "executable_binary"
+                _log_stage("Malware & Antivirus Subsystem", "RUNNING", f"Multi-engine inspection: ClamAV, YARA, entropy ({file_meta.format_name})")
+                try:
+                    from backend.analysis.malware.coordinator import get_malware_coordinator
+                    coordinator = get_malware_coordinator(self.config)
+                    malware_res = await coordinator.analyze_bytes(
+                        file_bytes, filename=filename, source=source, correlation_id=correlation_id, user=user
+                    )
+                    malware_event = malware_res["event"] if isinstance(malware_res, dict) and "event" in malware_res else malware_res
+                    evidences.extend(malware_event.evidence)
+                    if self._risk_rank(malware_event.severity) > self._risk_rank(highest_risk):
+                        highest_risk = malware_event.severity
+                        primary_category = malware_event.threat_category
+                        classification = malware_event.classification
+                        mitre_id = "T1204.002"
+                        mitre_name = "User Execution: Malicious File"
+                    elif classification == "SAFE" and malware_event.classification != "SAFE":
+                        classification = malware_event.classification
+                    _log_stage("Malware & Antivirus Subsystem", "COMPLETED", f"Verdict: {malware_event.classification} (Severity: {malware_event.severity.value})")
+                except Exception as m_err:
+                    logger.error(f"Malware analysis error: {m_err}", exc_info=True)
+                    _log_stage("Malware & Antivirus Subsystem", "ERROR", str(m_err))
+
+            elif fn_lower.endswith((".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".webm")):
                 detected_modality = "audio"
                 _log_stage("Audio & Voice Cloning Pipeline", "RUNNING", "Acoustic feature extraction & model inference")
                 audio_event = self.deepfake_coordinator._analyze_audio(
@@ -268,6 +305,30 @@ class UnifiedThreatPipeline:
                     text = (text + "\n" + text_content) if text else text_content
                 except Exception:
                     pass
+
+            else:
+                # Unrecognized file format or opaque binary
+                detected_modality = "binary_artifact"
+                _log_stage("Malware & Antivirus Subsystem", "RUNNING", f"Inspection of generic binary payload ({file_meta.format_name})")
+                try:
+                    from backend.analysis.malware.coordinator import get_malware_coordinator
+                    coordinator = get_malware_coordinator(self.config)
+                    malware_res = await coordinator.analyze_bytes(
+                        file_bytes, filename=filename, source=source, correlation_id=correlation_id, user=user
+                    )
+                    malware_event = malware_res["event"] if isinstance(malware_res, dict) and "event" in malware_res else malware_res
+                    evidences.extend(malware_event.evidence)
+                    if self._risk_rank(malware_event.severity) > self._risk_rank(highest_risk):
+                        highest_risk = malware_event.severity
+                        primary_category = malware_event.threat_category
+                        classification = malware_event.classification
+                    elif classification == "SAFE" and malware_event.classification != "SAFE":
+                        classification = malware_event.classification
+                    _log_stage("Malware & Antivirus Subsystem", "COMPLETED", f"Verdict: {malware_event.classification}")
+                except Exception as m_err:
+                    logger.error(f"Binary payload inspection error: {m_err}")
+                    _log_stage("Malware & Antivirus Subsystem", "ERROR", str(m_err))
+
 
         # ── 3. TEXT / SOCIAL ENGINEERING / PHISHING PIPELINE ───────────────────
         if text and text.strip():
@@ -378,7 +439,23 @@ class UnifiedThreatPipeline:
         # ── 6. UNIFIED EVIDENCE & EXPLANATION SYNTHESIS ───────────────────────
         total_time_ms = (time.time() - start_time) * 1000.0
 
-        if not evidences:
+        if classification == "SCAN_UNAVAILABLE":
+            summary = "Malware analysis incomplete: Local scanner engine or service was unavailable."
+            reasoning = "Target artifact could not be evaluated by configured antivirus engines. Exercise caution."
+            actions = ["Verify local ClamAV/YARA engine daemon is running.", "Rescan artifact when engines are online."]
+        elif classification == "UNSUPPORTED":
+            summary = "File format unsupported by active analysis engines."
+            reasoning = "The uploaded artifact format is outside the inspection capabilities of active scanners."
+            actions = ["Inspect artifact metadata manually.", "Submit to specialized sandbox if suspicious."]
+        elif classification == "INCONCLUSIVE":
+            summary = "Analysis inconclusive: Inadequate definitive evidence to determine safety or malice."
+            reasoning = "Available signals do not establish a confirmed malware verdict or confirm clean status."
+            actions = ["Perform isolated manual inspection.", "Monitor endpoint telemetry if executed."]
+        elif classification == "NO_DETECTION" and highest_risk == RiskLevel.SAFE:
+            summary = "Security inspection completed: No malicious signatures or heuristics detected."
+            reasoning = "Inspected layers returned no detection matches. Note: Negative scan does not guarantee absolute safety."
+            actions = ["Standard operational vigilance recommended.", "Keep signature definitions updated."]
+        elif not evidences:
             summary = "Universal security analysis completed. No threat indicators detected."
             reasoning = "Artifacts, content, and indicators verified clean across all inspected security layers."
             actions = ["Target verified authentic and safe.", "No defensive remediation required."]

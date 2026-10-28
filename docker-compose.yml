@@ -19,24 +19,37 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.email
+        required: false
     environment:
       - PORT=3000
       - PYTHONUNBUFFERED=1
       - DATABASE_PATH=/app/data/cyberguard.db
-      - CYBERGUARD_ADMIN_PASSWORD=${CYBERGUARD_ADMIN_PASSWORD:-Admin@CyberGuard2026!}
+      - DATABASE_URL=${DATABASE_URL:-}
+      - CYBERGUARD_ADMIN_PASSWORD=${CYBERGUARD_ADMIN_PASSWORD:-}
       - CYBERGUARD_CORS_ORIGINS=${CYBERGUARD_CORS_ORIGINS:-https://cyber-guard-backend-ashen.vercel.app,https://arthur-2407.github.io,http://localhost:3000,http://127.0.0.1:3000}
       - CYBERGUARD_CORS_REGEX=${CYBERGUARD_CORS_REGEX:-^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0|.*\.vercel\.app|.*\.pages\.dev|.*\.github\.io|.*\.trycloudflare\.com|.*\.ngrok-free\.app|.*\.loca\.lt)(:\d+)?$}
       - VIRUSTOTAL_ENABLED=${VIRUSTOTAL_ENABLED:-true}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
       - URLHAUS_ENABLED=${URLHAUS_ENABLED:-true}
-      - URLHAUS_AUTH_KEY=${URLHAUS_AUTH_KEY:-}
-      - EMAIL_TEST_MODE=${EMAIL_TEST_MODE:-true}
+      - EMAIL_TEST_MODE=${EMAIL_TEST_MODE:-false}
+      - SQLITE_JOURNAL_MODE=DELETE
+      - CLAMAV_TIMEOUT_SEC=30
       - OMP_NUM_THREADS=2
       - MKL_NUM_THREADS=2
       - OPENBLAS_NUM_THREADS=2
     volumes:
       # Persist SQLite databases, scan history, threat telemetry, and model card
       - ./data:/app/data
+      # Mount application source and configuration for real-time synchronization
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - ./config.yaml:/app/config.yaml
+      - ./scripts:/app/scripts
+      # Persist ClamAV virus signature database across container restarts and rebuilds
+      - clamav-db:/var/lib/clamav
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
       interval: 15s
@@ -62,6 +75,10 @@ services:
     networks:
       - cyberguard-net
     command: ["tunnel", "--url", "http://cyberguard-backend:3000"]
+
+volumes:
+  clamav-db:
+    name: cyberguard_clamav_db
 
 networks:
   cyberguard-net:

@@ -5,12 +5,16 @@
   "outputDirectory": "frontend",
   "rewrites": [
     {
-      "source": "/health",
-      "destination": "/health.json"
-    },
-    {
       "source": "/frontend/(.*)",
       "destination": "/$1"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "https://cyberguard-backend-8rbz.onrender.com/api/$1"
+    },
+    {
+      "source": "/health",
+      "destination": "https://cyberguard-backend-8rbz.onrender.com/health"
     },
     {
       "source": "/((?!api/).*)",

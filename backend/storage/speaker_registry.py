@@ -41,6 +41,7 @@ class SpeakerRegistry:
         organization: Optional[str] = None,
         role: Optional[str] = None,
         num_samples: int = 1,
+        pitch_meta: Optional[dict] = None,
     ) -> str:
         """
         Store a new speaker profile.
@@ -52,6 +53,7 @@ class SpeakerRegistry:
             organization:   organization name
             role:           role/title
             num_samples:    number of audio samples used to create this profile
+            pitch_meta:     optional pitch characteristics (mean F0, std, etc.)
 
         Returns:
             speaker_id (str)
@@ -68,7 +70,7 @@ class SpeakerRegistry:
             # Check for existing
             existing = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id).first()
             if existing:
-                existing.set_embedding(embedding)
+                existing.set_embedding(embedding, pitch_meta=pitch_meta)
                 existing.num_samples = num_samples
                 existing.name = name
                 logger.info(f"Updated speaker profile: {speaker_id}")
@@ -81,7 +83,7 @@ class SpeakerRegistry:
                     num_samples=num_samples,
                     embedding_dim=len(embedding),
                 )
-                profile.set_embedding(embedding)
+                profile.set_embedding(embedding, pitch_meta=pitch_meta)
                 db.add(profile)
                 logger.info(f"Enrolled new speaker: {speaker_id} ({name})")
 
@@ -103,6 +105,19 @@ class SpeakerRegistry:
             profile = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id).first()
             if profile:
                 return profile.get_embedding()
+            return None
+        finally:
+            db.close()
+
+    def get_pitch_profile(self, speaker_id: str) -> Optional[dict]:
+        """Retrieve stored pitch profile baseline for a speaker."""
+        if not _DB_AVAILABLE:
+            return None
+        db = self._get_session()
+        try:
+            profile = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id).first()
+            if profile and hasattr(profile, "get_pitch_profile"):
+                return profile.get_pitch_profile()
             return None
         finally:
             db.close()

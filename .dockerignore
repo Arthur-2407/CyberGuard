@@ -39,6 +39,7 @@ tests/
 demo/
 android/
 scripts/
+!scripts/docker-entrypoint.sh
 verification/
 dump.txt
 Problem_Statement_9.pdf

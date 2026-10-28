@@ -237,9 +237,11 @@ class VoiceCloneDetector:
         shimmer_val = float(prosodic_vec[3]) if len(prosodic_vec) > 3 else 0.0
         hnr_val = float(prosodic_vec[4]) if len(prosodic_vec) > 4 else 0.0
 
-        # Voiced speech validation: pitch, jitter, and shimmer are ONLY meaningful when
-        # voiced vocal tract resonance is present. Random noise period jumps must never trigger pitch anomaly.
-        has_voiced_speech = bool(60.0 <= f0_mean <= 500.0 and hnr_val > 2.0 and jitter_val > 0.0)
+        # Voiced speech validation: pitch and jitter indicate periodic vocal tract resonance.
+        # F0 is extracted exclusively across voiced frames by YIN. If F0 is within physiological limits
+        # (60 Hz - 500 Hz), jitter is physiological (<= 0.12), and HNR is above ambient aperiodic floor (>-12 dB),
+        # voiced vocal cord vibration is present. Unvoiced noise exhibits random period jumps (jitter > 0.12, HNR < -15 dB).
+        has_voiced_speech = bool(60.0 <= f0_mean <= 500.0 and 0.0 < jitter_val <= 0.12 and hnr_val > -12.0)
 
         if has_voiced_speech:
             if jitter_val < 0.052:
@@ -247,16 +249,31 @@ class VoiceCloneDetector:
             else:
                 stability_pct = max(20.0, min(65.0, 65.0 - (jitter_val - 0.052) * 1100.0))
 
+            # Calibrated physical vocoder detection:
+            # Synthetic neural/parametric vocoders (WaveNet, HiFi-GAN, FastSpeech, mechanical TTS)
+            # produce an unnaturally flat pitch contour (F0 std < 2.5 Hz across speech segment)
+            # or mathematically sterile glottal pulse intervals (jitter < 0.0025 with high HNR > 25 dB).
+            # High jitter/shimmer (> 0.080) indicates cellular compression artifacts, vocal hoarseness,
+            # or acoustic channel noise — NOT synthetic vocoding.
             is_pitch_anomaly = bool(
-                (jitter_val >= 0.060) or
-                (f0_mean > 80.0 and f0_std < 12.0) or
-                (f0_mean > 280.0 and jitter_val >= 0.052)
+                (f0_mean > 80.0 and f0_std < 2.5) or
+                (f0_mean > 80.0 and jitter_val < 0.0025 and hnr_val > 25.0)
             )
             pitch_verdict = "SYNTHETIC PITCH ANOMALY" if is_pitch_anomaly else "ORGANIC HUMAN PROSODY"
         else:
             stability_pct = 95.0
             is_pitch_anomaly = False
             pitch_verdict = "UNVOICED / NO PITCH DETECTED"
+
+        # Natural human vocal prosody indicator:
+        # Normal physiological vocal fold perturbation and sentence inflection
+        # (f0_std >= 2.5 Hz, jitter in physiological human 0.3% - 8.0% range)
+        is_organic_human = bool(
+            has_voiced_speech and
+            not is_pitch_anomaly and
+            f0_std >= 2.5 and
+            0.003 <= jitter_val <= 0.080
+        )
 
         pitch_data = {
             "f0_mean_hz": round(f0_mean, 1),
@@ -267,41 +284,70 @@ class VoiceCloneDetector:
             "pitch_stability_pct": round(stability_pct, 1),
             "pitch_verdict": pitch_verdict,
             "is_pitch_anomaly": is_pitch_anomaly,
+            "is_organic_human": is_organic_human,
         }
 
         if has_aasist and aasist_raw is not None and has_learned_model and nn_prob is not None:
-            # Calibrated multi-model neural consensus:
-            # AASIST (SOTA raw waveform graph attention) + EnsembleDetector (detector.pt)
-            # Balanced consensus: 0.60 AASIST + 0.40 EnsembleDetector
-            base_consensus = 0.60 * aasist_raw + 0.40 * nn_prob
+            # Multi-model consensus between AASIST (raw-waveform graph attention) and EnsembleDetector (spectro-temporal features)
+            base_consensus = 0.50 * aasist_raw + 0.50 * nn_prob
             max_threat = max(aasist_raw, nn_prob)
 
-            # Anti-Dilution Security Protection:
-            # If confirmed synthetic cloning (AASIST >= 0.85 or both models indicate threat >= 0.55),
-            # preserve strong threat response.
-            if aasist_raw >= 0.85 or (aasist_raw >= 0.60 and nn_prob >= 0.55):
+            # Case 1: Dual Neural Agreement on Synthetic (Both models indicate synthetic speech)
+            if (aasist_raw >= 0.60 and nn_prob >= 0.50) or (aasist_raw >= 0.85 and nn_prob >= 0.45):
                 synthetic_prob = max(base_consensus, max_threat * 0.90)
-            elif aasist_raw < 0.10 and nn_prob < 0.55:
-                # Both deep models and acoustic filters confirm organic human voice
+                if is_pitch_anomaly:
+                    synthetic_prob = min(1.0, synthetic_prob + 0.05)
+            # Case 2: Dual Neural Agreement on Bonafide Speech (Both models indicate bonafide speech)
+            elif aasist_raw < 0.40 and nn_prob < 0.40:
                 synthetic_prob = min(base_consensus, 0.25)
+                if is_organic_human:
+                    synthetic_prob = max(0.001, synthetic_prob * 0.70)
+            # Case 3: Neural Suspicion + Confirmed Robotic Pitch Flatline Vocoder
+            elif is_pitch_anomaly and max_threat >= 0.65:
+                synthetic_prob = max(base_consensus, 0.75)
+            # Case 4: AASIST Outlier Conflict (AASIST elevated due to codec/channel domain shift, EnsembleDetector low)
+            elif aasist_raw >= 0.50 and nn_prob < 0.45:
+                if is_organic_human:
+                    # Physical vocal cord dynamics and EnsembleDetector CNN-RNN corroborate human voice
+                    synthetic_prob = min(0.20 * aasist_raw + 0.80 * nn_prob, 0.30)
+                elif is_pitch_anomaly:
+                    # Pitch anomaly corroborates AASIST suspicion
+                    synthetic_prob = max(0.60 * aasist_raw + 0.40 * nn_prob, 0.70)
+                else:
+                    synthetic_prob = 0.35 * aasist_raw + 0.65 * nn_prob
+            # Case 5: EnsembleDetector Outlier Conflict (EnsembleDetector high, AASIST low)
+            elif nn_prob >= 0.55 and aasist_raw < 0.45:
+                if is_pitch_anomaly:
+                    synthetic_prob = max(0.40 * aasist_raw + 0.60 * nn_prob, 0.70)
+                elif is_organic_human:
+                    synthetic_prob = min(0.35 * aasist_raw + 0.65 * nn_prob, 0.35)
+                else:
+                    synthetic_prob = 0.50 * aasist_raw + 0.50 * nn_prob
             else:
                 synthetic_prob = base_consensus
+                if is_organic_human:
+                    synthetic_prob = min(synthetic_prob * 0.75, 0.38)
+                elif is_pitch_anomaly and max_threat >= 0.60:
+                    synthetic_prob = min(1.0, synthetic_prob + 0.05)
 
-            # Corroborate with physical pitch telemetry without arbitrary clamping:
-            if is_pitch_anomaly and max_threat >= 0.50:
-                # Physical vocoder frame-stitching boundary jitter corroborates neural suspicion
-                synthetic_prob = min(1.0, synthetic_prob + 0.05)
-            elif not is_pitch_anomaly and max_threat < 0.40 and aasist_raw < 0.10:
-                # Natural human vocal tract dynamic prosody confirmed
-                synthetic_prob = max(0.001, synthetic_prob * 0.85)
         elif has_aasist and aasist_raw is not None:
-            synthetic_prob = aasist_raw
-            if is_pitch_anomaly and aasist_raw >= 0.50:
-                synthetic_prob = min(1.0, synthetic_prob + 0.05)
+            if is_organic_human and aasist_raw >= 0.45:
+                # Organic vocal dynamics mitigate lossy codec / microphone distortion
+                synthetic_prob = min(aasist_raw * 0.35, 0.25)
+            elif is_pitch_anomaly:
+                synthetic_prob = min(1.0, aasist_raw + 0.08)
+            elif not is_pitch_anomaly and aasist_raw < 0.40:
+                synthetic_prob = max(0.001, aasist_raw * 0.75)
+            else:
+                synthetic_prob = aasist_raw
+
         elif has_learned_model and nn_prob is not None:
-            synthetic_prob = nn_prob
-            if is_pitch_anomaly and nn_prob >= 0.50:
-                synthetic_prob = min(1.0, synthetic_prob + 0.05)
+            if is_pitch_anomaly and nn_prob >= 0.60:
+                synthetic_prob = min(1.0, nn_prob + 0.08)
+            elif is_organic_human:
+                synthetic_prob = min(nn_prob * 0.75, 0.28)
+            else:
+                synthetic_prob = nn_prob
         else:
             synthetic_prob = self._heuristic_score(bundle)
 

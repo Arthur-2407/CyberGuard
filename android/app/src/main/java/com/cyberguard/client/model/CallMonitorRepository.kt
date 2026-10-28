@@ -33,6 +33,29 @@ class CallMonitorRepository private constructor(context: Context) {
     private val _activeMalwareAlert = MutableStateFlow<MalwareThreatAlert?>(null)
     val activeMalwareAlert: StateFlow<MalwareThreatAlert?> = _activeMalwareAlert
 
+    // Real-Time Local VPN Website & Domain Filtering State
+    private val _isVpnShieldArmed = MutableStateFlow(false)
+    val isVpnShieldArmed: StateFlow<Boolean> = _isVpnShieldArmed
+
+    private val _blockedDomains = MutableStateFlow<List<BlockedDomainRecord>>(
+        listOf(
+            BlockedDomainRecord("malware.wicar.org", "Verified Malware Test Site", "MALWARE_DISTRIBUTION"),
+            BlockedDomainRecord("testsafebrowsing.appspot.com", "Google SafeBrowsing Synthetic Test Indicator", "MALICIOUS_PHISHING"),
+            BlockedDomainRecord("phishing-test.cyberguard.local", "CyberGuard Synthetic Phishing Simulation Domain", "PHISHING_CREDENTIAL_HARVESTING")
+        )
+    )
+    val blockedDomains: StateFlow<List<BlockedDomainRecord>> = _blockedDomains
+
+    private val _interceptedDomainEvents = MutableStateFlow<List<InterceptedDomainEvent>>(emptyList())
+    val interceptedDomainEvents: StateFlow<List<InterceptedDomainEvent>> = _interceptedDomainEvents
+
+    // ── User-Specific Browsing History & DNS Forensics State ──
+    private val _browsingHistory = MutableStateFlow<List<BrowsingHistoryRecord>>(emptyList())
+    val browsingHistory: StateFlow<List<BrowsingHistoryRecord>> = _browsingHistory
+
+    private val _isBrowsingHistoryRecordingActive = MutableStateFlow(true)
+    val isBrowsingHistoryRecordingActive: StateFlow<Boolean> = _isBrowsingHistoryRecordingActive
+
     // Real-Time Official Call Screening State
     private val appContext = context.applicationContext
     private val dbHelper = com.cyberguard.client.telecom.CallScreeningDatabaseHelper.getInstance(appContext)
@@ -129,6 +152,97 @@ class CallMonitorRepository private constructor(context: Context) {
 
     fun clearPackageEvents() {
         _packageEvents.value = emptyList()
+    }
+
+    // ── Real-Time Local Domain Filtering & VPN Shield Controls ──
+    fun setVpnShieldArmed(armed: Boolean) {
+        _isVpnShieldArmed.value = armed
+    }
+
+    fun isDomainBlocked(domain: String): Boolean {
+        val clean = domain.trim().lowercase()
+        return _blockedDomains.value.any { b ->
+            val target = b.domain.trim().lowercase()
+            clean == target || clean.endsWith(".$target")
+        }
+    }
+
+    fun addBlockedDomain(record: BlockedDomainRecord) {
+        _blockedDomains.update { current ->
+            if (current.none { it.domain.equals(record.domain, ignoreCase = true) }) {
+                listOf(record) + current
+            } else current
+        }
+    }
+
+    fun removeBlockedDomain(domain: String) {
+        _blockedDomains.update { current ->
+            current.filter { !it.domain.equals(domain, ignoreCase = true) }
+        }
+    }
+
+    fun recordInterceptedDomain(event: InterceptedDomainEvent) {
+        _interceptedDomainEvents.update { current ->
+            listOf(event) + current.take(99)
+        }
+    }
+
+    fun clearInterceptedDomains() {
+        _interceptedDomainEvents.value = emptyList()
+    }
+
+    // ── Browsing History & DNS Activity Management ──
+    fun setBrowsingHistoryRecording(active: Boolean) {
+        _isBrowsingHistoryRecordingActive.value = active
+    }
+
+    fun recordBrowsingDomain(
+        domain: String,
+        action: String = "ALLOWED",
+        blockReason: String? = null,
+        resolvedIps: List<String> = emptyList(),
+        threatSeverity: String = "CLEAN"
+    ) {
+        if (!_isBrowsingHistoryRecordingActive.value) return
+        val clean = domain.trim().lowercase().removeSuffix(".")
+        if (clean.isBlank()) return
+
+        val now = System.currentTimeMillis()
+        _browsingHistory.update { current ->
+            val existing = current.find { it.domain.equals(clean, ignoreCase = true) }
+            if (existing != null) {
+                val updatedIps = (existing.resolvedIps + resolvedIps).distinct()
+                val updated = existing.copy(
+                    queryCount = existing.queryCount + 1,
+                    lastSeenTimestamp = now,
+                    action = if (action == "BLOCKED") "BLOCKED" else existing.action,
+                    blockReason = blockReason ?: existing.blockReason,
+                    resolvedIps = updatedIps,
+                    threatSeverity = if (threatSeverity != "CLEAN") threatSeverity else existing.threatSeverity
+                )
+                listOf(updated) + current.filter { it.id != existing.id }
+            } else {
+                val newRec = BrowsingHistoryRecord(
+                    domain = clean,
+                    action = action,
+                    blockReason = blockReason,
+                    queryCount = 1,
+                    firstSeenTimestamp = now,
+                    lastSeenTimestamp = now,
+                    resolvedIps = resolvedIps.distinct(),
+                    threatSeverity = threatSeverity
+                )
+                listOf(newRec) + current.take(199)
+            }
+        }
+    }
+
+    fun clearBrowsingHistory() {
+        _browsingHistory.value = emptyList()
+    }
+
+    fun deleteBrowsingHistoryRecord(id: String) {
+        _browsingHistory.update { current -> current.filter { it.id != id } }
     }
 
     // ── Persistent Device Security App Inventory & Hardware Baseline ──
@@ -394,4 +508,31 @@ data class MalwareThreatAlert(
     val sessionId: Int = -1,
     val isPreInstall: Boolean = false,
     val apkPath: String? = null
+)
+
+data class BlockedDomainRecord(
+    val domain: String,
+    val reason: String,
+    val threatCategory: String = "PHISHING_MALICIOUS_DESTINATION",
+    val addedTimestamp: Long = System.currentTimeMillis()
+)
+
+data class InterceptedDomainEvent(
+    val domain: String,
+    val reason: String,
+    val timestamp: Long = System.currentTimeMillis(),
+    val actionTaken: String = "SINKHOLED_NXDOMAIN"
+)
+
+data class BrowsingHistoryRecord(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val domain: String,
+    val action: String = "ALLOWED",
+    val blockReason: String? = null,
+    val queryCount: Int = 1,
+    val firstSeenTimestamp: Long = System.currentTimeMillis(),
+    val lastSeenTimestamp: Long = System.currentTimeMillis(),
+    val resolvedIps: List<String> = emptyList(),
+    val category: String = "General Web",
+    val threatSeverity: String = "CLEAN"
 )

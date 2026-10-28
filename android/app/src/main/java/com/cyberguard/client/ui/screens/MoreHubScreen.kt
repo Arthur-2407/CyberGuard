@@ -52,6 +52,8 @@ import kotlin.math.sin
 fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
     val currentUser by viewModel.currentUser.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    val activeMode by viewModel.activeMode.collectAsState()
+    val showConnectionSettings by viewModel.showConnectionSettings.collectAsState()
     val scrollState = rememberScrollState()
     val isAdmin = currentUser?.role.equals("admin", ignoreCase = true)
     val isConnected = connectionState == ConnectionState.CONNECTED
@@ -486,6 +488,18 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
         SectionHeader("MORE — SECONDARY DESTINATIONS")
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Destination 0: Backend Connection Manager
+            FuturisticSubsystemCard(
+                title = "Backend Connection",
+                subtitle = "Configure Cloud, Local Wi-Fi/LAN, or Hybrid failover",
+                telemetryTag = "MODE: ${activeMode.name}",
+                icon = Icons.Default.SettingsEthernet,
+                accentColor = CyberNeonCyan,
+                pulseFactor = 1.0f,
+                badgeText = if (isConnected) "ONLINE" else "CONFIG",
+                onClick = { viewModel.openConnectionSettings() }
+            )
+
             // Destination 1: Device Security
             FuturisticSubsystemCard(
                 title = "Device Security",
@@ -780,6 +794,13 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
             },
             containerColor = DeepSpaceBackground,
             shape = CutCornerShape(8.dp)
+        )
+    }
+
+    if (showConnectionSettings) {
+        com.cyberguard.client.ui.components.ConnectionSettingsModal(
+            viewModel = viewModel,
+            onDismiss = { viewModel.closeConnectionSettings() }
         )
     }
 }

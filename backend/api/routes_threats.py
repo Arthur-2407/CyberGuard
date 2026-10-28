@@ -11,6 +11,8 @@ import time
 import uuid
 
 import hashlib
+import os
+import tempfile
 from backend.config import get_settings
 from backend.analysis.phishing_analyzer import PhishingAnalyzer
 from backend.analysis.url_analyzer import URLAnalyzer
@@ -126,7 +128,7 @@ def _broadcast_threat_event(event: ThreatEvent):
     try:
         sev = getattr(event, "severity", None)
         sev_str = sev.value if hasattr(sev, "value") else str(sev)
-        if str(sev_str).upper() in ("HIGH", "CRITICAL") and event.user_id is not None:
+        if str(sev_str).upper() in ("HIGH", "CRITICAL") and (event.user_id is not None or event.user_email):
             from backend.alerts.email_notifier import get_email_notifier
             notifier = get_email_notifier()
             u_email = event.user_email
@@ -471,6 +473,7 @@ async def urlhaus_status(force_refresh: bool = False):
 
 
 @router.get("/pipeline/status")
+@router.get("/pipeline-status")
 async def threat_intel_pipeline_status(force_refresh: bool = False):
     """Return real-time status of the entire Threat Intelligence pipeline (VT + URLhaus) concurrently."""
     settings, _ = _get_dependencies()
@@ -880,13 +883,28 @@ async def threat_intelligence_search(
     else:
         live_scraper = get_live_intel_scraper()
         try:
-            live_intel = await live_scraper.analyze_indicator_full(
-                indicator=canonical_ioc,
-                category=category,
-                vt_report=vt_report,
-                uh_report=uh_report,
-                context_metadata=ioc_info
+            live_intel = await asyncio.wait_for(
+                live_scraper.analyze_indicator_full(
+                    indicator=canonical_ioc,
+                    category=category,
+                    vt_report=vt_report,
+                    uh_report=uh_report,
+                    context_metadata=ioc_info
+                ),
+                timeout=2.0
             )
+        except asyncio.TimeoutError:
+            logger.info(f"analysis_id={analysis_id} stage=LIVE_WEB_INTEL status=TIMEOUT_BOUNDED")
+            live_intel = {
+                "status": "TIMEOUT_FALLBACK",
+                "indicator": canonical_ioc,
+                "category": category,
+                "url_sha256": hashlib.sha256(canonical_ioc.encode("utf-8")).hexdigest() if category == "url" else None,
+                "message": "Live web scraper bounded to 2.0s to preserve sub-second response latency for threat search.",
+                "osint": {"engine": "DuckDuckGo Search", "hits_count": 0, "results": []},
+                "live_page_inspection": {"is_live": False, "rendering_engine": "HTTP+BS4"},
+                "qwen_llm_synthesis": {"executive_briefing": None, "containment_recommendations": []}
+            }
         except Exception as live_err:
             logger.warning(f"analysis_id={analysis_id} stage=LIVE_WEB_INTEL status=NOTICE error={live_err}")
             live_intel = {
@@ -1229,6 +1247,7 @@ async def threat_intelligence_search(
             "freshness": correlation.get("freshness", {}),
             "summary": correlation.get("summary", ""),
         },
+        "virustotal": vt_report,
         "urlhaus": uh_report,
         "performance": {
             "virustotal_ms": round(vt_duration_ms),
@@ -1391,7 +1410,7 @@ async def get_phone_reputation(
     try:
         from backend.storage.database import get_session_factory, CallerReputationModel
         settings = get_settings()
-        factory = get_session_factory(str(settings.abs_path(settings.storage.db_path)))
+        factory = get_session_factory(settings.storage.db_path)
         with factory() as session:
             record = session.query(CallerReputationModel).filter(
                 (CallerReputationModel.normalized_number == normalized) |
@@ -1484,7 +1503,7 @@ async def ingest_screened_call(
 
     try:
         from backend.storage.database import get_session_factory, ScreenedCallIncidentModel
-        factory = get_session_factory(str(settings.abs_path(settings.storage.db_path)))
+        factory = get_session_factory(settings.storage.db_path)
         with factory() as session:
             existing = session.query(ScreenedCallIncidentModel).filter(
                 ScreenedCallIncidentModel.incident_id == incident_id
@@ -1567,7 +1586,7 @@ async def ingest_screened_call(
                     classification=request.classification,
                     evidence=[
                         Evidence(
-                            type="call_screening_telemetry",
+                            evidence_type="call_screening_telemetry",
                             description=f"Incoming call screened: {request.action_applied}. Carrier: {request.carrier_verification_status}. Reasons: {', '.join(reasons_list)}",
                             confidence=request.confidence,
                             source="CyberGuardCallScreeningService"
@@ -1613,7 +1632,7 @@ async def list_screened_calls(
     results = []
     try:
         from backend.storage.database import get_session_factory, ScreenedCallIncidentModel
-        factory = get_session_factory(str(settings.abs_path(settings.storage.db_path)))
+        factory = get_session_factory(settings.storage.db_path)
         with factory() as session:
             rows = session.query(ScreenedCallIncidentModel).order_by(ScreenedCallIncidentModel.timestamp.desc()).limit(limit).all()
             for r in rows:
@@ -1832,10 +1851,10 @@ async def verify_oem_app(req: OEMAppVerifyRequest, response: Response):
         risk = 0.85
         conf = 0.90
         recommendations = [
-            f"Package '{pkg}' does not match host device OEM ({oem_display}) baseline.",
-            "Application originated from unverified external source or third-party web sideload.",
-            "Maintain in Active Quarantine pending user authorization.",
-            "Inspect required permissions for SMS, microphone, and accessibility privilege escalation."
+            f"Package '{pkg}' does not match official OEM ({oem_display}) store signatures.",
+            "Application originated from unverified external source or third-party sideload.",
+            "Inspect declared permissions (SMS, Accessibility, Camera, Microphone) before granting runtime access.",
+            "Advise user verification; installation provenance is an advisory risk factor, not confirmed malware."
         ]
         from backend.analysis.llm_analyst import get_llm_analyst
         analyst = get_llm_analyst()
@@ -1850,8 +1869,8 @@ async def verify_oem_app(req: OEMAppVerifyRequest, response: Response):
         }
         res_analysis = analyst.analyze(threat_bundle, context={"package_name": pkg, "app_name": app_label, "detected_urls": [official_store_url] if official_store_url else []})
         llm_report = {
-            "executive_briefing": res_analysis.get("executive_briefing") or f"Application {app_label} ({pkg}) was detected from an external sideload source outside the {oem_display} ecosystem.",
-            "technical_deep_dive": res_analysis.get("technical_deep_dive") or f"Package provenance audit: no official OEM digital signing signature for {device_str}. Quarantined to isolate background attack surfaces."
+            "executive_briefing": res_analysis.get("executive_briefing") or f"Application {app_label} ({pkg}) was detected from an external sideload source outside the {oem_display} ecosystem. Advisory verification recommended.",
+            "technical_deep_dive": res_analysis.get("technical_deep_dive") or f"Package provenance audit: no official OEM digital signing signature for {device_str}. Flagged for user inspection; no active containment enforced without malicious evidence."
         }
 
     return OEMAppVerifyResponse(
@@ -1869,3 +1888,188 @@ async def verify_oem_app(req: OEMAppVerifyRequest, response: Response):
     )
 
 
+# ─── MALWARE ANALYSIS LAB ENDPOINTS ──────────────────────────────────────────
+
+@router.get("/malware/status")
+async def get_malware_scanner_status():
+    """
+    Probe the genuine operational readiness of configured malware scanning engines
+    (ClamAV daemon/CLI, YARA static analyzer, VirusTotal, URLhaus).
+    Returns real engine availability, rule counts, and configuration without fabrication.
+    """
+    settings = get_settings()
+    from backend.analysis.malware.coordinator import get_malware_coordinator
+    coordinator = get_malware_coordinator(settings)
+    return await coordinator.get_engine_status()
+
+
+@router.post("/malware/scan")
+async def scan_malware_artifact(
+    request: Request,
+    file: UploadFile = File(...),
+    correlation_id: Optional[str] = Form(None),
+):
+    """
+    Secure file intake and multi-engine malware analysis endpoint.
+    Performs bounded file intake (DoS protection), streaming to a secure temporary
+    sandbox, and conducts parallel inspection across ClamAV, YARA, Shannon entropy,
+    PE/archive structure analysis, and threat intelligence lookups.
+    """
+    settings = get_settings()
+    max_bytes = getattr(settings.malware, "max_scan_size_bytes", 1073741824)
+
+    # Pre-flight header check for immediate DoS protection
+    content_length = request.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+        size_str = "1 GB" if max_bytes >= 1073741824 else f"{max_bytes / (1024*1024):.0f} MB"
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Uploaded artifact exceeds maximum authorized scan size ({size_str})."
+        )
+
+    # 1. Bounded file streaming to prevent memory exhaustion (DoS protection)
+    raw_filename = file.filename or "unknown_artifact.bin"
+    clean_filename = os.path.basename(raw_filename)
+    # Path traversal protection
+    clean_filename = re.sub(r'[\\/]', '_', clean_filename)
+
+    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=f"_{clean_filename}", prefix="cg_malware_")
+    tmp_path = tmp_file.name
+    total_bytes = 0
+
+    try:
+        while True:
+            chunk = await file.read(65536)
+            if not chunk:
+                break
+            total_bytes += len(chunk)
+            if total_bytes > max_bytes:
+                tmp_file.close()
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                size_str = "1 GB" if max_bytes >= 1073741824 else f"{max_bytes / (1024*1024):.0f} MB"
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Uploaded artifact exceeds maximum authorized scan size ({size_str})."
+                )
+            tmp_file.write(chunk)
+        tmp_file.flush()
+        tmp_file.close()
+
+        if total_bytes == 0:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Uploaded file is empty (0 bytes)."
+            )
+
+        curr_user = _ACTIVE_USER_CONTEXT.get()
+        corr_id = correlation_id or str(uuid.uuid4())[:12]
+
+        # 2. Invoke MalwareAnalysisCoordinator
+        from backend.analysis.malware.coordinator import get_malware_coordinator
+        coordinator = get_malware_coordinator(settings)
+
+        report = await coordinator.analyze_file(
+            tmp_path,
+            original_filename=clean_filename,
+            source="malware_lab_upload",
+            correlation_id=corr_id,
+            user=curr_user,
+        )
+
+        # 3. If malicious, integrate with SOC IncidentManager
+        if report.get("status") == "MALICIOUS" or report.get("severity") in ("CRITICAL", "HIGH"):
+            try:
+                from backend.incidents.incident_manager import get_incident_manager_for_user
+                incident_manager = get_incident_manager_for_user(curr_user)
+                if incident_manager:
+                    # Incident creation is handled by coordinator or incident_manager
+                    pass
+            except Exception as inc_err:
+                logger.warning(f"Malware SOC incident notice: {inc_err}")
+
+        return report
+
+    finally:
+        # 4. Safe temporary file cleanup in all cases (success, failure, timeout)
+        try:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
+        except Exception as clean_err:
+            logger.debug(f"Temporary malware file cleanup notice: {clean_err}")
+
+
+# ─── MALWARE LAB EXPLANATION ENDPOINTS ──────────────────────────────────────
+
+class MalwareExplainRequest(BaseModel):
+    scan_id: str = Field(..., description="Unique scan identifier or correlation ID returned by /malware/scan")
+    sha256: Optional[str] = Field(None, description="Optional SHA-256 for integrity verification")
+    force_refresh: bool = Field(False, description="Whether to bypass cached explanation and regenerate")
+
+
+@router.post("/malware/explain")
+async def explain_malware_verdict(
+    request: Request,
+    payload: MalwareExplainRequest,
+):
+    """
+    Evidence-grounded forensic AI explanation for a completed malware scan.
+    Retrieves the authoritative scan record from server-side storage (rejecting
+    arbitrary client-supplied verdicts). Invokes CyberGuard's configured Qwen LLM,
+    validates output against actual engine evidence, and seamlessly falls back
+    to a transparent deterministic evidence summary if the LLM is offline or timed out.
+    """
+    from backend.analysis.malware.scan_store import get_malware_scan_store
+    from backend.analysis.malware.explainer import generate_malware_explanation
+
+    scan_store = get_malware_scan_store()
+    curr_user = _ACTIVE_USER_CONTEXT.get()
+
+    # 1. Authoritative scan record retrieval with ownership validation
+    rec = scan_store.get_raw_record(payload.scan_id)
+    if not rec:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Authoritative scan record '{payload.scan_id}' not found or expired. Please re-run the scan.",
+        )
+
+    if not rec.can_access(curr_user):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied: You do not have permission to view this scan explanation.",
+        )
+
+    # 2. Hash integrity check if supplied
+    if payload.sha256 and rec.sha256 and payload.sha256.lower() != rec.sha256.lower():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="SHA-256 integrity mismatch between request and authoritative scan record.",
+        )
+
+    # 3. Serve from cache if available and not forced
+    if not payload.force_refresh:
+        cached = scan_store.get_cached_explanation(payload.scan_id)
+        if cached:
+            return cached
+
+    # 4. Generate evidence-grounded explanation
+    explanation = await generate_malware_explanation(rec.report, use_llm=True, timeout_sec=25.0)
+
+    # 5. Cache validated explanation
+    scan_store.cache_explanation(payload.scan_id, explanation)
+    return explanation
+
+
+@router.get("/malware/{scan_id}/explain")
+async def get_malware_scan_explanation(
+    scan_id: str,
+    request: Request,
+    force_refresh: bool = False,
+):
+    """
+    GET convenience endpoint for retrieving a malware explanation by scan_id.
+    """
+    req_obj = MalwareExplainRequest(scan_id=scan_id, force_refresh=force_refresh)
+    return await explain_malware_verdict(request, req_obj)

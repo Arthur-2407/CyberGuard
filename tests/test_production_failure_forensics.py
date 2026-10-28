@@ -52,9 +52,26 @@ def auth_token():
     SessionLocal = get_session_factory()
     db = SessionLocal()
     try:
-        user = db.query(UserModel).filter(UserModel.role == "admin").first()
+        user = (
+            db.query(UserModel)
+            .filter(UserModel.role == "admin", UserModel.is_active.is_(True))
+            .first()
+        )
         if not user:
-            user = db.query(UserModel).first()
+            user = db.query(UserModel).filter(UserModel.is_active.is_(True)).first()
+        if not user:
+            from backend.storage.auth import hash_password
+            user = UserModel(
+                username=f"test_admin_{secrets.token_hex(4)}",
+                email="test_admin@cyberguard.local",
+                password_hash=hash_password("CyberGuardTest123!"),
+                role="admin",
+                is_active=True,
+                created_at=_utcnow(),
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
         raw_token = secrets.token_urlsafe(32)
         sess = AuthSessionModel(
             user_id=user.id,

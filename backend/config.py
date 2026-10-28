@@ -108,6 +108,7 @@ class PrivacyConfig:
 @dataclass
 class StorageConfig:
     db_path: str = "data/cyberguard.db"
+    database_url: str = ""
 
 
 @dataclass
@@ -255,6 +256,23 @@ class ImageForensicsConfig:
 
 
 @dataclass
+class MalwareAnalysisConfig:
+    enabled: bool = True
+    clamscan_path: str = "clamscan"
+    clamd_host: str = "127.0.0.1"
+    clamd_port: int = 3310
+    clamd_socket: str = ""
+    clamd_enabled: bool = True
+    yara_enabled: bool = True
+    yara_rules_dir: str = "data/yara_rules"
+    max_scan_size_bytes: int = 1073741824  # 1GB (1024 * 1024 * 1024)
+    scan_timeout_sec: float = 60.0
+    archive_max_files: int = 1000
+    archive_max_total_bytes: int = 1073741824  # 1GB
+    archive_max_ratio: float = 50.0
+
+
+@dataclass
 class Settings:
     audio: AudioConfig = field(default_factory=AudioConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
@@ -271,6 +289,7 @@ class Settings:
     enforcement: EnforcementConfig = field(default_factory=EnforcementConfig)
     email_alerts: EmailAlertsConfig = field(default_factory=EmailAlertsConfig)
     image_forensics: ImageForensicsConfig = field(default_factory=ImageForensicsConfig)
+    malware: MalwareAnalysisConfig = field(default_factory=MalwareAnalysisConfig)
     project_root: Path = field(default_factory=lambda: _PROJECT_ROOT)
 
     def abs_path(self, relative: str) -> Path:
@@ -294,6 +313,7 @@ def _build_settings(raw: dict) -> Settings:
     enforcement_raw = raw.get("enforcement", {})
     email_alerts_raw = raw.get("email_alerts", {})
     image_forensics_raw = raw.get("image_forensics", {})
+    malware_raw = raw.get("malware", {})
 
     thresholds_raw = risk_raw.get("alert_thresholds", {})
 
@@ -358,6 +378,11 @@ def _build_settings(raw: dict) -> Settings:
         ),
         storage=StorageConfig(
             db_path=storage_db,
+            database_url=_clean_secret(
+                os.getenv("DATABASE_URL")
+                or os.getenv("SUPABASE_DB_URL")
+                or storage_raw.get("database_url", "")
+            ),
         ),
         upload=UploadConfig(
             max_file_size_bytes=upload_raw.get("max_file_size_bytes", 209715200),
@@ -467,6 +492,21 @@ def _build_settings(raw: dict) -> Settings:
             face_eye_asymmetry_threshold=float(image_forensics_raw.get("face_eye_asymmetry_threshold", 0.35)),
             color_decorrelation_critical=float(image_forensics_raw.get("color_decorrelation_critical", 0.35)),
             color_decorrelation_moderate=float(image_forensics_raw.get("color_decorrelation_moderate", 0.50)),
+        ),
+        malware=MalwareAnalysisConfig(
+            enabled=bool(os.environ.get("MALWARE_SCAN_ENABLED", "").lower() in ("true", "1", "yes") if "MALWARE_SCAN_ENABLED" in os.environ else malware_raw.get("enabled", True)),
+            clamscan_path=os.getenv("CLAMSCAN_PATH", malware_raw.get("clamscan_path", "clamscan")),
+            clamd_host=os.getenv("CLAMD_HOST", malware_raw.get("clamd_host", "127.0.0.1")),
+            clamd_port=int(os.getenv("CLAMD_PORT", malware_raw.get("clamd_port", 3310))),
+            clamd_socket=os.getenv("CLAMD_SOCKET", malware_raw.get("clamd_socket", "")),
+            clamd_enabled=bool(os.environ.get("CLAMD_ENABLED", "").lower() in ("true", "1", "yes") if "CLAMD_ENABLED" in os.environ else malware_raw.get("clamd_enabled", True)),
+            yara_enabled=bool(os.environ.get("YARA_ENABLED", "").lower() in ("true", "1", "yes") if "YARA_ENABLED" in os.environ else malware_raw.get("yara_enabled", True)),
+            yara_rules_dir=os.getenv("YARA_RULES_DIR", malware_raw.get("yara_rules_dir", "data/yara_rules")),
+            max_scan_size_bytes=int(os.getenv("MALWARE_MAX_FILE_SIZE_BYTES", malware_raw.get("max_scan_size_bytes", 1073741824))),
+            scan_timeout_sec=float(os.getenv("MALWARE_SCAN_TIMEOUT_SEC", malware_raw.get("scan_timeout_sec", 60.0))),
+            archive_max_files=int(malware_raw.get("archive_max_files", 1000)),
+            archive_max_total_bytes=int(malware_raw.get("archive_max_total_bytes", 1073741824)),
+            archive_max_ratio=float(malware_raw.get("archive_max_ratio", 50.0)),
         ),
     )
 

@@ -73,6 +73,26 @@ def create_mock_user(db, prefix="tester", role=ROLE_USER, password="Password123!
     return user
 
 
+def cleanup_test_users(db, *users):
+    """Safely cleanup test users and their auth sessions in dependency order."""
+    user_ids = [u.id for u in users if u is not None and getattr(u, "id", None) is not None]
+    if user_ids:
+        try:
+            db.query(AuthSessionModel).filter(AuthSessionModel.user_id.in_(user_ids)).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+        for u in users:
+            try:
+                db.delete(u)
+            except Exception:
+                pass
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+
+
 class TestAccountDeletionAuthorizationAndSafeguards:
     """Tests 1-6: Strict RBAC and Administrative Safety Safeguards."""
 
@@ -91,8 +111,7 @@ class TestAccountDeletionAuthorizationAndSafeguards:
             assert res.status_code == 403, f"Expected 403 Forbidden, got {res.status_code}"
             assert "Administrative privileges required" in res.text or "Forbidden" in res.text
         finally:
-            test_db_session.delete(normal_user)
-            test_db_session.commit()
+            cleanup_test_users(test_db_session, normal_user)
 
     def test_admin_cannot_delete_self(self, client, test_db_session):
         """Test 5: Currently authenticated administrator cannot accidentally delete themselves."""
@@ -104,8 +123,7 @@ class TestAccountDeletionAuthorizationAndSafeguards:
             assert res.status_code == 400, f"Expected 400 Bad Request, got {res.status_code}"
             assert "cannot delete your own active administrator account" in res.text.lower()
         finally:
-            test_db_session.delete(admin_user)
-            test_db_session.commit()
+            cleanup_test_users(test_db_session, admin_user)
 
     def test_cannot_delete_last_active_admin(self, test_db_session):
         """Test 6: Prevent deletion of the last active administrator."""
@@ -122,9 +140,7 @@ class TestAccountDeletionAuthorizationAndSafeguards:
                     )
                 assert "last active administrator" in str(excinfo.value).lower()
         finally:
-            test_db_session.delete(sole_admin)
-            test_db_session.delete(admin_caller)
-            test_db_session.commit()
+            cleanup_test_users(test_db_session, sole_admin, admin_caller)
 
     def test_protected_system_accounts_safeguarded(self, test_db_session):
         """Test 6b: Protected system accounts (e.g. system, root) cannot be deleted."""
@@ -148,9 +164,7 @@ class TestAccountDeletionAuthorizationAndSafeguards:
                 )
             assert "protected system" in str(excinfo.value).lower()
         finally:
-            test_db_session.delete(sys_user)
-            test_db_session.delete(admin_caller)
-            test_db_session.commit()
+            cleanup_test_users(test_db_session, sys_user, admin_caller)
 
     def test_typed_confirmation_mismatch_rejected(self, client, test_db_session):
         """Test 14: Confirmation mismatch prevents deletion."""
@@ -163,9 +177,7 @@ class TestAccountDeletionAuthorizationAndSafeguards:
             assert res.status_code == 400
             assert "confirmation mismatch" in res.text.lower()
         finally:
-            test_db_session.delete(target_user)
-            test_db_session.delete(admin_caller)
-            test_db_session.commit()
+            cleanup_test_users(test_db_session, target_user, admin_caller)
 
 
 class TestCompletePerUserDataPurge:
@@ -192,8 +204,9 @@ class TestCompletePerUserDataPurge:
         target_email = target.email
         target_db_path = Path(target.db_path).resolve()
 
-        # Ensure tenant DB exists
-        assert target_db_path.exists(), f"Tenant database should exist at {target_db_path}"
+        # Ensure tenant DB exists (for SQLite file-based tenant mode)
+        if not str(target.db_path).startswith("postgres"):
+            assert target_db_path.exists(), f"Tenant database should exist at {target_db_path}"
 
         # 2. Create another user (control subject) to verify non-interference
         control_user = create_mock_user(test_db_session, "control_subject", role=ROLE_USER)
@@ -353,6 +366,4 @@ class TestCompletePerUserDataPurge:
         # Clean up shared file & control user
         if shared_audio_file.exists():
             shared_audio_file.unlink()
-        test_db_session.delete(preserved_control)
-        test_db_session.delete(admin_caller)
-        test_db_session.commit()
+        cleanup_test_users(test_db_session, preserved_control, admin_caller)

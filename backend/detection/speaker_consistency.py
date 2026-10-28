@@ -44,16 +44,19 @@ class SpeakerConsistencyChecker:
         self.threshold = threshold
         self._enrolled_profile: Optional[np.ndarray] = None
         self._enrolled_speaker_id: Optional[str] = None
+        self._enrolled_pitch: Optional[dict] = None
         self._similarity_history: list = []
 
     def set_enrolled_profile(
         self,
         embedding: np.ndarray,
         speaker_id: Optional[str] = None,
+        pitch_baseline: Optional[dict] = None,
     ) -> None:
         """Set the reference enrolled speaker profile."""
         self._enrolled_profile = embedding.astype(np.float32)
         self._enrolled_speaker_id = speaker_id
+        self._enrolled_pitch = pitch_baseline
         self._similarity_history.clear()
         logger.info(f"Speaker profile set: speaker_id={speaker_id}")
 
@@ -61,15 +64,21 @@ class SpeakerConsistencyChecker:
         """Remove enrolled profile (e.g., end of session)."""
         self._enrolled_profile = None
         self._enrolled_speaker_id = None
+        self._enrolled_pitch = None
         self._similarity_history.clear()
 
-    def check(self, current_embedding: Optional[np.ndarray]) -> dict:
+    def check(
+        self,
+        current_embedding: Optional[np.ndarray],
+        current_pitch: Optional[dict] = None,
+    ) -> dict:
         """
-        Compare current chunk's speaker embedding against enrolled profile.
+        Compare current chunk's speaker embedding and optional pitch telemetry against enrolled profile.
 
         Args:
             current_embedding: 192-dim float32 numpy array, or None when ECAPA
                                was unavailable for this chunk.
+            current_pitch:     Optional dictionary with acoustic pitch metrics (f0_mean_hz, etc.)
 
         Returns:
             dict with keys:
@@ -78,6 +87,7 @@ class SpeakerConsistencyChecker:
                 - speaker_id: enrolled speaker identifier
                 - enrolled: bool (whether a profile is set)
                 - embedding_available: bool (whether current_embedding was not None)
+                - pitch_match: bool indicating pitch consistency with profile
         """
         if self._enrolled_profile is None:
             return {
@@ -86,7 +96,20 @@ class SpeakerConsistencyChecker:
                 "speaker_id": None,
                 "enrolled": False,
                 "embedding_available": current_embedding is not None,
+                "pitch_match": True,
             }
+
+        # Pitch consistency check against enrolled baseline
+        pitch_match = True
+        pitch_sim = None
+        if self._enrolled_pitch and current_pitch:
+            ref_f0 = float(self._enrolled_pitch.get("f0_mean_hz", 0.0) or 0.0)
+            cur_f0 = float(current_pitch.get("f0_mean_hz", 0.0) or 0.0)
+            if ref_f0 >= 60.0 and cur_f0 >= 60.0:
+                pitch_delta = abs(cur_f0 - ref_f0) / ref_f0
+                pitch_sim = float(max(0.0, 1.0 - pitch_delta))
+                # Natural intra-speaker pitch variation is up to ~35%
+                pitch_match = bool(pitch_delta <= 0.35)
 
         # If current embedding is None (ECAPA unavailable), we cannot compare.
         # Return "consistent" with similarity=None rather than penalising the session
@@ -98,20 +121,24 @@ class SpeakerConsistencyChecker:
             )
             return {
                 "similarity": None,
-                "is_consistent": True,
+                "is_consistent": pitch_match,
                 "speaker_id": self._enrolled_speaker_id,
                 "enrolled": True,
                 "embedding_available": False,
+                "pitch_match": pitch_match,
             }
 
-        similarity = cosine_similarity(current_embedding, self._enrolled_profile)
+        similarity = float(cosine_similarity(current_embedding, self._enrolled_profile))
+        if not pitch_match and pitch_sim is not None:
+            similarity = max(-1.0, similarity * 0.85)
+
         self._similarity_history.append(similarity)
-        is_consistent = similarity >= self.threshold
+        is_consistent = bool(similarity >= self.threshold and pitch_match)
 
         if not is_consistent:
             logger.warning(
                 f"Speaker identity mismatch: similarity={similarity:.3f} "
-                f"(threshold={self.threshold}), enrolled speaker={self._enrolled_speaker_id}"
+                f"(threshold={self.threshold}), pitch_match={pitch_match}, enrolled speaker={self._enrolled_speaker_id}"
             )
 
         return {
@@ -120,6 +147,7 @@ class SpeakerConsistencyChecker:
             "speaker_id": self._enrolled_speaker_id,
             "enrolled": True,
             "embedding_available": True,
+            "pitch_match": pitch_match,
         }
 
     @property

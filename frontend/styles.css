@@ -10432,21 +10432,9 @@ body::after {
   color: #94a3b8;
 }
 
-.defcon-auto-indicator {
-  font-family: var(--font-mono);
-  font-size: 8px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  color: #00e5ff;
-  background: rgba(0, 229, 255, 0.12);
-  border: 1px solid rgba(0, 229, 255, 0.45);
-  border-radius: 3px;
-  padding: 1px 5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  box-shadow: 0 0 8px rgba(0, 229, 255, 0.25);
-  animation: autoIndicatorPulse 2.8s infinite ease-in-out;
+.defcon-auto-indicator,
+#defcon-auto-indicator {
+  display: none !important;
 }
 
 @keyframes autoIndicatorPulse {
@@ -14626,9 +14614,9 @@ button:hover:not(:disabled)::after,
 }
 
 /* ── Docker SOC Backend & Tunnel Status Widget ──────────────────────────────── */
-.backend-tunnel-widget {
-  display: flex;
-  align-items: center;
+.backend-tunnel-widget,
+#backend-tunnel-widget {
+  display: none !important;
 }
 
 .nav-backend-btn {
@@ -14680,4 +14668,329 @@ button:hover:not(:disabled)::after,
 
 .backend-nav-icon {
   opacity: 0.75;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Malware Analysis Lab Styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+.malware-dropzone {
+  border: 2px dashed rgba(6, 182, 212, 0.35);
+  background: rgba(6, 182, 212, 0.02);
+  border-radius: 8px;
+  padding: 30px 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.malware-dropzone:hover,
+.malware-dropzone.dragover {
+  border-color: var(--accent-primary);
+  background: rgba(6, 182, 212, 0.08);
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.15);
+  transform: translateY(-1px);
+}
+
+.engine-indicator-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.engine-indicator-dot.online {
+  background: #10b981;
+  box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+}
+
+.engine-indicator-dot.offline {
+  background: #64748b;
+  box-shadow: none;
+}
+
+.engine-indicator-dot.warning {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.engine-indicator-dot.danger {
+  background: #ef4444;
+  box-shadow: 0 0 6px rgba(239, 68, 68, 0.6);
+}
+
+.malware-verdict-banner.safe {
+  background: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.35);
+  color: #10b981;
+}
+
+.malware-verdict-banner.malicious {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #f87171;
+}
+
+.malware-verdict-banner.suspicious {
+  background: rgba(245, 158, 11, 0.14);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #fbbf24;
+}
+
+.malware-verdict-banner.unavailable,
+.malware-verdict-banner.inconclusive,
+.malware-verdict-banner.unsupported {
+  background: rgba(100, 116, 139, 0.14);
+  border-color: rgba(100, 116, 139, 0.35);
+  color: #94a3b8;
+}
+
+.malware-verdict-banner.partial_scan {
+  background: rgba(245, 158, 11, 0.16);
+  border-color: rgba(245, 158, 11, 0.55);
+  color: #fbbf24;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   TOAST NOTIFICATION STACK (SOC Tactical HUD Feedback & Non-Overlapping Layout)
+   ═══════════════════════════════════════════════════════════════════════════ */
+.toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: var(--z-toast, 300);
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 10px;
+  max-width: 440px;
+  width: calc(100% - 48px);
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md, 8px);
+  background: rgba(15, 23, 42, 0.95);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  color: var(--text-normal, #f1f5f9);
+  font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
+  font-size: 12.5px;
+  line-height: 1.45;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.35);
+  opacity: 1;
+  transform: translateX(0);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  word-break: break-word;
+}
+
+.toast.info {
+  border-left: 3px solid #38bdf8;
+  color: #f0f9ff;
+}
+.toast.info svg {
+  color: #38bdf8;
+}
+
+.toast.success {
+  border-left: 3px solid #10b981;
+  color: #f0fdf4;
+}
+.toast.success svg {
+  color: #10b981;
+}
+
+.toast.warning {
+  border-left: 3px solid #f59e0b;
+  color: #fffbeb;
+}
+.toast.warning svg {
+  color: #f59e0b;
+}
+
+.toast.error {
+  border-left: 3px solid #ef4444;
+  color: #fef2f2;
+}
+.toast.error svg {
+  color: #ef4444;
+}
+
+.toast-close-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-muted, #94a3b8);
+  padding: 0 0 0 8px;
+  font-size: 14px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: color 0.15s ease;
+}
+.toast-close-btn:hover {
+  color: #ffffff;
+}
+
+@media (max-width: 640px) {
+  .toast-container {
+    bottom: 16px;
+    right: 16px;
+    left: 16px;
+    width: auto;
+    max-width: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   MALWARE LAB — EVIDENCE-GROUNDED AI EXPLANATION POPUP & TRIGGER
+   ═══════════════════════════════════════════════════════════════════════════ */
+.malware-explain-trigger {
+  animation: cgTriggerEntrance 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+
+.malware-explain-trigger:hover {
+  background: rgba(6, 182, 212, 0.16) !important;
+  border-color: rgba(6, 182, 212, 0.7) !important;
+  box-shadow: 0 0 10px rgba(6, 182, 212, 0.3);
+  transform: translateY(-1px);
+}
+
+.malware-explain-trigger:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.malware-explain-trigger .trigger-sparkle {
+  color: var(--accent-primary);
+  transition: transform 0.25s ease;
+}
+
+.malware-explain-trigger:hover .trigger-sparkle {
+  transform: rotate(45deg) scale(1.1);
+}
+
+@keyframes cgTriggerEntrance {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.malware-explanation-dialog {
+  max-width: 580px !important;
+  width: 95% !important;
+  max-height: 85vh;
+  margin: auto;
+  border: 1px solid rgba(6, 182, 212, 0.35) !important;
+  border-radius: 8px !important;
+  background: rgba(10, 16, 30, 0.98) !important;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.85), 0 0 24px rgba(6, 182, 212, 0.18) !important;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: cgModalEntrance 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes cgModalEntrance {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .malware-explain-trigger,
+  .malware-explanation-dialog {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.malware-expl-body::-webkit-scrollbar {
+  width: 5px;
+}
+
+.malware-expl-body::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.malware-expl-body::-webkit-scrollbar-thumb {
+  background: rgba(6, 182, 212, 0.3);
+  border-radius: 3px;
+}
+
+.malware-expl-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(6, 182, 212, 0.6);
+}
+
+.malware-expl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+}
+
+.malware-expl-pill.malicious {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #f87171;
+}
+
+.malware-expl-pill.clean {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  color: #34d399;
+}
+
+.malware-expl-pill.unavailable {
+  background: rgba(100, 116, 139, 0.12);
+  border: 1px solid rgba(100, 116, 139, 0.3);
+  color: #94a3b8;
+}
+
+.malware-expl-evidence-item {
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.malware-expl-evidence-item.malicious {
+  border-left: 2px solid #ef4444;
+}
+
+.malware-expl-evidence-item.suspicious {
+  border-left: 2px solid #f59e0b;
+}
+
+.malware-expl-evidence-item.clean {
+  border-left: 2px solid #10b981;
+}
+
+.malware-expl-evidence-item.unavailable {
+  border-left: 2px solid #64748b;
 }

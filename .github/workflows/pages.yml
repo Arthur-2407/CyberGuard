@@ -1,8 +1,11 @@
 name: Deploy CyberGuard Frontend to GitHub Pages
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CyberGuard Enterprise CI Pipeline"]
     branches: [ main ]
+    types:
+      - completed
   workflow_dispatch:
 
 permissions:
@@ -16,6 +19,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main') }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -23,6 +27,15 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+
+      - name: Verify Frontend Static Assets
+        run: |
+          test -f ./frontend/index.html
+          test -f ./frontend/app.js
+          test -f ./frontend/styles.css
+          test -f ./frontend/config.js
 
       - name: Setup GitHub Pages
         uses: actions/configure-pages@v5

@@ -24,8 +24,9 @@ jobs:
 
       - name: Install System Audio Dependencies (libsndfile & ffmpeg)
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y libsndfile1 ffmpeg libzbar0
+          export DEBIAN_FRONTEND=noninteractive
+          sudo -E apt-get update -qq
+          sudo -E apt-get install -y --no-install-recommends libsndfile1 ffmpeg libzbar0
 
       - name: Install Python Dependencies
         run: |
@@ -48,6 +49,20 @@ jobs:
           echo "URLHAUS_ENABLED=true" >> .env
           echo "URLHAUS_AUTH_KEY=ci-mock-urlhaus-key-for-testing" >> "$GITHUB_ENV"
           echo "URLHAUS_AUTH_KEY=ci-mock-urlhaus-key-for-testing" >> .env
+          echo "BREVO_API_KEY=ci-mock-brevo-key-for-testing" >> .env
+          echo "SMTP_SERVER=smtp-relay.brevo.com" >> .env
+          echo "SMTP_PORT=587" >> .env
+          echo "SMTP_LOGIN=ci-mock-login" >> .env
+          echo "SMTP_KEY=ci-mock-key" >> .env
+          touch .env.email
+          echo "EMAIL_ENABLED=true" >> .env.email
+          echo "EMAIL_PROVIDER=brevo" >> .env.email
+          echo "BREVO_API_KEY=ci-mock-brevo-key-for-testing" >> .env.email
+          echo "SMTP_SERVER=smtp-relay.brevo.com" >> .env.email
+          echo "SMTP_PORT=587" >> .env
+          echo "SMTP_LOGIN=ci-mock-login" >> .env
+          echo "SMTP_KEY=ci-mock-key" >> .env
+          mkdir -p data
 
       - name: Run Pytest Test Suite
         env:
