@@ -65,7 +65,7 @@
   function sharedAuthHeaders() {
     try {
       let token = localStorage.getItem("cyberguard_token") || localStorage.getItem("cg_token") || sessionStorage.getItem("cyberguard_token") || "";
-      token = String(token).trim().replace(/^Bearer\\s+/i, "").replace(/^["']|["']$/g, "");
+      token = String(token).trim().replace(/^Bearer\s+/i, "").replace(/^["']|["']$/g, "");
       return token ? { Authorization: "Bearer " + token, "X-Session-Token": token } : {};
     } catch { return {}; }
   }
