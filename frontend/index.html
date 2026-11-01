@@ -114,6 +114,12 @@
         </button>
       </div>
 
+      <!-- Frontend mode switch: preserve SOC as default and expose consumer UX -->
+      <a class="frontend-mode-switch" href="./personal/" title="Switch to the simpler CyberGuard Personal experience" aria-label="Switch to CyberGuard Personal">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2 20 5v6c0 5.2-3.2 8.8-8 11-4.8-2.2-8-5.8-8-11V5l8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+        <span class="switch-label">PERSONAL VIEW</span><span aria-hidden="true">↗</span>
+      </a>
+
       <!-- Docker SOC Backend & Tunnel Status Indicator Pill (Hidden from Overview page navbar; diagnostics preserved) -->
       <div class="backend-tunnel-widget" id="backend-tunnel-widget" style="display:none !important;" aria-hidden="true">
         <button class="nav-backend-btn" id="nav-backend-btn" onclick="openBackendModal()" title="CyberGuard Docker Backend &amp; Secure Tunnel Settings">
