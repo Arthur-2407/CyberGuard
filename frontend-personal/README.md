@@ -25,7 +25,7 @@ The frontend uses the existing FastAPI route contracts found in `backend/api/rou
 - Voice: `POST /api/threats/deepfake` with multipart field `file`
 - Backend health: `GET /health`
 
-The backend also exposes a dedicated QR route at `POST /api/threats/qr`; the current image upload flow uses the general image-forensics route. A QR-specific mode can be wired to that route after the desired UI behavior is selected.
+The image screen includes separate modes: image forensics uses `POST /api/threats/image`, while QR code checks use `POST /api/threats/qr`.
 
 ## Deployment isolation
 
