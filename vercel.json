@@ -17,7 +17,11 @@
       "destination": "https://cyberguard-backend-8rbz.onrender.com/health"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/personal",
+      "destination": "/personal/index.html"
+    },
+    {
+      "source": "/((?!api/|personal/).*)",
       "destination": "/index.html"
     }
   ],
