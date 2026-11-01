@@ -9,7 +9,8 @@
     health: ["/health", "/health/"],
     url: ["/api/threats/url", "/api/threats/phishing"],
     file: ["/api/threats/unified"],
-    image: ["/api/threats/image"],\n    qr: ["/api/threats/qr"],
+    image: ["/api/threats/image"],
+    qr: ["/api/threats/qr"],
     audio: ["/api/threats/deepfake"]
   };
   const state = { apiBase: "", health: "checking", selectedFile: null, selectedImage: null, selectedAudio: null, imageMode: "image" };
@@ -125,7 +126,8 @@
   $("#fileInput").addEventListener("change",e=>{state.selectedFile=e.target.files[0]||null;$("#fileName").textContent=state.selectedFile?state.selectedFile.name+" • "+Math.round(state.selectedFile.size/1024)+" KB":"No file selected";$("#scanFileBtn").disabled=!state.selectedFile;});
   $("#scanFileBtn").addEventListener("click",()=>state.selectedFile&&postFile(knownEndpoints.file,state.selectedFile,$("#fileResult"),"File scan"));
   $("#imageInput").addEventListener("change",e=>{state.selectedImage=e.target.files[0]||null;$("#imageName").textContent=state.selectedImage?state.selectedImage.name:"No image selected";$("#scanImageBtn").disabled=!state.selectedImage;});
-  $("#scanImageBtn").addEventListener("click",()=>state.selectedImage&&postFile(state.imageMode==="qr"?knownEndpoints.qr:knownEndpoints.image,state.selectedImage,$("#imageResult"),state.imageMode==="qr"?"QR code check":"Image forensics"));\n  $(".mode-button").forEach(btn=>btn.addEventListener("click",()=>{state.imageMode=btn.dataset.imageMode;$(".mode-button").forEach(b=>b.classList.toggle("active",b===btn));$("#imageUploadTitle").textContent=state.imageMode==="qr"?"Choose a QR code image":"Choose an image to inspect";$("#imageUploadHelp").textContent=state.imageMode==="qr"?"We’ll decode the QR code and assess its destination.":"Look for signs of image manipulation or synthetic content.";$("#scanImageBtn").innerHTML=state.imageMode==="qr"?"Check QR code <b>→</b>":"Inspect image <b>→</b>";}));
+  $("#scanImageBtn").addEventListener("click",()=>state.selectedImage&&postFile(state.imageMode==="qr"?knownEndpoints.qr:knownEndpoints.image,state.selectedImage,$("#imageResult"),state.imageMode==="qr"?"QR code check":"Image forensics"));
+  $(".mode-button").forEach(btn=>btn.addEventListener("click",()=>{state.imageMode=btn.dataset.imageMode;$(".mode-button").forEach(b=>b.classList.toggle("active",b===btn));$("#imageUploadTitle").textContent=state.imageMode==="qr"?"Choose a QR code image":"Choose an image to inspect";$("#imageUploadHelp").textContent=state.imageMode==="qr"?"We’ll decode the QR code and assess its destination.":"Look for signs of image manipulation or synthetic content.";$("#scanImageBtn").innerHTML=state.imageMode==="qr"?"Check QR code <b>→</b>":"Inspect image <b>→</b>";}));
   $("#audioInput").addEventListener("change",e=>{state.selectedAudio=e.target.files[0]||null;$("#audioName").textContent=state.selectedAudio?state.selectedAudio.name:"No audio selected";$("#scanAudioBtn").disabled=!state.selectedAudio;});
   $("#scanAudioBtn").addEventListener("click",()=>state.selectedAudio&&postFile(knownEndpoints.audio,state.selectedAudio,$("#audioResult"),"Voice analysis"));
   $$(".media-tab").forEach(btn=>btn.addEventListener("click",()=>{$$(".media-tab").forEach(b=>b.classList.toggle("active",b===btn));$("#imagePanel").classList.toggle("hidden",btn.dataset.media!=="image");$("#audioPanel").classList.toggle("hidden",btn.dataset.media!=="audio");}));
