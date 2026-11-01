@@ -62,16 +62,16 @@
   function safeText(value) { return String(value ?? "").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
   function summarize(data) {
     const obj = data && typeof data==="object" ? data : {result:data};
-    const candidates=[obj.verdict,obj.status,obj.threat_level,obj.risk_level,obj.classification,obj.label,obj.result?.verdict,obj.result?.status,obj.result?.label];
+    const candidates=[obj.verdict,obj.status,obj.severity,obj.threat_level,obj.risk_level,obj.threat_category,obj.classification,obj.label,obj.result?.verdict,obj.result?.status,obj.result?.severity,obj.result?.threat_category,obj.result?.label];
     const raw=candidates.find(v=>typeof v==="string") || "";
     const s=raw.toLowerCase();
     const numeric=[obj.risk_score,obj.score,obj.result?.risk_score,obj.result?.score].find(v=>typeof v==="number");
     let level="unknown", heading="Analysis completed";
-    if (/malicious|danger|critical|infected|phish|unsafe|synthetic|cloned/.test(s)) {level="danger";heading="Potential risk detected";}
+    if (/malicious|danger|critical|high|infected|phish|unsafe|synthetic|cloned/.test(s)) {level="danger";heading="Potential risk detected";}
     else if (/suspicious|warning|medium|uncertain|review/.test(s)) {level="warning";heading="Needs a closer look";}
     else if (/safe|clean|benign|low.?risk|legitimate|authentic/.test(s)) {level="safe";heading="No known threat reported";}
     else if (numeric!==undefined) {heading="Analysis completed";}
-    const summary=[obj.message,obj.detail,obj.explanation,obj.summary,obj.result?.message,obj.result?.explanation].find(v=>typeof v==="string" && v.trim());
+    const summary=[obj.message,obj.detail,obj.explanation_summary,obj.explanation,obj.summary,obj.result?.message,obj.result?.explanation_summary,obj.result?.explanation].find(v=>typeof v==="string" && v.trim());
     return {level,heading,summary:summary || "The service returned a response. Review the details below; this interface will not infer a safe or dangerous verdict when the backend does not provide one.",numeric};
   }
   function renderResult(target,data,label) {
