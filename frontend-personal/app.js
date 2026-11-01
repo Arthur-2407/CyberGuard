@@ -8,9 +8,9 @@
   const knownEndpoints = {
     health: ["/health", "/health/"],
     url: ["/api/threats/url", "/api/threats/phishing"],
-    file: ["/api/threats/malware", "/api/threats/file"],
-    image: ["/api/threats/media", "/api/threats/qr"],
-    audio: ["/api/threats/media"]
+    file: ["/api/threats/unified"],
+    image: ["/api/threats/image", "/api/threats/qr"],
+    audio: ["/api/threats/deepfake"]
   };
   const state = { apiBase: "", health: "checking", selectedFile: null, selectedImage: null, selectedAudio: null };
   const safeParse = (value, fallback) => { try { return JSON.parse(value) ?? fallback; } catch { return fallback; } };
@@ -99,11 +99,11 @@
     $("#sidebar").classList.remove("open");
     if(active==="activity")renderHistory();
   }
-  async function postJson(paths,body,target,label) {
+  async function postForm(paths,form,target,label) {
     target.innerHTML='<div class="result-card unknown"><div class="result-top"><span class="result-dot"></span><strong>Checking…</strong></div><p>Sending your request to CyberGuard. Please wait for the service response.</p></div>';
     let last;
     for(const path of paths) {
-      try { const data=await request(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)}); renderResult(target,data,label); return; }
+      try { const data=await request(path,{method:"POST",body:form}); renderResult(target,data,label); return; }
       catch(e) { last=e; if(e.status!==404 && e.status!==405)break; }
     }
     renderError(target,last||new Error("No compatible endpoint was found."));
@@ -112,7 +112,7 @@
     target.innerHTML='<div class="result-card unknown"><div class="result-top"><span class="result-dot"></span><strong>Uploading for analysis…</strong></div><p>Waiting for the connected service to finish.</p></div>';
     let last;
     for(const path of paths) {
-      try { const form=new FormData(); form.append("file",file); const data=await request(path,{method:"POST",body:form}); renderResult(target,data,label); return; }
+      try { const form=new FormData(); form.append("file",file); form.append("source","personal_frontend"); const data=await request(path,{method:"POST",body:form}); renderResult(target,data,label); return; }
       catch(e) { last=e; if(e.status!==404 && e.status!==405)break; }
     }
     renderError(target,last||new Error("No compatible upload endpoint was found."));
@@ -120,7 +120,7 @@
   $("#scanUrlBtn").addEventListener("click",()=>{
     const value=$("#urlInput").value.trim(), target=$("#urlResult");
     if(!/^https?:\/\//i.test(value)){toast("Enter a complete link starting with http:// or https://.");$("#urlInput").focus();return;}
-    postJson(knownEndpoints.url,{url:value},target,"Link check");
+    const form=new FormData(); form.append("url",value); form.append("source","personal_frontend"); postForm(knownEndpoints.url,form,target,"Link check");
   });
   $("#fileInput").addEventListener("change",e=>{state.selectedFile=e.target.files[0]||null;$("#fileName").textContent=state.selectedFile?state.selectedFile.name+" • "+Math.round(state.selectedFile.size/1024)+" KB":"No file selected";$("#scanFileBtn").disabled=!state.selectedFile;});
   $("#scanFileBtn").addEventListener("click",()=>state.selectedFile&&postFile(knownEndpoints.file,state.selectedFile,$("#fileResult"),"File scan"));
