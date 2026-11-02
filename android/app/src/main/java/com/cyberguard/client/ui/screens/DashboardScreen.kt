@@ -3,6 +3,7 @@ package com.cyberguard.client.ui.screens
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -41,6 +43,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.cyberguard.client.R
 import com.cyberguard.client.network.ConnectionState
 import com.cyberguard.client.ui.MainViewModel
 import com.cyberguard.client.ui.Screen
@@ -62,9 +65,10 @@ enum class ThreatAlertLevel {
 fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
     val state by viewModel.connectionState.collectAsState()
     val serverUrl by viewModel.serverUrl.collectAsState()
+    val activeEndpointType by viewModel.activeEndpointType.collectAsState()
+    val showConnectionSettings by viewModel.showConnectionSettings.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
     val summary by viewModel.dashboardSummary.collectAsState()
-    val systemStatus by viewModel.systemStatus.collectAsState()
     val isSummaryLoading by viewModel.isSummaryLoading.collectAsState()
     val showSharedAuthModal by viewModel.showAuthModal.collectAsState()
     val coroutineScope = rememberCoroutineScope()
@@ -127,16 +131,6 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
             repeatMode = RepeatMode.Restart
         ),
         label = "orbitRotation2"
-    )
-
-    val flareScale by infiniteTransition.animateFloat(
-        initialValue = 0.85f,
-        targetValue = 1.25f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "flareScale"
     )
 
     val biometricLaserY by infiniteTransition.animateFloat(
@@ -532,71 +526,26 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
             .padding(horizontal = 20.dp, vertical = 18.dp)
     ) {
         // ══════════════════════════════════════════════════════════════════════
-        // 1. TOP BRAND HEADER WITH MULTI-COLOR QUANTUM SHIELD & ORBITAL RINGS
+        // 1. TOP BRAND HEADER WITH OFFICIAL CYBERGUARD EMBLEM & TACTICAL FRAME
         // ══════════════════════════════════════════════════════════════════════
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Multi-Color Orbital Ring Quantum Shield Matrix Badge
+            // Official CyberGuard Emblem with Tactical Red & Yellow Cyber Framing
             Box(
-                modifier = Modifier.size(62.dp),
+                modifier = Modifier
+                    .size(56.dp)
+                    .clip(CutCornerShape(10.dp))
+                    .background(ElevatedSurface)
+                    .border(1.2.dp, PrimaryRed.copy(alpha = 0.85f), CutCornerShape(10.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Canvas(modifier = Modifier.size(62.dp)) {
-                    val cx = size.width / 2f
-                    val cy = size.height / 2f
-
-                    // Ring 1: Solar Amber Ellipse
-                    rotate(orbitRotation1, pivot = Offset(cx, cy)) {
-                        drawOval(
-                            color = CyberAmber.copy(alpha = 0.55f),
-                            topLeft = Offset(cx - 28.dp.toPx(), cy - 13.dp.toPx()),
-                            size = Size(56.dp.toPx(), 26.dp.toPx()),
-                            style = Stroke(width = 1.1.dp.toPx())
-                        )
-                        // Orbiting Node 1
-                        drawCircle(CyberAmber, radius = 2.5.dp.toPx(), center = Offset(cx + 28.dp.toPx(), cy))
-                        drawCircle(Color.White, radius = 1.2.dp.toPx(), center = Offset(cx + 28.dp.toPx(), cy))
-                    }
-
-                    // Ring 2: Deep Neon Magenta Ellipse
-                    rotate(orbitRotation2, pivot = Offset(cx, cy)) {
-                        drawOval(
-                            color = DeepNeonMagenta.copy(alpha = 0.50f),
-                            topLeft = Offset(cx - 15.dp.toPx(), cy - 28.dp.toPx()),
-                            size = Size(30.dp.toPx(), 56.dp.toPx()),
-                            style = Stroke(width = 1.1.dp.toPx())
-                        )
-                        // Orbiting Node 2
-                        drawCircle(DeepNeonMagenta, radius = 2.5.dp.toPx(), center = Offset(cx, cy - 28.dp.toPx()))
-                        drawCircle(Color.White, radius = 1.2.dp.toPx(), center = Offset(cx, cy - 28.dp.toPx()))
-                    }
-
-                    // Ring 3: Emerald Green Diagonal Orbit
-                    rotate(orbitRotation1 * 0.7f + 45f, pivot = Offset(cx, cy)) {
-                        drawOval(
-                            color = EmeraldGreen.copy(alpha = 0.40f),
-                            topLeft = Offset(cx - 26.dp.toPx(), cy - 15.dp.toPx()),
-                            size = Size(52.dp.toPx(), 30.dp.toPx()),
-                            style = Stroke(width = 0.9.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 8f), 0f))
-                        )
-                    }
-
-                    // Ring 4: Laser Cyan Circular Boundary Reticle
-                    drawCircle(
-                        color = CyberNeonCyan.copy(alpha = 0.75f),
-                        radius = 29.dp.toPx(),
-                        style = Stroke(width = 1.2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 6f), 0f))
-                    )
-
-                    // Inner Faceted Holographic Quantum Shield
-                    drawQuantumShieldFacet(
-                        center = Offset(cx, cy),
-                        width = 22.dp.toPx(),
-                        height = 26.dp.toPx()
-                    )
-                }
+                Image(
+                    painter = painterResource(id = R.drawable.ic_cyberguard_emblem),
+                    contentDescription = "CyberGuard Emblem",
+                    modifier = Modifier.size(46.dp)
+                )
             }
 
             Spacer(modifier = Modifier.width(14.dp))
@@ -611,30 +560,25 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                             fontSize = 20.sp,
                             letterSpacing = 2.4.sp,
                             brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color(0xFFFFFFFF),
-                                    Color(0xFFE2F8FF),
-                                    Color(0xFF7DD3FC),
-                                    CyberNeonCyan
-                                )
+                                colors = if (CyberGuardTheme.isDark) {
+                                    listOf(
+                                        PureWhite,
+                                        OffWhite,
+                                        SignalYellow,
+                                        PrimaryRed
+                                    )
+                                } else {
+                                    listOf(
+                                        LightTextPrimary,
+                                        PrimaryRed,
+                                        DeepRed
+                                    )
+                                }
                             )
                         ),
                         maxLines = 1,
                         softWrap = false
                     )
-
-                    // 4-Point Radiant Diamond Star Flare Glint
-                    Canvas(
-                        modifier = Modifier
-                            .size(14.dp)
-                            .offset(x = 8.dp, y = (-3).dp)
-                    ) {
-                        drawStarGlint(
-                            center = Offset(size.width / 2, size.height / 2),
-                            radius = 6.dp.toPx() * flareScale,
-                            color = LensFlareWhite
-                        )
-                    }
                 }
 
                 Spacer(modifier = Modifier.height(2.dp))
@@ -647,7 +591,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 1.sp
                     ),
-                    color = CyberNeonCyan
+                    color = SignalYellow
                 )
             }
         }
@@ -710,9 +654,9 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = if (currentUser != null)
-                            "COMMANDER: ${currentUser!!.username.uppercase()} //"
+                            "COMMANDER: ${currentUser!!.username.uppercase()}"
                         else
-                            "COMMANDER IN CHARGE //",
+                            "COMMANDER IN CHARGE",
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Black,
@@ -778,7 +722,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                                 fontSize = 9.sp,
                                 letterSpacing = 1.sp
                             ),
-                            color = Color(0xFFE2F8FF)
+                            color = PureWhite
                         )
                     }
                 }
@@ -820,11 +764,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = when (state) {
-                            ConnectionState.CONNECTED -> "Connected via Local Network"
-                            ConnectionState.DISCOVERING -> "Scanning network for CyberGuard host..."
-                            ConnectionState.VALIDATING -> "Validating core telemetry link..."
-                            else -> "Core connection disconnected"
+                        text = when {
+                            state == ConnectionState.CONNECTED && activeEndpointType == "LOCAL_LAN" -> "Connected via Local LAN (Docker)"
+                            state == ConnectionState.CONNECTED && activeEndpointType == "CLOUD_TUNNEL" -> "Connected via Cloud Defense Node"
+                            state == ConnectionState.CONNECTED -> "Connected to CyberGuard Core"
+                            state == ConnectionState.DISCOVERING -> "Scanning network for CyberGuard host..."
+                            state == ConnectionState.VALIDATING -> "Validating core telemetry link..."
+                            else -> "Core connection disconnected (Tap to Configure)"
                         },
                         style = MaterialTheme.typography.bodySmall.copy(
                             fontFamily = FontFamily.Monospace,
@@ -849,11 +795,12 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Online Status Pill with Glowing Green Ring
+                // Online Status Pill with Settings Trigger
                 Surface(
                     shape = CutCornerShape(4.dp),
-                    color = Color(0xFF032617).copy(alpha = 0.9f),
-                    border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.75f))
+                    color = if (CyberGuardTheme.isDark) Color(0xFF032617).copy(alpha = 0.9f) else Color(0xFFE8F5E9),
+                    border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.75f)),
+                    modifier = Modifier.clickable { viewModel.openConnectionSettings() }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -863,7 +810,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                             modifier = Modifier
                                 .size(6.dp)
                                 .clip(RoundedCornerShape(3.dp))
-                                .background(StatusOnline)
+                                .background(if (state == ConnectionState.CONNECTED) StatusOnline else StatusCritical)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
@@ -884,6 +831,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                                 ConnectionState.DISCOVERING, ConnectionState.VALIDATING -> StatusWarning
                                 else -> StatusCritical
                             }
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Configure Backend",
+                            tint = CyberNeonCyan,
+                            modifier = Modifier.size(11.dp)
                         )
                     }
                 }
@@ -1095,8 +1049,8 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                                     color = if (criticalThreats > 0) StatusCritical else StatusOnline
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
+                                val arcColor = if (criticalThreats > 0) StatusCritical else StatusOnline
                                 Canvas(modifier = Modifier.size(16.dp)) {
-                                    val arcColor = if (criticalThreats > 0) StatusCritical else StatusOnline
                                     drawCircle(arcColor.copy(alpha = 0.25f), style = Stroke(width = 1.dp.toPx()))
                                     drawArc(
                                         color = arcColor,
@@ -1317,9 +1271,10 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.height(3.dp))
                         // Horizontal cyan slider bar
+                        val sliderTrackColor = TextDisabled
                         Canvas(modifier = Modifier.size(46.dp, 4.dp)) {
                             drawLine(
-                                color = TextDisabled,
+                                color = sliderTrackColor,
                                 start = Offset(0f, size.height / 2),
                                 end = Offset(size.width, size.height / 2),
                                 strokeWidth = 1.5.dp.toPx()
@@ -1399,11 +1354,14 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                         )
                         Spacer(modifier = Modifier.height(3.dp))
                         // Danger Meter Bar with Amber/Red Gradient
+                        val dangerOnline = StatusOnline
+                        val dangerCritical = StatusCritical
+                        val dangerBrush = Brush.horizontalGradient(
+                            listOf(dangerOnline, CyberAmber, dangerCritical)
+                        )
                         Canvas(modifier = Modifier.size(46.dp, 4.dp)) {
                             drawRect(
-                                brush = Brush.horizontalGradient(
-                                    listOf(StatusOnline, CyberAmber, StatusCritical)
-                                ),
+                                brush = dangerBrush,
                                 topLeft = Offset(0f, 0f),
                                 size = Size(size.width, size.height)
                             )
@@ -1478,12 +1436,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                             .border(1.dp, StatusOnline.copy(alpha = 0.6f), CutCornerShape(8.dp)),
                         contentAlignment = Alignment.Center
                     ) {
+                        val radarOnlineColor = StatusOnline
                         Canvas(modifier = Modifier.size(46.dp)) {
                             val cx = size.width / 2f
                             val cy = size.height / 2f
                             // Radiating Radar Waves
                             drawCircle(
-                                color = StatusOnline.copy(alpha = (1f - commsRadarPulse) * 0.5f),
+                                color = radarOnlineColor.copy(alpha = (1f - commsRadarPulse) * 0.5f),
                                 center = Offset(cx, cy),
                                 radius = 8.dp.toPx() + (commsRadarPulse * 14.dp.toPx()),
                                 style = Stroke(width = 1.2.dp.toPx())
@@ -1672,9 +1631,10 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                             .border(1.dp, StatusCritical.copy(alpha = incidentPulse * 0.7f), CutCornerShape(6.dp)),
                         contentAlignment = Alignment.Center
                     ) {
+                        val incidentCritColor = StatusCritical
                         Canvas(modifier = Modifier.size(38.dp)) {
                             drawCircle(
-                                color = StatusCritical.copy(alpha = (1f - incidentPulse) * 0.4f),
+                                color = incidentCritColor.copy(alpha = (1f - incidentPulse) * 0.4f),
                                 radius = size.width * 0.45f,
                                 style = Stroke(width = 1.dp.toPx())
                             )
@@ -1776,6 +1736,13 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
         }
 
         Spacer(modifier = Modifier.height(36.dp))
+    }
+
+    if (showConnectionSettings) {
+        com.cyberguard.client.ui.components.ConnectionSettingsModal(
+            viewModel = viewModel,
+            onDismiss = { viewModel.closeConnectionSettings() }
+        )
     }
 }
 

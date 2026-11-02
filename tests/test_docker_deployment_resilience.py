@@ -101,13 +101,13 @@ def test_cors_regex_allows_frontends_and_tunnels():
     assert not pattern.match("https://phishing-site.net")
 
 
-def test_frontend_config_has_no_render_dependency():
-    """Verify frontend/config.js does not contain hardcoded render.com endpoints."""
+def test_frontend_config_uses_the_active_cloud_backend():
+    """Keep the static frontend pointed at the verified active backend."""
     config_js_path = ROOT_DIR / "frontend" / "config.js"
     assert config_js_path.is_file()
 
     content = config_js_path.read_text(encoding="utf-8")
-    assert "onrender.com" not in content, "Must not reference decommissioned onrender.com host"
+    assert "https://cyberguard-backend-8rbz.onrender.com" in content
     assert "window.__CYBERGUARD_CONFIG__" in content, "Must define __CYBERGUARD_CONFIG__ object"
 
 

@@ -167,9 +167,47 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def preload_ecapa(model_name: str = "speechbrain/spkrec-ecapa-voxceleb") -> bool:
-    """Eagerly load ECAPA model at application startup."""
+    """Eagerly load ECAPA model at application startup (or on demand)."""
     return _load_ecapa(model_name)
 
 
+def is_ecapa_installed_on_disk() -> bool:
+    """Check if verified ECAPA-TDNN model weights exist on disk."""
+    savedir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        "backend", "models", "weights", "ecapa_tdnn"
+    )
+    if not os.path.isdir(savedir):
+        return False
+    # Check for core SpeechBrain checkpoint files
+    req_files = ["embedding_model.ckpt", "hyperparams.yaml"]
+    return all(os.path.exists(os.path.join(savedir, rf)) for rf in req_files)
+
+
+def is_ecapa_loaded_in_memory() -> bool:
+    """Return True only if ECAPA model is currently resident in RAM."""
+    return _ECAPA_AVAILABLE and _ECAPA_MODEL is not None
+
+
 def is_ecapa_available() -> bool:
-    return _ECAPA_AVAILABLE
+    """Return True if model is resident in RAM OR verified ready on disk for lazy loading."""
+    return _ECAPA_AVAILABLE or is_ecapa_installed_on_disk()
+
+
+def unload_ecapa() -> None:
+    """Release ECAPA model from active memory back to OS."""
+    global _ECAPA_MODEL, _ECAPA_AVAILABLE, _ECAPA_LOAD_ATTEMPTED
+    _ECAPA_MODEL = None
+    _ECAPA_AVAILABLE = False
+    _ECAPA_LOAD_ATTEMPTED = False
+    import gc
+    gc.collect()
+
+
+def get_ecapa_status() -> str:
+    """Truthful lifecycle state for System Health probes."""
+    if is_ecapa_loaded_in_memory():
+        return "READY_IN_MEMORY"
+    elif is_ecapa_installed_on_disk():
+        return "AVAILABLE_ON_DISK"
+    return "UNAVAILABLE"

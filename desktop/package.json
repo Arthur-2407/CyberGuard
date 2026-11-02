@@ -1,0 +1,68 @@
+{
+  "name": "cyberguard",
+  "version": "1.0.0",
+  "description": "CyberGuard Enterprise Endpoint Security & Multi-Modal Threat Defense Console",
+  "main": "main.js",
+  "author": "CyberGuard Core Security Team",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win nsis portable --x64",
+    "dist:installer": "electron-builder --win nsis --x64",
+    "dist:portable": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.cyberguard.desktop",
+    "productName": "CyberGuard",
+    "copyright": "Copyright © 2026 CyberGuard SOC AI",
+    "directories": {
+      "output": "../dist/windows",
+      "app": "."
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "engine/**/*",
+      "assets/**/*",
+      "frontend/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "artifactName": "CyberGuard-Setup.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "CyberGuard",
+      "uninstallDisplayName": "CyberGuard",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "portable": {
+      "artifactName": "CyberGuard-Portable.${ext}",
+      "splashImage": "assets/icon.ico"
+    }
+  }
+}

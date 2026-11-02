@@ -18,8 +18,12 @@ import logging
 import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
+import time
 
 logger = logging.getLogger(__name__)
+
+# Module-level circuit breaker to prevent repeated delays when DuckDuckGo is rate-limited or unavailable
+_ddgs_circuit_open_until: float = 0.0
 
 
 class LiveIntelScraper:
@@ -33,9 +37,16 @@ class LiveIntelScraper:
     def search_duckduckgo_osint(query: str, max_results: int = 4) -> List[Dict[str, str]]:
         """
         Query DuckDuckGo for live OSINT intelligence on domains, URLs, package names, or hashes.
+        Enforces a circuit breaker and fast-fail timeout to prevent blocking core threat intelligence.
         """
+        global _ddgs_circuit_open_until
         results: List[Dict[str, str]] = []
         if not query or query.strip() in ("N/A", "unknown", ""):
+            return results
+
+        # If circuit breaker is active (due to recent 429/403/timeout), skip immediately
+        if time.time() < _ddgs_circuit_open_until:
+            logger.debug(f"DuckDuckGo OSINT query skipped (circuit breaker active for next {_ddgs_circuit_open_until - time.time():.1f}s)")
             return results
 
         try:
@@ -43,7 +54,7 @@ class LiveIntelScraper:
                 from ddgs import DDGS
             except ImportError:
                 from duckduckgo_search import DDGS
-            with DDGS() as ddgs:
+            with DDGS(timeout=2.0) as ddgs:
                 clean_query = query.strip()
                 # If query is full URL, search domain and path keyword
                 if clean_query.startswith("http://") or clean_query.startswith("https://"):
@@ -58,7 +69,13 @@ class LiveIntelScraper:
                         "link": item.get("href", "") or item.get("link", ""),
                     })
         except Exception as exc:
-            logger.debug(f"DuckDuckGo OSINT query notice for '{query}': {exc}")
+            # Trip circuit breaker for 60 seconds on rate limits or engine failures
+            exc_str = str(exc).lower()
+            if "429" in exc_str or "rate" in exc_str or "403" in exc_str or "timeoutexception" in exc_str:
+                _ddgs_circuit_open_until = time.time() + 60.0
+                logger.info(f"DuckDuckGo OSINT rate-limited/timed out ({exc}). Circuit open for 60s to protect latency.")
+            else:
+                logger.debug(f"DuckDuckGo OSINT query notice for '{query}': {exc}")
         return results
 
     @staticmethod

@@ -64,6 +64,7 @@ data/audio_vault/
 *.m4a
 *.ogg
 demo/
+New folder/
 *_out.mp3
 test.mp3
 test_out.mp3
@@ -247,3 +248,34 @@ Problem_Statement_9.pdf
 # ------------------------------------------------------------------------------
 verification/
 
+
+# ------------------------------------------------------------------------------
+# 13. Node.js & Electron Desktop Packaging Artifacts
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+desktop/node_modules/
+desktop/dist/
+
+# -------------------------------------------------------------------------------
+# 14. Local audit, investigation & repair artifacts
+# -------------------------------------------------------------------------------
+/dist_backup/
+/docs/audits/
+/docs/WINDOWS_APPLICATION_AUDIT.md
+/docs/WINDOWS_DESKTOP_ARCHITECTURE.md
+/docs/WINDOWS_RELEASE_VERIFICATION.md
+/docs/WINDOWS_SECURITY_VALIDATION.md
+/android_master_pre_repair.patch
+/android_pre_master_hyper_prompt_backup.patch
+/forensic_system_wide_investigation.md
+/hyper.md
+/initial_working_state.patch
+/master_repair_pre_audit.patch
+/pre_admin_parity_backup.patch
+/pre_master_hyper_prompt_backup.patch
+/pre_phishing_pipeline_repair.patch
+/scripts/extracted_client_id.txt
+/scripts/oauth_evidence.json
+/scripts/last_android_prompt.txt
+/scripts/last_user_prompt.txt

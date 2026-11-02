@@ -119,6 +119,15 @@ class BrevoEmailClient:
                 recipient=target_recipient,
             )
 
+        if self.api_key.startswith("xsmtpsib-"):
+            return BrevoSendResult(
+                success=False,
+                delivery_status="CONFIGURATION_REQUIRED",
+                http_status=401,
+                error_message="Brevo REST API requires an API key ('xkeysib-' prefix from Brevo Dashboard > SMTP & API > API Keys). The configured BREVO_API_KEY is an SMTP password ('xsmtpsib-' prefix).",
+                recipient=target_recipient,
+            )
+
         if not target_sender or not self.is_valid_email(target_sender):
             return BrevoSendResult(
                 success=False,
@@ -391,7 +400,7 @@ class BrevoEmailClient:
             raw_err = f"SMTP error ({resp_err.smtp_code}): {resp_err.smtp_error.decode('utf-8', errors='ignore') if isinstance(resp_err.smtp_error, bytes) else str(resp_err.smtp_error)}"
             clean_err = self._sanitize_error_text(raw_err)
             if "525" in str(resp_err.smtp_code) or "Unauthorized IP" in clean_err:
-                clean_err += " (Brevo SMTP notice: please authorize server IP in Brevo Dashboard under SMTP & API > Authorized IPs)"
+                clean_err += " (Brevo SMTP notice: please authorize server IP in Brevo Dashboard under Settings > Security > Authorized IPs or deactivate IP restriction, or configure a Brevo REST API key [xkeysib-...])"
             logger.warning(f"[BrevoClient SMTP] Delivery failed to {target_recipient}: {clean_err}")
             return BrevoSendResult(
                 success=False,

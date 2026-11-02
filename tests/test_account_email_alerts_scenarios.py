@@ -276,7 +276,8 @@ def test_05_signed_out_user_no_email(client):
 
         # If notify_threat_event was called or skipped, ensure it was NEVER attributed to an email
         if mock_notify.called:
-            called_event = mock_notify.call_args[0][0]
+            call_args = mock_notify.call_args
+            called_event = call_args.args[0] if call_args.args else call_args.kwargs.get("threat_event")
             assert called_event.user_id is None
             assert called_event.user_email is None
 

@@ -1,0 +1,59 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "name": "cyberguard",
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "https://cyberguard-backend-8rbz.onrender.com/api/$1"
+    },
+    {
+      "source": "/health",
+      "destination": "https://cyberguard-backend-8rbz.onrender.com/health"
+    },
+    {
+      "source": "/personal",
+      "destination": "/personal/index.html"
+    },
+    {
+      "source": "/personal/",
+      "destination": "/personal/index.html"
+    },
+    {
+      "source": "/personal/(.*)",
+      "destination": "/personal/$1"
+    },
+    {
+      "source": "/((?!api/|personal/).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "X-Frame-Options",
+          "value": "SAMEORIGIN"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)\\.(css|js|png|jpg|jpeg|svg|webp|ico|json)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600, must-revalidate"
+        }
+      ]
+    }
+  ]
+}

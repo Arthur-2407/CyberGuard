@@ -123,12 +123,14 @@ async def websocket_stream(websocket: WebSocket):
                         ws_user_id = user_row.id
                         ws_user_email = user_row.email
                         ws_user_name = user_row.username
+                        user_role = getattr(user_row, "role", "user")
                         break
     except Exception as auth_err:
         logger.debug(f"WebSocket auth lookup notice: {auth_err}")
 
-    # Register this WebSocket with its session_id so alerts are routed only here.
-    await app_ws_notifier.connect(websocket, session_id)
+    ws_role = user_role if 'user_role' in locals() else "guest"
+    # Register this WebSocket with its session_id and user identity for zero-trust isolation
+    await app_ws_notifier.connect(websocket, session_id, user_id=ws_user_id, role=ws_role)
 
     logger.info(f"WebSocket stream session started: {session_id} (user_id={ws_user_id})")
 
@@ -335,13 +337,22 @@ async def websocket_stream(websocket: WebSocket):
                         speaker_similarity=speaker_similarity,
                     )
 
-                    # Voice classification: genuine human vs cloned synthetic voice (calibrated 3-way decision)
-                    if risk_snapshot.combined_risk < 0.40:
-                        voice_classification = "GENUINE_VOICE"
-                    elif risk_snapshot.combined_risk >= 0.70:
-                        voice_classification = "CLONED_VOICE"
+                    # Voice classification: genuine human vs cloned synthetic voice (calibrated multi-frame decision)
+                    # Require minimum multi-frame temporal consistency (at least 3 valid speech frames)
+                    # before issuing a definitive CLONED_VOICE verdict to prevent cellular codec bursts or acoustic transients
+                    # from causing instant false-positive alarms.
+                    if valid_frames < 3:
+                        if risk_snapshot.combined_risk < 0.40:
+                            voice_classification = "GENUINE_VOICE"
+                        else:
+                            voice_classification = "ANALYZING"
                     else:
-                        voice_classification = "INCONCLUSIVE"
+                        if risk_snapshot.combined_risk < 0.40:
+                            voice_classification = "GENUINE_VOICE"
+                        elif risk_snapshot.combined_risk >= 0.70:
+                            voice_classification = "CLONED_VOICE"
+                        else:
+                            voice_classification = "INCONCLUSIVE"
 
                     # Get recommendation
                     recommendation = threshold_engine.evaluate(risk_snapshot.combined_risk)
@@ -363,8 +374,10 @@ async def websocket_stream(websocket: WebSocket):
                     )
                     
                     # Feed high risk to Incident Manager only for confirmed synthetic cloned speech detections
-                    from backend.main import get_app_incident_manager
-                    inc_manager = get_app_incident_manager()
+                    # Isolated per caller: guest telemetry is ephemeral, authenticated users persist to their isolated DB
+                    from backend.incidents.incident_manager import get_incident_manager_for_user
+                    user_ctx = {"id": ws_user_id, "username": ws_user_name, "email": ws_user_email} if ws_user_id else None
+                    inc_manager = get_incident_manager_for_user(user_ctx) if user_ctx else None
                     if inc_manager and risk_snapshot.alert_level.value in ["HIGH", "CRITICAL"] and voice_classification == "CLONED_VOICE":
                         from backend.threats.models import ThreatEvent, ThreatCategory, RiskLevel, Explanation, Evidence
                         

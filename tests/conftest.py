@@ -9,12 +9,20 @@ before any test module runs.
 from __future__ import annotations
 
 import os
+import tempfile
+from pathlib import Path
 import pytest
+
+# Ensure testing flag is established immediately before any other module imports
+os.environ["TESTING"] = "true"
+_TEST_DB_DIRECTORY = tempfile.TemporaryDirectory(prefix="cyberguard-tests-")
+os.environ["CYBERGUARD_TEST_DB_PATH"] = str(Path(_TEST_DB_DIRECTORY.name) / "cyberguard.db")
 
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_suite_environment():
     """Ensure test environment variables and database are initialized deterministically."""
+    os.environ["TESTING"] = "true"
     os.environ.setdefault("CYBERGUARD_ADMIN_PASSWORD", "Admin@CyberGuard2026!")
     os.environ.setdefault("EMAIL_TEST_MODE", "true")
     os.environ.setdefault("VIRUSTOTAL_ENABLED", "true")
@@ -22,8 +30,16 @@ def setup_test_suite_environment():
     os.environ.setdefault("URLHAUS_ENABLED", "true")
     os.environ.setdefault("URLHAUS_AUTH_KEY", "ci-mock-urlhaus-key-for-testing")
 
-    from backend.storage.database import init_db
+    from backend.storage import database
     from backend.storage.auth import bootstrap_system
 
-    init_db("data/cyberguard.db")
-    bootstrap_system()
+    try:
+        database.init_db("data/cyberguard.db")
+        bootstrap_system()
+        yield
+    finally:
+        for engine in tuple(database._engines.values()):
+            engine.dispose()
+        database._engines.clear()
+        database._session_factories.clear()
+        _TEST_DB_DIRECTORY.cleanup()

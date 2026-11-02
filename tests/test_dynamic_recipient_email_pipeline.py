@@ -311,7 +311,8 @@ def test_05_untrusted_client_recipient_input_is_ignored(client, setup_users):
 
         # Verify that notify_threat_event was called with User A's verified email, NOT attacker's email
         assert mock_notify.called
-        threat_ev = mock_notify.call_args[0][0]
+        call_args = mock_notify.call_args
+        threat_ev = call_args.args[0] if call_args.args else call_args.kwargs.get("threat_event")
         assert threat_ev.affected_user == user_a.username
         assert threat_ev.user_id == user_a.id
         assert threat_ev.user_email == user_a.email

@@ -60,6 +60,8 @@ privacy:
 storage:
   # Primary SQLite database path (backward-compatible fallback supported)
   db_path: "data/cyberguard.db"
+  # Periodic database synchronization interval in seconds
+  sync_interval_sec: 180
 
 server:
   host: "0.0.0.0"
@@ -101,6 +103,8 @@ cyberguard:
   mitre_mapping_enabled: true
   incident_management_enabled: true
   simulation_mode_enabled: true
+  # Eager pre-warming of generative Qwen LLM (false for on-demand lazy loading)
+  prewarm_llm: false
 
 virustotal:
   enabled: true
@@ -161,4 +165,18 @@ image_forensics:
   face_eye_asymmetry_threshold: 0.35
   color_decorrelation_critical: 0.35
   color_decorrelation_moderate: 0.50
+
+malware:
+  enabled: true
+  clamscan_path: "clamscan"
+  clamd_host: "127.0.0.1"
+  clamd_port: 3310
+  clamd_enabled: true
+  yara_enabled: true
+  yara_rules_dir: "data/yara_rules"
+  max_scan_size_bytes: 1073741824
+  scan_timeout_sec: 60.0
+  archive_max_files: 1000
+  archive_max_total_bytes: 1073741824
+  archive_max_ratio: 50.0
 

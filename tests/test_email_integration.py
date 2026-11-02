@@ -382,7 +382,11 @@ async def test_duplicate_suppression():
     notifier.test_mode = True
 
     # Send first time
-    with mock.patch("backend.alerts.brevo_client.BrevoEmailClient.send_alert_email", new_callable=mock.AsyncMock) as mock_send:
+    with mock.patch("backend.alerts.brevo_client.BrevoEmailClient.send_smtp_email", new_callable=mock.AsyncMock) as mock_smtp, \
+         mock.patch("backend.alerts.brevo_client.BrevoEmailClient.send_alert_email", new_callable=mock.AsyncMock) as mock_send:
+        mock_smtp.return_value = BrevoSendResult(
+            success=True, delivery_status="PROVIDER_ACCEPTED", http_status=201, message_id="<dup-1>"
+        )
         mock_send.return_value = BrevoSendResult(
             success=True, delivery_status="PROVIDER_ACCEPTED", http_status=201, message_id="<dup-1>"
         )

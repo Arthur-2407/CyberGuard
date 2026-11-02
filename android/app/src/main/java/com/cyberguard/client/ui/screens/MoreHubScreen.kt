@@ -52,6 +52,8 @@ import kotlin.math.sin
 fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
     val currentUser by viewModel.currentUser.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    val activeMode by viewModel.activeMode.collectAsState()
+    val showConnectionSettings by viewModel.showConnectionSettings.collectAsState()
     val scrollState = rememberScrollState()
     val isAdmin = currentUser?.role.equals("admin", ignoreCase = true)
     val isConnected = connectionState == ConnectionState.CONNECTED
@@ -481,11 +483,103 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
         Spacer(modifier = Modifier.height(22.dp))
 
         // =========================================================================
+        // CONSOLE THEME APPEARANCE (Dark Mode / Light Mode)
+        // =========================================================================
+        SectionHeader("THEME APPEARANCE")
+        val isDarkTheme by viewModel.isDarkTheme.collectAsState()
+        CyberGuardCard(
+            modifier = Modifier.fillMaxWidth(),
+            containerColor = ElevatedSurface,
+            borderColor = HolographicGlowBorder
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "CONSOLE APPEARANCE",
+                        style = MaterialTheme.typography.titleMedium.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.5.sp,
+                            letterSpacing = 0.8.sp
+                        ),
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = if (isDarkTheme) "CyberGuard Obsidian Dark Interface" else "Lavender & Pastel Sage Light Interface",
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp
+                        ),
+                        color = TextSecondary
+                    )
+                }
+
+                Surface(
+                    shape = CutCornerShape(4.dp),
+                    color = if (isDarkTheme) ElevatedSurface else HighlightSurface,
+                    border = BorderStroke(1.dp, if (isDarkTheme) PrimaryRed else CyberGold)
+                ) {
+                    Text(
+                        text = if (isDarkTheme) "DARK" else "LIGHT",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 9.sp,
+                            letterSpacing = 0.6.sp
+                        ),
+                        color = if (isDarkTheme) PrimaryRed else CyberGold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                CyberButton(
+                    text = "DARK MODE",
+                    onClick = { viewModel.toggleTheme(true) },
+                    variant = if (isDarkTheme) CyberButtonVariant.PRIMARY else CyberButtonVariant.OUTLINED,
+                    modifier = Modifier.weight(1f)
+                )
+
+                CyberButton(
+                    text = "LIGHT MODE",
+                    onClick = { viewModel.toggleTheme(false) },
+                    variant = if (!isDarkTheme) CyberButtonVariant.PRIMARY else CyberButtonVariant.OUTLINED,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(22.dp))
+
+        // =========================================================================
         // 4. SECTION 1: CORE TACTICAL DESTINATIONS
         // =========================================================================
         SectionHeader("MORE — SECONDARY DESTINATIONS")
 
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Destination 0: Backend Connection Manager
+            FuturisticSubsystemCard(
+                title = "Backend Connection",
+                subtitle = "Configure Cloud, Local Wi-Fi/LAN, or Hybrid failover",
+                telemetryTag = "MODE: ${activeMode.name}",
+                icon = Icons.Default.SettingsEthernet,
+                accentColor = CyberNeonCyan,
+                pulseFactor = 1.0f,
+                badgeText = if (isConnected) "ONLINE" else "CONFIG",
+                onClick = { viewModel.openConnectionSettings() }
+            )
+
             // Destination 1: Device Security
             FuturisticSubsystemCard(
                 title = "Device Security",
@@ -780,6 +874,13 @@ fun MoreHubScreen(navController: NavController, viewModel: MainViewModel) {
             },
             containerColor = DeepSpaceBackground,
             shape = CutCornerShape(8.dp)
+        )
+    }
+
+    if (showConnectionSettings) {
+        com.cyberguard.client.ui.components.ConnectionSettingsModal(
+            viewModel = viewModel,
+            onDismiss = { viewModel.closeConnectionSettings() }
         )
     }
 }

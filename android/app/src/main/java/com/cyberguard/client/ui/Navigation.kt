@@ -15,6 +15,7 @@ sealed class Screen(val route: String, val title: String, val icon: @Composable 
     object Splash : Screen("splash", "Splash", { Icon(Icons.Default.Build, contentDescription = null) })
     object Dashboard : Screen("dashboard", "Home", { Icon(Icons.Default.Home, contentDescription = "Home") })
     object ThreatCenter : Screen("threat_center", "Threats", { Icon(Icons.Default.Shield, contentDescription = "Threats") })
+    object BrowsingHistory : Screen("browsing_history", "History", { Icon(Icons.Default.Language, contentDescription = "History") })
     object Comms : Screen("comms", "Comms", { Icon(Icons.Default.CellTower, contentDescription = "Comms") })
     object DeviceSecurity : Screen("device_security", "Device", { Icon(Icons.Default.PhoneAndroid, contentDescription = "Device") })
     object More : Screen("more", "More", { Icon(Icons.Default.Menu, contentDescription = "More") })
@@ -34,6 +35,7 @@ sealed class Screen(val route: String, val title: String, val icon: @Composable 
 val BottomNavScreens = listOf(
     Screen.Dashboard,
     Screen.ThreatCenter,
+    Screen.BrowsingHistory,
     Screen.Comms,
     Screen.DeviceSecurity,
     Screen.More
@@ -49,6 +51,11 @@ fun CyberGuardNavHost(
         composable(Screen.Splash.route) { SplashScreen(navController, viewModel) }
         composable(Screen.Dashboard.route) { DashboardScreen(navController, viewModel) }
         composable(Screen.ThreatCenter.route) { ThreatCenterScreen(navController, viewModel) }
+        composable(Screen.BrowsingHistory.route) { BrowsingHistoryScreen(navController, viewModel) }
+        composable("browsing_history_detail/{domain}") { backStackEntry ->
+            val domain = backStackEntry.arguments?.getString("domain") ?: ""
+            BrowsingHistoryDetailScreen(navController, viewModel, domain)
+        }
         composable(Screen.Comms.route) { CommsScreen(navController, viewModel) }
         composable("call_monitor") { CommsScreen(navController, viewModel) } // Backward compatibility
         composable(Screen.DeviceSecurity.route) { DeviceSecurityScreen(navController, viewModel) }

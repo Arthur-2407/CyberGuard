@@ -33,9 +33,11 @@ from backend.storage.database import (
     AdminAuditLogModel,
     AnalysisRecordModel,
     AuthSessionModel,
+    BrowsingHistoryModel,
     CallSession,
     EmailAlertRecordModel,
     ReviewQueueModel,
+    ScreenedCallIncidentModel,
     SpeakerProfile,
     ThreatEventModel,
     ThreatEvidenceModel,
@@ -124,6 +126,8 @@ class UserAccountService:
 
         purged_stats: Dict[str, int] = {
             "auth_sessions": 0,
+            "browsing_history": 0,
+            "screened_call_incidents": 0,
             "analysis_records": 0,
             "review_queue_items": 0,
             "uncommitted_training_samples": 0,
@@ -237,6 +241,20 @@ class UserAccountService:
             purged_stats["auth_sessions"] = (
                 db.query(AuthSessionModel)
                 .filter(AuthSessionModel.user_id == target_id)
+                .delete(synchronize_session=False)
+            )
+
+            # A2. Browsing history
+            purged_stats["browsing_history"] = (
+                db.query(BrowsingHistoryModel)
+                .filter(BrowsingHistoryModel.user_id == target_id)
+                .delete(synchronize_session=False)
+            )
+
+            # A3. Screened call incidents
+            purged_stats["screened_call_incidents"] = (
+                db.query(ScreenedCallIncidentModel)
+                .filter(ScreenedCallIncidentModel.user_id == target_id)
                 .delete(synchronize_session=False)
             )
 

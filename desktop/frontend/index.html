@@ -1,0 +1,1839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberGuard Endpoint Security</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="desktop-body">
+  <!-- Application Title Bar -->
+  <header class="app-titlebar">
+    <div class="titlebar-drag-region">
+      <div class="brand-badge">
+        <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <span class="brand-name">CYBERGUARD</span>
+        <span class="brand-version">ENDPOINT SECURE</span>
+      </div>
+    </div>
+    <div class="titlebar-controls">
+      <div id="conn-mode-indicator" class="status-pill" title="Active Connection Mode">
+        <span id="conn-status-dot" class="status-dot connecting"></span>
+        <span id="conn-mode-label">CONNECTING...</span>
+      </div>
+      <div id="auth-header-container">
+        <button id="btn-header-sign-in" class="btn btn-sm btn-outline">
+          <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          Sign In
+        </button>
+        <div id="auth-status-indicator" class="status-pill auth-pill hidden" title="Account Details">
+          <span class="user-avatar-small" id="header-user-avatar">U</span>
+          <span id="auth-username-label">User</span>
+          <span class="user-role-badge" id="header-user-role">USER</span>
+          <button id="btn-header-logout" class="btn-icon-subtle" title="Sign Out">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Desktop Framework: Left Nav + Content -->
+  <div class="app-container">
+    <!-- Persistent Left Navigation Rail -->
+    <nav class="nav-rail">
+      <div class="nav-section-title">CORE SECURITY</div>
+      <button class="nav-item active" data-view="dashboard">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        <span>Home Dashboard</span>
+      </button>
+      <button class="nav-item" data-view="device-protection">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span>Real-Time Protection</span>
+      </button>
+      <button class="nav-item" data-view="file-scanner">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        <span>File Scanner</span>
+      </button>
+      <button class="nav-item" data-view="quarantine-vault">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span>Quarantine Vault</span>
+        <span id="quarantine-badge" class="nav-counter">0</span>
+      </button>
+
+      <div class="nav-section-title">NETWORK & WEB</div>
+      <button class="nav-item" data-view="web-protection">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span>Web Protection</span>
+      </button>
+      <button class="nav-item" data-view="browsing-history">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Browsing History</span>
+      </button>
+      <button class="nav-item" data-view="email-protection">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        <span>Email Protection</span>
+      </button>
+
+      <div class="nav-section-title">MANAGEMENT</div>
+      <button class="nav-item" data-view="security-alerts">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        <span>Security Alerts</span>
+        <span id="alerts-badge" class="nav-counter danger">0</span>
+      </button>
+      <button class="nav-item" data-view="network-sync">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <span>Connectivity & Sync</span>
+      </button>
+      <button class="nav-item" data-view="settings">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Settings & Account</span>
+      </button>
+
+      <!-- ADMINISTRATOR NAVIGATION (Visible strictly for authorized admins) -->
+      <div class="nav-section-title admin-only hidden" id="nav-section-admin">ADMINISTRATION</div>
+      <button class="nav-item admin-only hidden" data-view="admin-console" id="nav-item-admin-console" role="tab" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><circle cx="12" cy="11" r="3"/><path d="M12 14v3"/></svg>
+        <span>Admin Console</span>
+        <span class="nav-counter" id="admin-users-badge" style="background:#4F46E5; color:#fff; display:none;">0</span>
+      </button>
+      <button class="nav-item admin-only hidden" data-view="training-review" id="nav-item-training-review" role="tab" aria-selected="false">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        <span>Training Review</span>
+        <span class="nav-counter danger" id="admin-review-badge" style="display:none;">0</span>
+      </button>
+    </nav>
+
+    <!-- Main Dynamic Content Workspace -->
+    <main class="content-viewport">
+
+      <!-- VIEW 1: HOME DASHBOARD -->
+      <section id="view-dashboard" class="content-panel active">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">System Protection Status</h1>
+            <p class="panel-subtitle">Continuous endpoint threat mitigation and real-time behavioral telemetry.</p>
+          </div>
+          <button id="btn-quick-scan-dash" class="btn btn-primary">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Quick Scan
+          </button>
+        </div>
+
+        <!-- Master Protection Banner -->
+        <div id="master-status-card" class="protection-banner secure" role="button" tabindex="0" aria-label="View security event details" title="Click to view security event details">
+          <div class="banner-icon-container">
+            <svg class="banner-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <polyline points="9 12 11 14 15 10"/>
+            </svg>
+          </div>
+          <div class="banner-text">
+            <h2 id="master-status-title" class="banner-title">Your Endpoint is Protected</h2>
+            <p id="master-status-desc" class="banner-desc">Real-time filesystem guardian and execution shield are fully active. All engines nominal.</p>
+          </div>
+          <div class="banner-meta">
+            <div class="meta-label">LAST THREAT DEFENSE</div>
+            <div id="master-last-event" class="meta-value">0 threats detected today</div>
+            <div class="banner-action-cue"><span class="text-xs font-semibold">View Event Evidence &rarr;</span></div>
+          </div>
+        </div>
+
+        <!-- Shield Status Cards Grid -->
+        <div class="shields-grid">
+          <div class="shield-card">
+            <div class="shield-card-header">
+              <div class="shield-card-icon file-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-file-shield-dash" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <h3 class="shield-card-title">File System Shield</h3>
+            <p class="shield-card-desc">Intercepts drops, downloads, and executables with Shannon entropy analysis.</p>
+            <div class="shield-card-status active">ACTIVE & MONITORING</div>
+          </div>
+
+          <div class="shield-card">
+            <div class="shield-card-header">
+              <div class="shield-card-icon process-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-proc-shield-dash" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <h3 class="shield-card-title">Process & App Monitor</h3>
+            <p class="shield-card-desc">Monitors suspicious execution spawns from temp folders and LOLBin vectors.</p>
+            <div class="shield-card-status active">ACTIVE (<span id="dash-proc-count">0</span> PROCS)</div>
+          </div>
+
+          <div class="shield-card">
+            <div class="shield-card-header">
+              <div class="shield-card-icon web-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/></svg>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="toggle-web-shield-dash" checked>
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <h3 class="shield-card-title">Web & DNS Shield</h3>
+            <p class="shield-card-desc">Evaluates phishing domains, punycode lookalikes, and synchronizes history.</p>
+            <div class="shield-card-status active">ACTIVE (<span id="dash-block-count">5</span> BLOCKED)</div>
+          </div>
+
+          <div class="shield-card">
+            <div class="shield-card-header">
+              <div class="shield-card-icon email-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+              </div>
+              <span id="dash-email-status-badge" class="badge-neutral">STANDBY</span>
+            </div>
+            <h3 class="shield-card-title">Email Protection</h3>
+            <p class="shield-card-desc">Google OAuth 2.0 phishing scanner with official admin whitelist exemption.</p>
+            <div id="dash-email-subtext" class="shield-card-status muted">READY TO CONNECT</div>
+          </div>
+        </div>
+
+        <!-- Recent Activity Feed -->
+        <div class="card-surface mt-6">
+          <div class="card-header-row">
+            <div>
+              <h3 class="card-heading">Live Telemetry & Recent Activity</h3>
+              <span class="text-muted text-sm">Real-time local event stream</span>
+            </div>
+            <div class="header-action">
+              <select id="filter-telemetry-outcome" class="form-select text-xs">
+                <option value="ALL">All Outcomes</option>
+                <option value="FLAGGED">Flagged / Threats Only</option>
+                <option value="OBSERVED">Observed Processes</option>
+                <option value="BLOCKED">Blocked / Mitigated</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>TIMESTAMP</th>
+                  <th>SOURCE</th>
+                  <th>EVENT CATEGORY</th>
+                  <th>TARGET / FILE</th>
+                  <th>OUTCOME</th>
+                  <th>SEVERITY</th>
+                </tr>
+              </thead>
+              <tbody id="dash-activity-tbody">
+                <tr>
+                  <td colspan="6" class="empty-state-row">No threats detected. Real-time file system guardian standing by.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 2: REAL-TIME DEVICE PROTECTION -->
+      <section id="view-device-protection" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Real-Time Endpoint Protection</h1>
+            <p class="panel-subtitle">Autonomous on-device filesystem watchdogs and behavioral process observation.</p>
+          </div>
+          <button id="btn-add-monitored-folder" class="btn btn-secondary">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+            Add Monitored Folder
+          </button>
+        </div>
+
+        <div class="grid-2-col">
+          <!-- Monitored Locations Card -->
+          <div class="card-surface">
+            <div class="card-header-row">
+              <h3 class="card-heading">Watched Storage Paths</h3>
+              <span id="watcher-status-tag" class="status-tag active">ACTIVE</span>
+            </div>
+            <p class="text-muted text-sm mb-4">Files added to these directories are inspected instantly upon write completion.</p>
+            <ul id="monitored-paths-list" class="item-list">
+              <!-- Dynamically populated -->
+            </ul>
+            <div class="checkbox-row mt-4">
+              <input type="checkbox" id="cfg-auto-quarantine">
+              <label for="cfg-auto-quarantine">Automatically isolate and quarantine confirmed malware</label>
+            </div>
+          </div>
+
+          <!-- Process Observer Telemetry -->
+          <div class="card-surface">
+            <div class="card-header-row">
+              <h3 class="card-heading">Process Execution Watchdog</h3>
+              <span id="proc-status-tag" class="status-tag active">OBSERVING</span>
+            </div>
+            <p class="text-muted text-sm mb-4">Monitors spawned Windows processes and detects untrusted temp launches.</p>
+            <div class="stats-counter-strip">
+              <div class="counter-box">
+                <div id="stat-proc-total" class="counter-val">0</div>
+                <div class="counter-lbl">ACTIVE PIDS</div>
+              </div>
+              <div class="counter-box">
+                <div id="stat-proc-flagged" class="counter-val">0</div>
+                <div class="counter-lbl">FLAGGED</div>
+              </div>
+              <div class="counter-box">
+                <div class="counter-val text-success">&lt;0.8%</div>
+                <div class="counter-lbl">CPU USAGE</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live File Inspection Log -->
+        <div class="card-surface mt-6">
+          <div class="card-header-row">
+            <h3 class="card-heading">Live File Drops & Process Spawns</h3>
+            <button id="btn-clear-telemetry-log" class="btn btn-sm btn-outline">Clear View</button>
+          </div>
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>TIME</th>
+                  <th>TYPE</th>
+                  <th>RESOURCE NAME</th>
+                  <th>LOCATION</th>
+                  <th>ENTROPY / RISK</th>
+                  <th>OUTCOME</th>
+                </tr>
+              </thead>
+              <tbody id="device-telemetry-tbody">
+                <tr>
+                  <td colspan="6" class="empty-state-row">Watching file drops and process creations...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: FILE SCANNER (MULTIMODAL) -->
+      <section id="view-file-scanner" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Multi-Modal File Scanner</h1>
+            <p class="panel-subtitle">Forensic malware disassembly, Shannon entropy, AI deepfake forensics, and document audit.</p>
+          </div>
+        </div>
+
+        <!-- Drop Zone Card -->
+        <div id="scanner-drop-zone" class="drop-zone-card">
+          <svg class="drop-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <h3 class="drop-title">Select or Drag File for Forensic Inspection</h3>
+          <p class="drop-subtitle">Supports PE Executables, Scripts, Images (PNG/JPG), Audio (MP3/WAV), Video (MP4), Documents & Archives</p>
+          <button id="btn-browse-scan-file" class="btn btn-primary mt-4">
+            Browse Local File
+          </button>
+        </div>
+
+        <!-- Pipeline Target & Mode Selection -->
+        <div class="pipeline-selector-bar">
+          <span class="text-sm font-semibold">ANALYSIS PIPELINE:</span>
+          <select id="select-scan-pipeline" class="form-select text-xs">
+            <option value="AUTO" selected>Auto-Detect Modality (Recommended)</option>
+            <option value="AUDIO">Neural Audio Forensics (ECAPA-TDNN / AASIST)</option>
+            <option value="IMAGE">Image Forensics (ELA / 2D-FFT / C2PA / MobileNetV3)</option>
+            <option value="VIDEO">Video Temporal Forensics (Multi-Frame Consistency)</option>
+            <option value="MALWARE">Malware Lab (ClamAV / YARA / PE Structure)</option>
+            <option value="DOCUMENT">Document & Archive Security (PDF / Office / Macros)</option>
+            <option value="STATIC">Local Static Inspection Only</option>
+          </select>
+          <span id="detected-modality-badge" class="modality-pill hidden">MODALITY: UNKNOWN</span>
+        </div>
+
+        <!-- Scan Progress Banner -->
+        <div id="scan-progress-box" class="card-surface mt-4 hidden">
+          <div class="card-header-row">
+            <span id="scan-progress-label" class="font-semibold text-sm">Initializing forensic scan...</span>
+            <span id="scan-progress-percent" class="mono text-xs text-muted">Processing</span>
+          </div>
+          <div class="scan-progress-bar-container">
+            <div id="scan-progress-bar" class="scan-progress-bar-fill indeterminate"></div>
+          </div>
+        </div>
+
+        <!-- Scan Result Card -->
+        <div id="scan-result-card" class="card-surface mt-6 hidden">
+          <div class="card-header-row">
+            <div>
+              <span id="scan-verdict-badge" class="verdict-badge clean">CLEAN</span>
+              <h3 id="scan-result-filename" class="card-heading inline-heading">sample.exe</h3>
+              <span id="scan-result-modality-badge" class="modality-pill ml-2">MALWARE</span>
+            </div>
+            <span id="scan-engine-name" class="text-muted text-sm">CyberGuard Forensic Pipeline</span>
+          </div>
+
+          <div class="result-metrics-grid mt-4">
+            <div class="metric-box">
+              <div class="metric-lbl">SHANNON ENTROPY</div>
+              <div id="scan-metric-entropy" class="metric-val">6.24 / 8.00</div>
+              <div class="metric-sub">Structural randomness</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-lbl">SHA-256 HASH</div>
+              <div id="scan-metric-hash" class="metric-val text-xs mono">e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855</div>
+              <div class="metric-sub">Cryptographic identity</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-lbl">FILE TYPE / MAGIC</div>
+              <div id="scan-metric-magic" class="metric-val">PE32+ Executable (MZ)</div>
+              <div class="metric-sub">Verified magic bytes</div>
+            </div>
+            <div class="metric-box">
+              <div class="metric-lbl">THREAT CATEGORY</div>
+              <div id="scan-metric-threat" class="metric-val">None (Safe)</div>
+              <div class="metric-sub">Classification outcome</div>
+            </div>
+          </div>
+
+          <!-- Forensic Evidence Box -->
+          <div id="scan-evidence-container" class="forensic-dossier-card hidden">
+            <h4 class="font-bold text-sm">Forensic Evidence & Sensor Findings</h4>
+            <ul id="scan-evidence-list" class="forensic-evidence-list"></ul>
+          </div>
+
+          <!-- Qwen AI Explanation Box -->
+          <div id="scan-ai-explanation-container" class="ai-explanation-box hidden">
+            <div class="ai-explanation-header">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+              <span>Qwen 2.5 Security AI Explanation</span>
+            </div>
+            <div id="scan-ai-explanation-text" class="ai-explanation-body">Generating explanation...</div>
+          </div>
+
+          <!-- Limitations Notice Box -->
+          <div id="scan-limitations-container" class="info-alert mt-4 hidden">
+            <span id="scan-limitations-text" class="text-xs"></span>
+          </div>
+
+          <!-- Action Buttons Row -->
+          <div class="action-row mt-4">
+            <button id="btn-view-dossier" class="btn btn-secondary">View Deep Forensic Dossier</button>
+            <button id="btn-explain-qwen" class="btn btn-secondary">Explain with Qwen AI</button>
+            <button id="btn-export-scan-report" class="btn btn-secondary">Export Dossier JSON</button>
+            <button id="btn-quarantine-scanned" class="btn btn-danger hidden">Move to Quarantine Vault</button>
+          </div>
+        </div>
+
+        <!-- Scan History Table -->
+        <div class="card-surface mt-6">
+          <h3 class="card-heading mb-4">Manual Scan History</h3>
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>DATE & TIME</th>
+                  <th>FILE NAME</th>
+                  <th>SIZE</th>
+                  <th>ENTROPY</th>
+                  <th>VERDICT</th>
+                  <th>SHA-256</th>
+                </tr>
+              </thead>
+              <tbody id="scan-history-tbody">
+                <tr>
+                  <td colspan="6" class="empty-state-row">No manual scans recorded yet.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: QUARANTINE VAULT -->
+      <section id="view-quarantine-vault" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Quarantine Vault</h1>
+            <p class="panel-subtitle">Isolated threats encrypted with .cgq extension to eliminate execution hazards.</p>
+          </div>
+        </div>
+
+        <div class="card-surface">
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>QUARANTINED AT</th>
+                  <th>ORIGINAL FILE NAME</th>
+                  <th>THREAT CLASSIFICATION</th>
+                  <th>SEVERITY</th>
+                  <th>ORIGINAL PATH</th>
+                  <th>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="quarantine-tbody">
+                <tr>
+                  <td colspan="6" class="empty-state-row">Quarantine Vault is currently empty. No isolated threats.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 5: WEB PROTECTION -->
+      <section id="view-web-protection" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Web & DNS Protection</h1>
+            <p class="panel-subtitle">Real-time anti-phishing, declarative DNS filtering, and browser shield integration.</p>
+          </div>
+          <div class="header-action">
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggle-web-shield-main" checked>
+              <span class="toggle-slider"></span>
+            </label>
+            <span class="text-sm font-semibold ml-2">Web Shield Active</span>
+          </div>
+        </div>
+
+        <!-- URL Reputation Tester -->
+        <div class="card-surface">
+          <h3 class="card-heading">Test Domain or URL Reputation</h3>
+          <p class="text-muted text-sm mb-4">Query local blocklists, punycode lookalike detectors, and URL reputation intelligence.</p>
+          <div class="input-action-row">
+            <input type="text" id="input-test-url" class="form-input" placeholder="Enter URL or domain (e.g. testsafebrowsing.appspot.com, paypal-verify.xyz)">
+            <button id="btn-test-url" class="btn btn-primary">Check Threat</button>
+          </div>
+          <div id="test-url-result" class="result-banner mt-4 hidden">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <!-- Blocked Domains Registry -->
+        <div class="card-surface mt-6">
+          <div class="card-header-row">
+            <h3 class="card-heading">Active Blocklist Registry</h3>
+            <span class="text-muted text-sm">Enforced via DNS & DeclarativeNetRequest</span>
+          </div>
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>DOMAIN</th>
+                  <th>THREAT CLASSIFICATION</th>
+                  <th>RULE REASON</th>
+                  <th>STATUS</th>
+                </tr>
+              </thead>
+              <tbody id="blocked-domains-tbody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 6: BROWSING HISTORY -->
+      <section id="view-browsing-history" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Browsing History & DNS Telemetry</h1>
+            <p class="panel-subtitle">DNS resolution records and blocking events across all authenticated client platforms.</p>
+          </div>
+          <button id="btn-sync-browsing-now" class="btn btn-secondary">Sync With Cloud</button>
+        </div>
+
+        <!-- Active Network Interface Indicator -->
+        <div class="status-pill mb-4" style="width: fit-content; gap: 8px;">
+          <span class="status-dot online"></span>
+          <span class="text-xs text-muted">MONITORED INTERFACE:</span>
+          <strong id="history-active-interface-val" class="text-xs">Ethernet / Wi-Fi</strong>
+        </div>
+
+        <!-- Filters Strip -->
+        <div class="filters-bar card-surface">
+          <div class="filter-group">
+            <label>PLATFORM SOURCE:</label>
+            <select id="filter-history-source" class="form-select">
+              <option value="ALL">All Platforms</option>
+              <option value="windows" selected>Windows Application</option>
+              <option value="android">Android Mobile</option>
+              <option value="website">Web Portal</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>ACTION:</label>
+            <select id="filter-history-action" class="form-select">
+              <option value="ALL">All Actions</option>
+              <option value="ALLOWED">Allowed Only</option>
+              <option value="BLOCKED">Blocked Only</option>
+            </select>
+          </div>
+          <div class="filter-group flex-grow">
+            <label>SEARCH DOMAIN:</label>
+            <input type="text" id="search-history-domain" class="form-input" placeholder="Search domain...">
+          </div>
+        </div>
+
+        <!-- History Table -->
+        <div class="card-surface mt-4">
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>TIME</th>
+                  <th>PLATFORM</th>
+                  <th>INTERFACE</th>
+                  <th>DOMAIN NAME</th>
+                  <th>ACTION</th>
+                  <th>BLOCK REASON / VERDICT</th>
+                </tr>
+              </thead>
+              <tbody id="history-tbody">
+                <tr>
+                  <td colspan="6" class="empty-state-row">No browsing records match the current filter.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 7: EMAIL PROTECTION (GMAIL INTELLIGENCE & PHISHING DEFENSE) -->
+      <section id="view-email-protection" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <div style="display: flex; align-items: center; gap: 10px;">
+              <h1 class="panel-title">Gmail &amp; Phishing Defense</h1>
+              <span id="email-header-status-badge" class="status-tag neutral">DISCONNECTED</span>
+            </div>
+            <p class="panel-subtitle">Intelligent mailbox monitoring, phishing detection, email threat intelligence, and AI-powered security analysis.</p>
+          </div>
+          <div class="header-actions">
+            <button id="btn-email-refresh-all" class="btn btn-secondary text-xs" onclick="syncMailboxInteractive(this)">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Refresh Mailbox
+            </button>
+          </div>
+        </div>
+
+        <!-- SECTION B: Google Account Integration -->
+        <div class="card-surface">
+          <div class="card-header-row">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div class="integration-icon-wrap" style="width: 40px; height: 40px; border-radius: 8px; background: #EEF2FF; display: flex; align-items: center; justify-content: center; color: #4F46E5; font-weight: 700; font-size: 18px;">
+                G
+              </div>
+              <div>
+                <h3 class="card-heading">Google Account Integration</h3>
+                <p class="text-muted text-sm">OAuth 2.0 PKCE authorized mailbox monitoring. Inspects MIME structures, headers, and attachments via read-only scope without collecting credentials.</p>
+              </div>
+            </div>
+            <div id="gmail-auth-status-badge" class="status-tag neutral">DISCONNECTED</div>
+          </div>
+
+          <!-- State 1: Missing Configuration Setup Panel (In-Page, Zero Popups) -->
+          <div id="gmail-setup-required-box" class="oauth-setup-panel mt-4 hidden" style="background: #FFFBEB; border: 1px solid #FDE68A; border-radius: 8px; padding: 18px;">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+              <svg style="width: 24px; height: 24px; color: #D97706; flex-shrink: 0;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <div style="flex: 1;">
+                <h4 style="font-weight: 700; color: #92400E; margin-bottom: 4px; font-size: 14px;">Google OAuth Setup Required</h4>
+                <p style="color: #B45309; font-size: 13px; line-height: 1.5; margin-bottom: 12px;">
+                  A public Google Cloud OAuth 2.0 Client ID is required to initiate external browser consent. Please provide your Client ID below or configure it in Settings.
+                </p>
+                <div style="display: flex; gap: 8px; max-width: 600px;">
+                  <input type="text" id="input-email-setup-client-id" class="form-input" placeholder="e.g. 676005930102-xxx.apps.googleusercontent.com" style="background:#FFF;">
+                  <button type="button" class="btn btn-primary text-xs" onclick="handleSaveOAuthClientIdInline()" style="white-space:nowrap;">Save &amp; Connect</button>
+                  <button type="button" class="btn btn-secondary text-xs" onclick="switchView('settings')" style="white-space:nowrap;">Open Settings</button>
+                </div>
+                <div id="inline-oauth-setup-msg" class="text-xs mt-2 hidden" style="font-weight: 600;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- State 2: Disconnected State (Ready to Connect) -->
+          <div id="gmail-connect-box" class="email-auth-controls mt-4">
+            <p class="text-muted text-sm mb-3">Connect your authorized Gmail mailbox to activate continuous threat intelligence, DKIM/SPF sender verification, attachment sandboxing, and automated phishing alerts.</p>
+            <div class="action-row" style="display: flex; gap: 10px; align-items: center;">
+              <button id="btn-authorize-gmail-oauth" class="btn btn-primary">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                Connect Google Account
+              </button>
+              <button id="btn-configure-oauth-id" class="btn btn-secondary text-xs" onclick="toggleInlineOAuthSetup()">
+                Configure Client ID
+              </button>
+            </div>
+          </div>
+
+          <!-- State 3: Connected State -->
+          <div id="gmail-connected-box" class="hidden mt-4">
+            <div class="profile-info-row" style="align-items: center;">
+              <div class="user-avatar-small" style="width: 36px; height: 36px; font-size: 14px; background: #0284C7;">G</div>
+              <div>
+                <div class="font-bold text-sm">Connected Mailbox: <span id="gmail-active-email" class="mono text-success">user@gmail.com</span></div>
+                <div class="text-muted text-xs mt-1">Scope: <span class="mono">gmail.readonly</span> &bull; Status: <span id="gmail-watch-status" class="text-success font-semibold">Active Monitoring</span></div>
+              </div>
+            </div>
+            <div class="action-row mt-4" style="display: flex; gap: 10px;">
+              <button id="btn-sync-gmail-now" class="btn btn-secondary btn-sm" onclick="syncMailboxInteractive(this)">Sync Mailbox Now</button>
+              <button id="btn-revoke-gmail" class="btn btn-outline btn-sm text-danger">Disconnect Account</button>
+            </div>
+          </div>
+
+          <!-- Cryptographically Verified Admin Exemption Notice -->
+          <div class="info-alert mt-4" style="background: #F8FAFC; border-color: #E2E8F0; color: #334155;">
+            <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: #3B82F6;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            <div class="text-xs">
+              <strong>Cryptographic Administrative Verification:</strong> System security bulletins from CyberGuard Administrator (<code id="label-trusted-admin-email">cyberguardadmin@gmail.com</code>) are evaluated via strict DKIM &amp; SPF cryptographic signature validation to ensure zero spoofing.
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION C: Email Security Overview KPI Cards -->
+        <div class="admin-kpi-grid mt-6">
+          <div class="kpi-card-nexus cursor-pointer" onclick="filterEmailCategory('all')">
+            <div class="kpi-lbl">TOTAL EMAILS ANALYZED</div>
+            <div id="email-kpi-total" class="kpi-val text-main">0</div>
+            <div class="kpi-sub">Persisted Mailbox Records</div>
+          </div>
+          <div class="kpi-card-nexus cursor-pointer" onclick="filterEmailCategory('Genuine / Trusted')">
+            <div class="kpi-lbl">GENUINE / TRUSTED</div>
+            <div id="email-kpi-genuine" class="kpi-val text-success">0</div>
+            <div class="kpi-sub">Verified Clean Artifacts</div>
+          </div>
+          <div class="kpi-card-nexus cursor-pointer" onclick="filterEmailCategory('Phishing')">
+            <div class="kpi-lbl">PHISHING DETECTED</div>
+            <div id="email-kpi-phishing" class="kpi-val text-danger">0</div>
+            <div class="kpi-sub">Credential Harvesters</div>
+          </div>
+          <div class="kpi-card-nexus cursor-pointer" onclick="filterEmailCategory('Scam')">
+            <div class="kpi-lbl">SCAM &amp; FRAUD DETECTED</div>
+            <div id="email-kpi-fraud" class="kpi-val" style="color: #D97706;">0</div>
+            <div class="kpi-sub">Deceptive Financial Lures</div>
+          </div>
+        </div>
+
+        <!-- SECTION D: Email Threat Analytics Graph -->
+        <div class="card-surface mt-6" id="email-analytics-card">
+          <div class="card-header-row">
+            <div>
+              <h3 class="card-heading">Email Threat Intelligence Analytics</h3>
+              <p class="text-muted text-sm">Empirical distribution of threat modalities and time-series telemetry across authorized mailbox sync runs.</p>
+            </div>
+            <div class="chart-range-group" style="display: flex; gap: 4px;">
+              <button class="btn btn-xs email-chart-range active" data-range="24h" onclick="setEmailChartRange('24h')">Last 24 Hours</button>
+              <button class="btn btn-xs email-chart-range" data-range="7d" onclick="setEmailChartRange('7d')">Last 7 Days</button>
+              <button class="btn btn-xs email-chart-range" data-range="30d" onclick="setEmailChartRange('30d')">Last 30 Days</button>
+              <button class="btn btn-xs email-chart-range" data-range="all" onclick="setEmailChartRange('all')">All Time</button>
+            </div>
+          </div>
+          <div class="email-analytics-grid mt-4" style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px; align-items: center;">
+            <div class="chart-canvas-wrap" style="height: 220px; position: relative;">
+              <canvas id="email-threat-chart-canvas" width="600" height="220" style="width:100%; height:100%;"></canvas>
+            </div>
+            <div class="email-analytics-legend" id="email-category-distribution-legend">
+              <!-- Dynamically populated category distribution meters -->
+            </div>
+          </div>
+        </div>
+
+        <!-- SECTION E: Recent Analyzed Emails & Threat Findings (BELOW Graph) -->
+        <div class="card-surface mt-6">
+          <div class="card-header-row" style="flex-wrap: wrap; gap: 12px;">
+            <div>
+              <h3 class="card-heading">Recent Analyzed Emails &amp; Threat Findings</h3>
+              <p id="gmail-findings-subtitle" class="text-muted text-sm">Granular mailbox intelligence records. Inspect forensic indicators or update ground-truth classification.</p>
+            </div>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <input type="text" id="input-email-filter-search" class="form-input text-xs" placeholder="Search sender, subject..." style="width: 200px; padding: 6px 10px;" oninput="filterEmailsBySearch(this.value)">
+              <button id="btn-clear-email-findings" class="btn btn-sm btn-outline text-xs" onclick="handleClearEmailFindings()">Clear View</button>
+            </div>
+          </div>
+
+          <!-- Category Filter Tabs -->
+          <div class="email-category-tabs mt-4" style="display: flex; gap: 6px; flex-wrap: wrap;">
+            <button class="btn btn-xs email-filter-pill active" data-category="all" onclick="filterEmailCategory('all')">All (<span id="filter-cnt-all">0</span>)</button>
+            <button class="btn btn-xs email-filter-pill" data-category="Genuine / Trusted" onclick="filterEmailCategory('Genuine / Trusted')">Genuine (<span id="filter-cnt-genuine">0</span>)</button>
+            <button class="btn btn-xs email-filter-pill" data-category="Phishing" onclick="filterEmailCategory('Phishing')">Phishing (<span id="filter-cnt-phishing">0</span>)</button>
+            <button class="btn btn-xs email-filter-pill" data-category="Scam" onclick="filterEmailCategory('Scam')">Scam (<span id="filter-cnt-scam">0</span>)</button>
+            <button class="btn btn-xs email-filter-pill" data-category="Fraud" onclick="filterEmailCategory('Fraud')">Fraud (<span id="filter-cnt-fraud">0</span>)</button>
+            <button class="btn btn-xs email-filter-pill" data-category="Suspicious" onclick="filterEmailCategory('Suspicious')">Suspicious (<span id="filter-cnt-suspicious">0</span>)</button>
+            <button class="btn btn-xs email-filter-pill" data-category="Needs Review" onclick="filterEmailCategory('Needs Review')">Needs Review (<span id="filter-cnt-review">0</span>)</button>
+          </div>
+
+          <!-- Email Intelligence Table -->
+          <div class="table-container mt-4">
+            <table class="desktop-table" id="email-findings-table">
+              <thead>
+                <tr>
+                  <th>SENDER</th>
+                  <th>SUBJECT</th>
+                  <th>RECEIVED</th>
+                  <th>PREDICTED THREAT</th>
+                  <th>RISK SCORE</th>
+                  <th>USER REVIEW</th>
+                  <th>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody id="email-findings-tbody">
+                <tr><td colspan="7" class="empty-state-row text-center py-6 text-muted">No analyzed email records in database. Connect your Google account to initiate monitoring.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div id="email-pagination-bar" class="mt-3 text-xs text-muted" style="display: flex; justify-content: space-between; align-items: center;">
+            <span id="email-pagination-label">Showing 0 of 0 emails</span>
+            <div style="display: flex; gap: 4px;">
+              <button id="btn-email-prev" class="btn btn-xs btn-secondary" onclick="prevEmailPage()" disabled>Previous</button>
+              <button id="btn-email-next" class="btn btn-xs btn-secondary" onclick="nextEmailPage()" disabled>Next</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 8: SECURITY ALERTS CENTER -->
+      <section id="view-security-alerts" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Security Alerts Center</h1>
+            <p class="panel-subtitle">Unified multi-source incident aggregation with verified cross-platform isolation.</p>
+          </div>
+        </div>
+
+        <!-- Multi-Platform Source Tabs -->
+        <div class="platform-tabs">
+          <button class="platform-tab active" data-source="ALL">All Platforms (<span id="count-all-alerts">0</span>)</button>
+          <button class="platform-tab" data-source="windows">Windows Application (<span id="count-win-alerts">0</span>)</button>
+          <button class="platform-tab" data-source="android">Android Mobile (<span id="count-android-alerts">0</span>)</button>
+          <button class="platform-tab" data-source="website">Website / SOC (<span id="count-web-alerts">0</span>)</button>
+        </div>
+
+        <!-- Alerts Table -->
+        <div class="card-surface mt-4">
+          <div class="table-container">
+            <table class="desktop-table">
+              <thead>
+                <tr>
+                  <th>TIME</th>
+                  <th>PLATFORM</th>
+                  <th>SEVERITY</th>
+                  <th>CATEGORY</th>
+                  <th>INCIDENT TITLE & DETAILS</th>
+                  <th>STATUS</th>
+                  <th>ACTION</th>
+                </tr>
+              </thead>
+              <tbody id="alerts-tbody">
+                <tr>
+                  <td colspan="7" class="empty-state-row">No security alerts recorded. System clean.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 9: CONNECTIVITY & SYNC -->
+      <section id="view-network-sync" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Connectivity & Threat Intelligence Sync</h1>
+            <p class="panel-subtitle">Selectable multi-tier connection architecture with offline caching and failover.</p>
+          </div>
+          <button id="btn-test-connection" class="btn btn-secondary">Test Connection</button>
+        </div>
+
+        <!-- 3 Connectivity Modes Grid -->
+        <div class="modes-grid">
+          <div class="mode-card active" data-mode="hybrid">
+            <div class="mode-header">
+              <span class="mode-badge">MODE 3 (RECOMMENDED)</span>
+              <input type="radio" name="conn-mode" value="hybrid" checked>
+            </div>
+            <h3 class="mode-title">Hybrid Auto-Failover</h3>
+            <p class="mode-desc">Autonomous local detection with cloud threat intelligence escalation. Stage 1: Local Docker -> Stage 2: Cloudflare Tunnel -> Stage 3: Deployed Cloud.</p>
+          </div>
+
+          <div class="mode-card" data-mode="local">
+            <div class="mode-header">
+              <span class="mode-badge">MODE 1</span>
+              <input type="radio" name="conn-mode" value="local">
+            </div>
+            <h3 class="mode-title">Local Isolated Mode</h3>
+            <p class="mode-desc">Direct binding to localhost/LAN backend. All intelligence queries processed on-premises without cloud leakage.</p>
+          </div>
+
+          <div class="mode-card" data-mode="deployed">
+            <div class="mode-header">
+              <span class="mode-badge">MODE 2</span>
+              <input type="radio" name="conn-mode" value="deployed">
+            </div>
+            <h3 class="mode-title">Deployed Cloud Mode</h3>
+            <p class="mode-desc">Direct synchronization with CyberGuard cloud infrastructure (Vercel & OnRender services).</p>
+          </div>
+        </div>
+
+        <!-- Endpoint Configuration & Independent Diagnostics -->
+        <div class="card-surface mt-6">
+          <div class="card-header-row">
+            <div>
+              <h3 class="card-heading">Active Endpoints & Multi-Tier Health Diagnostics</h3>
+              <p class="text-muted text-sm">Independent health evaluations across Local Docker, Deployed Cloud, Cloudflare Tunnel, and Vercel. <span id="diag-last-checked-label" class="ml-2 font-medium text-xs text-muted">Last checked: Initializing...</span></p>
+            </div>
+            <button id="btn-run-full-diagnostics" class="btn btn-secondary btn-sm">Run Full Diagnostics</button>
+          </div>
+
+          <div class="grid-2-col mt-4">
+            <div>
+              <label class="form-label">LOCAL DOCKER PORT</label>
+              <input type="number" id="cfg-local-port" class="form-input" value="3000">
+            </div>
+            <div>
+              <label class="form-label">CUSTOM CLOUDFLARE TUNNEL (OPTIONAL)</label>
+              <input type="text" id="cfg-custom-tunnel" class="form-input" placeholder="https://*.trycloudflare.com">
+            </div>
+          </div>
+
+          <!-- 4-Tier Diagnostics Grid -->
+          <div class="diagnostics-grid mt-4">
+            <!-- Tier 1: Local Docker -->
+            <div id="diag-card-local" class="diag-card neutral">
+              <div class="diag-header">
+                <span class="diag-title">1. Local Docker Engine</span>
+                <span id="diag-badge-local" class="status-tag neutral">CHECKING...</span>
+              </div>
+              <div class="diag-endpoint" id="diag-endpoint-local">http://127.0.0.1:3000</div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Status:</span>
+                <span id="diag-status-local" class="font-semibold">Checking...</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Latency / Health:</span>
+                <span id="diag-latency-local" class="mono text-xs">-- ms</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted text-xs">Verified:</span>
+                <span id="diag-time-local" class="text-xs text-muted">Pending check</span>
+              </div>
+            </div>
+
+            <!-- Tier 2: Cloud Backend -->
+            <div id="diag-card-cloud" class="diag-card neutral">
+              <div class="diag-header">
+                <span class="diag-title">2. Cloud Backend API</span>
+                <span id="diag-badge-cloud" class="status-tag neutral">CHECKING...</span>
+              </div>
+              <div class="diag-endpoint" id="diag-endpoint-cloud">https://cyberguard-backend-8rbz.onrender.com</div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Status:</span>
+                <span id="diag-status-cloud" class="font-semibold">Checking...</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Latency / TLS:</span>
+                <span id="diag-latency-cloud" class="mono text-xs">-- ms</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted text-xs">Verified:</span>
+                <span id="diag-time-cloud" class="text-xs text-muted">Pending check</span>
+              </div>
+            </div>
+
+            <!-- Tier 3: Cloudflare Tunnel -->
+            <div id="diag-card-tunnel" class="diag-card neutral">
+              <div class="diag-header">
+                <span class="diag-title">3. Cloudflare Tunnel</span>
+                <span id="diag-badge-tunnel" class="status-tag neutral">CHECKING...</span>
+              </div>
+              <div class="diag-endpoint" id="diag-endpoint-tunnel">Not Configured</div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Container:</span>
+                <span id="diag-container-tunnel" class="font-semibold text-xs">Checking...</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Connector:</span>
+                <span id="diag-connector-tunnel" class="font-semibold text-xs">Checking...</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Route State:</span>
+                <span id="diag-status-tunnel" class="font-semibold">Optional</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Origin Reachability:</span>
+                <span id="diag-latency-tunnel" class="mono text-xs">--</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted text-xs">Verified:</span>
+                <span id="diag-time-tunnel" class="text-xs text-muted">Optional</span>
+              </div>
+              <div class="diag-card-actions mt-2" style="display: flex; gap: 6px;">
+                <button type="button" id="btn-refresh-tunnel" class="btn btn-secondary text-xs" style="padding: 3px 8px; font-size: 11px;">Refresh Tunnel</button>
+                <button type="button" id="btn-view-tunnel-diag" class="btn btn-secondary text-xs" style="padding: 3px 8px; font-size: 11px;">View Diagnostics</button>
+              </div>
+            </div>
+
+            <!-- Tier 4: Vercel Web Portal -->
+            <div id="diag-card-vercel" class="diag-card neutral">
+              <div class="diag-header">
+                <span class="diag-title">4. Vercel Web Portal</span>
+                <span id="diag-badge-vercel" class="status-tag neutral">CHECKING...</span>
+              </div>
+              <div class="diag-endpoint" id="diag-endpoint-vercel">https://cyber-guard-backend-ashen.vercel.app</div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">Portal Reachable:</span>
+                <span id="diag-status-vercel" class="font-semibold">Checking...</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted">API Rewrite:</span>
+                <span id="diag-latency-vercel" class="mono text-xs">-- ms</span>
+              </div>
+              <div class="diag-metrics-row">
+                <span class="text-muted text-xs">Verified:</span>
+                <span id="diag-time-vercel" class="text-xs text-muted">Pending check</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Active Backend & Diagnostics Health Strip -->
+          <div class="health-strip mt-4">
+            <div>
+              <span class="text-muted text-sm">RESOLVED ACTIVE API:</span>
+              <span id="active-api-base" class="mono text-sm font-semibold ml-2">http://127.0.0.1:3000</span>
+            </div>
+            <div>
+              <span class="text-muted text-sm">ACTIVE HEALTH:</span>
+              <span id="active-backend-health" class="status-tag neutral ml-2">INITIALIZING...</span>
+            </div>
+          </div>
+
+          <!-- Expandable Technical Diagnostic Details Panel -->
+          <div class="mt-4 pt-3" style="border-top: 1px solid var(--border-light);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <button id="btn-save-conn-config" class="btn btn-primary">Save Connection Settings</button>
+              <button id="btn-toggle-tech-diag" class="btn btn-secondary btn-sm text-xs">
+                <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+                Toggle Telemetry Details
+              </button>
+            </div>
+            <div id="tech-diag-container" class="hidden mt-3 p-3 bg-subtle rounded text-xs mono" style="background: var(--bg-subtle); border-radius: 8px; border: 1px solid var(--border-light); max-height: 180px; overflow-y: auto;">
+              <pre id="tech-diag-json" style="margin: 0; white-space: pre-wrap; color: var(--text-muted);">Initializing connectivity diagnostics...</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 10: SETTINGS & ACCOUNT -->
+      <section id="view-settings" class="content-panel">
+        <div class="panel-header">
+          <div>
+            <h1 class="panel-title">Settings & User Profile</h1>
+            <p class="panel-subtitle">Manage session tokens, tenant isolation, and desktop client preferences.</p>
+          </div>
+        </div>
+
+        <div class="grid-2-col">
+          <!-- User Profile Card -->
+          <div class="card-surface">
+            <h3 class="card-heading">Authenticated Account</h3>
+            <div class="profile-info-row mt-4">
+              <div class="user-avatar-large">U</div>
+              <div>
+                <h4 id="profile-display-name" class="font-bold">Unauthenticated</h4>
+                <p id="profile-display-email" class="text-muted text-sm">Sign in to access synchronized cloud features</p>
+                <span id="profile-display-role" class="badge-neutral mt-1">ROLE: GUEST</span>
+              </div>
+            </div>
+            <div class="action-row mt-6">
+              <button id="btn-account-logout" class="btn btn-danger">Sign Out</button>
+              <button id="btn-open-login-modal" class="btn btn-secondary">Switch Account</button>
+            </div>
+          </div>
+
+          <!-- Desktop Security Preferences -->
+          <div class="card-surface">
+            <h3 class="card-heading">Protection Preferences</h3>
+            <div class="checkbox-list mt-4">
+              <div class="checkbox-row">
+                <input type="checkbox" id="cfg-win-notifications" checked>
+                <label for="cfg-win-notifications">Show native Windows notifications for detected threats</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="cfg-start-with-windows" checked>
+                <label for="cfg-start-with-windows">Launch CyberGuard Shield minimized on Windows startup</label>
+              </div>
+              <div class="checkbox-row">
+                <input type="checkbox" id="cfg-dpapi-storage" checked disabled>
+                <label for="cfg-dpapi-storage">Encrypt session tokens via Windows DPAPI (SafeStorage)</label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Google Cloud OAuth 2.0 Integration Card -->
+        <div class="card-surface mt-6">
+          <div class="card-header-row">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 36px; height: 36px; border-radius: 8px; background: #EEF2FF; display: flex; align-items: center; justify-content: center; color: #4F46E5; font-weight: 700; font-size: 16px;">
+                G
+              </div>
+              <div>
+                <h3 class="card-heading">Google Cloud OAuth 2.0 Integration</h3>
+                <p class="text-muted text-sm">Configure the public Google Cloud OAuth 2.0 Client ID for Gmail &amp; Phishing Defense mailbox inspection.</p>
+              </div>
+            </div>
+            <span id="settings-oauth-status-badge" class="status-tag neutral">UNCONFIGURED</span>
+          </div>
+          <div class="mt-4" style="max-width: 720px;">
+            <label class="text-xs font-bold text-muted mb-1" style="display:block;">GOOGLE CLIENT ID (PUBLIC IDENTIFIER)</label>
+            <div style="display: flex; gap: 8px;">
+              <input type="text" id="cfg-google-client-id" class="form-input text-xs" placeholder="e.g. 676005930102-xxx.apps.googleusercontent.com" style="flex:1;">
+              <button type="button" id="btn-save-settings-oauth" class="btn btn-primary btn-sm" onclick="saveSettingsOAuthClientId()">Save Configuration</button>
+            </div>
+            <p class="text-xs text-muted mt-2">
+              Note: Client Secrets are strictly forbidden in client distributions. CyberGuard uses secure RFC 8252 PKCE loopback authorization on localhost.
+            </p>
+            <div id="settings-oauth-feedback" class="text-xs mt-2 hidden" style="font-weight: 600;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 11: ADMIN COMMAND & RBAC CONSOLE (ADMIN ONLY) -->
+      <section id="view-admin-console" class="content-panel admin-only-panel">
+        <div class="panel-header">
+          <div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <h1 class="panel-title">Nexus Admin Console</h1>
+              <span class="badge" style="background:#EEF2FF; color:#4F46E5; border:1px solid #C7D2FE; font-weight:700;">SOVEREIGN RBAC</span>
+              <span class="badge" style="background:#ECFDF5; color:#059669; border:1px solid #A7F3D0; font-weight:700;">ZERO-TRUST ROOT</span>
+            </div>
+            <p class="panel-subtitle">Authoritative identity management, zero-trust security policies, neural model lineage, and tamper-evident audit journal.</p>
+          </div>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-sync-nexus" class="btn btn-secondary" onclick="syncAllNexusTelemetry(this)">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              Sync Telemetry
+            </button>
+            <button id="btn-admin-new-user" class="btn btn-primary" onclick="openCreateUserModal()">
+              <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+              Create User
+            </button>
+          </div>
+        </div>
+
+        <!-- Admin Hero KPI Strip -->
+        <div class="admin-kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-label">ACTIVE DETECTOR MODEL</div>
+            <div class="kpi-value font-mono" id="admin-kpi-active-version" style="font-size:18px; color:#4F46E5;">Loading...</div>
+            <div class="kpi-sub">Authoritative Qwen + ResNet Pipeline</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">HUMAN TRAINING QUEUE</div>
+            <div class="kpi-value" id="admin-kpi-queue-samples" style="font-size:22px; color:#D97706;">0</div>
+            <div class="kpi-sub">Awaiting operator verification</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">QUARANTINED ENTITIES</div>
+            <div class="kpi-value" id="admin-kpi-blocked-entities" style="font-size:22px; color:#DC2626;">0</div>
+            <div class="kpi-sub">Active firewall containment</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">SECURITY POLICY POSTURE</div>
+            <div class="kpi-value" id="admin-kpi-policy-posture" style="font-size:18px; color:#16A34A;">STRICT</div>
+            <div class="kpi-sub">Real-time kernel enforcement</div>
+          </div>
+        </div>
+
+        <!-- Admin Navigation Sub-Tabs -->
+        <div class="admin-subnav-bar">
+          <button type="button" class="admin-subtab active" data-subtab="users" onclick="switchAdminSubTab('users')">Operator RBAC</button>
+          <button type="button" class="admin-subtab" data-subtab="policy" onclick="switchAdminSubTab('policy')">Security Policy</button>
+          <button type="button" class="admin-subtab" data-subtab="quarantine" onclick="switchAdminSubTab('quarantine')">Quarantine Firewall</button>
+          <button type="button" class="admin-subtab" data-subtab="alerts" onclick="switchAdminSubTab('alerts')">Executive Alerts</button>
+          <button type="button" class="admin-subtab" data-subtab="training" onclick="switchAdminSubTab('training')">Continuous Lineage</button>
+          <button type="button" class="admin-subtab" data-subtab="audit" onclick="switchAdminSubTab('audit')">Audit Telemetry</button>
+        </div>
+
+        <!-- Sub-panel 1: Operator RBAC -->
+        <div id="subpanel-users" class="admin-subpanel active">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 class="card-title">Authorized Operators &amp; Role-Based Access Control</h3>
+                <p class="text-xs text-muted">Manage operator accounts, assign administrative privileges, and enforce authentication boundaries.</p>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="admin-user-search" class="form-input text-xs" placeholder="Search operators..." style="width:200px; padding:6px 10px;" oninput="filterAdminUsersTable(this.value)">
+                <button class="btn btn-secondary text-xs" onclick="loadAdminUsers()">&#x21BB; Refresh</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table-compact" id="admin-users-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>USERNAME</th>
+                    <th>EMAIL</th>
+                    <th>ROLE</th>
+                    <th>STATUS</th>
+                    <th>LAST LOGIN</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-users-tbody">
+                  <tr><td colspan="7" class="empty-state-row">Loading user directory...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-panel 2: Security Policy -->
+        <div id="subpanel-policy" class="admin-subpanel hidden">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 class="card-title">Zero-Trust Heuristic Enforcement &amp; Autonomous Shields</h3>
+                <p class="text-xs text-muted">Configure active threat mitigation postures, behavioral entropy barriers, and bypass whitelists.</p>
+              </div>
+              <button class="btn btn-secondary text-xs" onclick="loadAdminPolicies()">&#x21BB; Reload</button>
+            </div>
+            <form id="policy-config-form" onsubmit="saveAdminPolicies(event)" style="padding: 16px 20px;">
+              <div class="policy-form-grid">
+                <div class="policy-field-group">
+                  <label for="policy-posture">ENFORCEMENT POSTURE</label>
+                  <select id="policy-posture" class="form-input">
+                    <option value="strict">STRICT (Autonomous Block &amp; Neutralize)</option>
+                    <option value="balanced" selected>BALANCED (Prompt on Suspicious Executions)</option>
+                    <option value="permissive">PERMISSIVE (Log Only / Telemetry Mode)</option>
+                  </select>
+                  <div class="policy-field-desc">Global security enforcement stance across all endpoint file and web shields.</div>
+                </div>
+
+                <div class="policy-field-group">
+                  <label for="policy-ai-threshold">AI THREAT SENSITIVITY THRESHOLD (<span id="policy-ai-val">0.75</span>)</label>
+                  <input type="range" id="policy-ai-threshold" min="0.50" max="0.95" step="0.05" value="0.75" class="w-full" oninput="document.getElementById('policy-ai-val').innerText = this.value">
+                  <div class="policy-field-desc">Minimum neural confidence required to trigger immediate automatic execution quarantine.</div>
+                </div>
+
+                <div class="policy-field-group">
+                  <label for="policy-entropy-threshold">SHANNON ENTROPY THRESHOLD (<span id="policy-entropy-val">7.20</span>)</label>
+                  <input type="range" id="policy-entropy-threshold" min="5.0" max="8.0" step="0.1" value="7.2" class="w-full" oninput="document.getElementById('policy-entropy-val').innerText = parseFloat(this.value).toFixed(2)">
+                  <div class="policy-field-desc">Shannon randomness threshold for packed, encrypted, or ransomware binaries.</div>
+                </div>
+
+                <div class="policy-field-group">
+                  <label>AUTONOMOUS PROCESS MONITORING</label>
+                  <div class="checkbox-row" style="margin-top: 8px;">
+                    <input type="checkbox" id="policy-auto-quarantine" checked>
+                    <label for="policy-auto-quarantine">Auto-kill hostile processes originating from user temp folders</label>
+                  </div>
+                  <div class="policy-field-desc">Immediately terminates LOLBin spawner chains and quarantines source binaries.</div>
+                </div>
+              </div>
+
+              <div class="policy-field-group mt-4">
+                <label for="policy-whitelist">DOMAIN &amp; PROCESS BYPASS WHITELIST</label>
+                <textarea id="policy-whitelist" class="form-input font-mono text-xs" rows="3" placeholder="e.g. localhost, 127.0.0.1, internal.corp, update.microsoft.com"></textarea>
+                <div class="policy-field-desc">Exempted Fully Qualified Domain Names (FQDNs) and verified local services.</div>
+              </div>
+
+              <div class="mt-4" style="display:flex; justify-content:flex-end; gap:8px;">
+                <button type="button" class="btn btn-secondary" onclick="resetAdminPolicies()">Reset to Defaults</button>
+                <button type="submit" id="btn-save-policy" class="btn btn-primary">Save Security Policy</button>
+              </div>
+            </form>
+          </div>
+        </div>
+
+        <!-- Sub-panel 3: Quarantine Firewall -->
+        <div id="subpanel-quarantine" class="admin-subpanel hidden">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 class="card-title">Quarantined Entities &amp; Neutralization Vault</h3>
+                <p class="text-xs text-muted">Authoritative registry of neutralized threats, blocked domains, and isolated hostile payloads.</p>
+              </div>
+              <button class="btn btn-secondary text-xs" onclick="loadAdminQuarantine()">&#x21BB; Refresh</button>
+            </div>
+            <div class="table-responsive">
+              <table class="table-compact" id="admin-quarantine-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>TYPE</th>
+                    <th>TARGET ENTITY</th>
+                    <th>THREAT REASON</th>
+                    <th>SOURCE</th>
+                    <th>QUARANTINED AT</th>
+                    <th>STATUS</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-quarantine-tbody">
+                  <tr><td colspan="7" class="empty-state-row">Loading quarantined entities...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-panel 4: Executive Alerts -->
+        <div id="subpanel-alerts" class="admin-subpanel hidden">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 class="card-title">Administrative Notification Journal</h3>
+                <p class="text-xs text-muted">Verified log of outbound security incident alerts and telemetry notifications.</p>
+              </div>
+              <button class="btn btn-secondary text-xs" onclick="loadAdminAlertsJournal()">&#x21BB; Refresh</button>
+            </div>
+            <div class="table-responsive">
+              <table class="table-compact" id="admin-alerts-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>TIMESTAMP</th>
+                    <th>RECIPIENT</th>
+                    <th>SEVERITY</th>
+                    <th>THREAT CATEGORY</th>
+                    <th>SUBJECT</th>
+                    <th>DELIVERY STATUS</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-alerts-tbody">
+                  <tr><td colspan="6" class="empty-state-row">Loading notification journal...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-panel 5: Continuous Lineage -->
+        <div id="subpanel-training" class="admin-subpanel hidden">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 class="card-title">Neural Model Lineage &amp; Autonomous Adaptation</h3>
+                <p class="text-xs text-muted">Continuous learning engine versioning, validation benchmarks, and rollback controls.</p>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-primary text-xs" onclick="openRetrainModal()">&#x26A1; Trigger Retraining</button>
+                <button class="btn btn-secondary text-xs" onclick="loadAdminTrainingStatus()">&#x21BB; Refresh</button>
+              </div>
+            </div>
+            <div style="padding: 16px 20px;">
+              <div class="admin-kpi-grid" style="margin-bottom: 16px;">
+                <div class="kpi-card">
+                  <div class="kpi-label">DEPLOYED VERSION</div>
+                  <div class="kpi-value font-mono" id="admin-lineage-active-ver" style="font-size:16px; color:#4F46E5;">Loading...</div>
+                  <div class="kpi-sub">SHA-256 Verified</div>
+                </div>
+                <div class="kpi-card">
+                  <div class="kpi-label">VALIDATION F1-SCORE</div>
+                  <div class="kpi-value font-mono" id="admin-lineage-f1" style="font-size:18px; color:#059669;">--</div>
+                  <div class="kpi-sub">Target: &ge; 0.950</div>
+                </div>
+                <div class="kpi-card">
+                  <div class="kpi-label">TRAINING RUNS</div>
+                  <div class="kpi-value font-mono" id="admin-lineage-runs" style="font-size:18px; color:#2563EB;">--</div>
+                  <div class="kpi-sub">Total Retraining Cycles</div>
+                </div>
+                <div class="kpi-card">
+                  <div class="kpi-label">BUFFER POOL</div>
+                  <div class="kpi-value font-mono" id="admin-lineage-samples" style="font-size:18px; color:#D97706;">--</div>
+                  <div class="kpi-sub">Labeled Samples</div>
+                </div>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table-compact" id="admin-models-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>VERSION</th>
+                    <th>ARCHITECTURE</th>
+                    <th>TRAINED AT</th>
+                    <th>F1 SCORE</th>
+                    <th>STATUS</th>
+                    <th>ACTIONS</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-models-tbody">
+                  <tr><td colspan="6" class="empty-state-row">Loading model version history...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Sub-panel 6: Audit Telemetry -->
+        <div id="subpanel-audit" class="admin-subpanel hidden">
+          <div class="card">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <div>
+                <h3 class="card-title">Tamper-Evident Administrative Audit Log</h3>
+                <p class="text-xs text-muted">Immutable trail of administrative logins, privilege grants, policy revisions, and quarantine interventions.</p>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="admin-audit-search" class="form-input text-xs" placeholder="Filter audit trail..." style="width:200px; padding:6px 10px;" oninput="filterAdminAuditTable(this.value)">
+                <button class="btn btn-secondary text-xs" onclick="loadAdminAuditLogs()">&#x21BB; Refresh</button>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table-compact" id="admin-audit-table" style="width: 100%;">
+                <thead>
+                  <tr>
+                    <th>TIMESTAMP</th>
+                    <th>ACTOR</th>
+                    <th>ROLE</th>
+                    <th>ACTION</th>
+                    <th>TARGET</th>
+                    <th>DETAILS</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-audit-tbody">
+                  <tr><td colspan="6" class="empty-state-row">Loading audit logs...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 12: TRAINING REVIEW QUEUE (ADMIN ONLY) -->
+      <section id="view-training-review" class="content-panel admin-only-panel">
+        <div class="panel-header">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <h1 class="panel-title">Training Review Queue</h1>
+              <span class="badge" style="background:#F3E8FF; color:#7C3AED; border:1px solid #E9D5FF; font-weight:700;">HUMAN-IN-THE-LOOP</span>
+            </div>
+            <p class="panel-subtitle">Review ambiguous voice, image, and malware samples to ground-truth label training datasets for autonomous model retraining.</p>
+          </div>
+          <button id="btn-refresh-review" class="btn btn-secondary" onclick="loadReviewQueue()">
+            <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            Refresh Queue
+          </button>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="table-compact" id="admin-review-table" style="width: 100%;">
+              <thead>
+                <tr>
+                  <th>SAMPLE ID</th>
+                  <th>TIMESTAMP</th>
+                  <th>ANALYSIS TARGET</th>
+                  <th>RISK SCORE</th>
+                  <th>PREDICTION</th>
+                  <th>STATUS</th>
+                  <th>GROUND TRUTH ACTION</th>
+                </tr>
+              </thead>
+              <tbody id="admin-review-tbody">
+                <tr><td colspan="7" class="empty-state-row">Loading training review queue...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+
+    </main>
+  </div>
+
+  <!-- Deep Forensic Dossier Modal -->
+  <div id="dossier-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-lg">
+      <div class="modal-header">
+        <h3 id="dossier-modal-title" class="modal-title">Forensic Analysis Dossier</h3>
+        <button id="btn-close-dossier-modal" class="btn-close">&times;</button>
+      </div>
+      <div id="dossier-modal-body" class="modal-body">
+        <!-- Dynamically populated with deep metrics, ELA heatmap image, C2PA, chunk scores, Qwen explanation -->
+      </div>
+      <div class="modal-footer" style="display: flex; justify-content: space-between;">
+        <button id="btn-export-dossier-json" class="btn btn-secondary">Export JSON Dossier</button>
+        <button id="btn-dismiss-dossier" class="btn btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authentication & Account Modal -->
+  <div id="login-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="brand-badge">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <span id="auth-modal-title" class="modal-title font-bold">CyberGuard Security Session</span>
+        </div>
+        <button type="button" id="btn-close-login-modal" class="btn-close" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <!-- Auth Tabs: Sign In vs Create Account -->
+      <div class="auth-tabs" style="padding: 0 20px;" role="tablist" aria-label="Authentication Options">
+        <button type="button" id="tab-auth-signin" class="auth-tab active" role="tab" aria-selected="true" aria-controls="auth-signin-form">Sign In</button>
+        <button type="button" id="tab-auth-register" class="auth-tab" role="tab" aria-selected="false" aria-controls="auth-register-form">Create Account</button>
+      </div>
+
+      <!-- Sign In Tab Form -->
+      <form id="auth-signin-form" class="modal-body" style="padding-top: 0;" onsubmit="return false;" role="tabpanel" aria-labelledby="tab-auth-signin">
+        <label for="input-login-username" class="form-label">USERNAME OR EMAIL</label>
+        <input type="text" id="input-login-username" name="username" class="form-input" placeholder="Enter username or email address" autocomplete="username" spellcheck="false" autocapitalize="none">
+        
+        <label for="input-login-password" class="form-label mt-4">PASSWORD</label>
+        <div class="input-password-wrapper">
+          <input type="password" id="input-login-password" name="password" class="form-input" placeholder="Enter session password" autocomplete="current-password" spellcheck="false">
+          <button type="button" id="btn-toggle-pwd-signin" class="btn-toggle-pwd" title="Show/Hide Password" aria-label="Toggle password visibility">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+
+        <div id="login-error-msg" class="info-alert mt-4 hidden" style="background: #FEF2F2; border-color: #FECDD3; color: #DC2626;" role="alert"></div>
+        <div class="mt-4">
+          <button type="submit" id="btn-submit-login" class="btn btn-primary w-full">Sign In to Account</button>
+        </div>
+      </form>
+
+      <!-- Create Account Tab Form -->
+      <form id="auth-register-form" class="modal-body hidden" style="padding-top: 0;" onsubmit="return false;" role="tabpanel" aria-labelledby="tab-auth-register">
+        <label for="input-reg-username" class="form-label">USERNAME</label>
+        <input type="text" id="input-reg-username" name="username" class="form-input" placeholder="Choose a username" autocomplete="username" spellcheck="false" autocapitalize="none">
+
+        <label for="input-reg-email" class="form-label mt-4">EMAIL ADDRESS</label>
+        <input type="email" id="input-reg-email" name="email" class="form-input" placeholder="user@example.com" autocomplete="email" spellcheck="false" autocapitalize="none">
+
+        <label for="input-reg-password" class="form-label mt-4">PASSWORD</label>
+        <div class="input-password-wrapper">
+          <input type="password" id="input-reg-password" name="new-password" class="form-input" placeholder="Minimum 6 characters" autocomplete="new-password" spellcheck="false">
+          <button type="button" id="btn-toggle-pwd-reg" class="btn-toggle-pwd" title="Show/Hide Password" aria-label="Toggle password visibility">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+
+        <div id="reg-error-msg" class="info-alert mt-4 hidden" style="background: #FEF2F2; border-color: #FECDD3; color: #DC2626;" role="alert"></div>
+        <div class="mt-4">
+          <button type="submit" id="btn-submit-register" class="btn btn-primary w-full">Create Account</button>
+        </div>
+      </form>
+
+      <div class="modal-footer text-xs text-muted text-center">
+        Secured with Windows DPAPI encryption &bull; Server-verified role boundary
+      </div>
+    </div>
+  </div>
+
+  <!-- Tunnel Diagnostics Modal -->
+  <div id="modal-tunnel-diag" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tunnel-diag-modal-title">
+    <div class="modal-box" style="max-width: 620px;">
+      <div class="modal-header">
+        <h3 id="tunnel-diag-modal-title" class="font-bold text-base">Cloudflare Tunnel Diagnostic Telemetry</h3>
+        <button id="btn-close-tunnel-diag" class="modal-close" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body text-sm">
+        <div class="diag-modal-section mb-3">
+          <h4 class="text-xs font-bold text-muted mb-2">FOUR-TIER TUNNEL HEALTH BREAKDOWN</h4>
+          <div class="table-responsive">
+            <table class="table-compact" style="width: 100%; border-collapse: collapse;">
+              <tbody>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1" style="width: 42%;">Docker Container</td><td id="diag-modal-container" class="mono font-semibold py-1">--</td></tr>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1">Connector Process</td><td id="diag-modal-connector" class="mono font-semibold py-1">--</td></tr>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1">Cloudflare Edge Route</td><td id="diag-modal-edge" class="mono font-semibold py-1">--</td></tr>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1">Public Ingress Hostname</td><td id="diag-modal-public" class="mono font-semibold py-1">--</td></tr>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1">Backend Origin Service</td><td id="diag-modal-origin" class="mono font-semibold py-1">--</td></tr>
+                <tr><td class="text-muted py-1">Diagnostic Verdict</td><td id="diag-modal-reason" class="text-xs py-1">--</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="diag-modal-section mb-3">
+          <h4 class="text-xs font-bold text-muted mb-1">SANITIZED CONTAINER LOGS (LAST 15 LINES)</h4>
+          <pre id="diag-modal-logs" class="mono text-xs p-2" style="background: var(--bg-subtle, #f1f5f9); border: 1px solid var(--border-light); border-radius: 4px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">--</pre>
+        </div>
+        <div class="info-alert text-xs" style="background: #F8FAFC; border: 1px solid #E2E8F0; padding: 10px; border-radius: 4px; line-height: 1.4;">
+          <strong>Cloudflare Tunnel Architecture:</strong> A green running container in Docker indicates the cloudflared process is active, but does not prove edge connectivity. If the server returns <em>Unauthorized: Tunnel not found</em>, verify your tunnel token or run a named tunnel with <code>cloudflared tunnel run --token &lt;TOKEN&gt;</code>.
+        </div>
+      </div>
+      <div class="modal-footer mt-3" style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button id="btn-test-tunnel-route" class="btn btn-secondary text-xs">Test Route</button>
+        <button id="btn-dismiss-tunnel-diag" class="btn btn-primary text-xs">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security Alert Forensic Detail Modal -->
+  <div id="modal-alert-detail" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="alert-detail-title">
+    <div class="modal-box" style="max-width: 650px;">
+      <div class="modal-header">
+        <div>
+          <h3 id="alert-detail-title" class="font-bold text-base">Security Threat Investigation</h3>
+          <span id="alert-detail-id" class="mono text-xs text-muted">ID: --</span>
+        </div>
+        <button id="btn-close-alert-detail" class="modal-close" aria-label="Close modal">&times;</button>
+      </div>
+      <div class="modal-body text-sm">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding: 8px 12px; background: var(--bg-subtle, #f8fafc); border-radius: 6px;">
+          <div>
+            <span class="text-xs text-muted">Severity:</span>
+            <span id="alert-detail-severity" class="status-tag active ml-1">HIGH</span>
+          </div>
+          <div>
+            <span class="text-xs text-muted">Status:</span>
+            <span id="alert-detail-status" class="status-tag neutral ml-1">ACTIVE</span>
+          </div>
+          <div>
+            <span class="text-xs text-muted">Subsystem:</span>
+            <span id="alert-detail-category" class="font-semibold text-xs ml-1">PROCESS_ANOMALY</span>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">THREAT TITLE & SUMMARY</label>
+          <div id="alert-detail-name" class="font-bold text-sm text-primary mb-1">--</div>
+          <div id="alert-detail-desc" class="text-xs text-muted" style="line-height: 1.4;">--</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">EVIDENCE & ARTIFACT METADATA</label>
+          <div class="table-responsive">
+            <table class="table-compact" style="width: 100%; border-collapse: collapse;">
+              <tbody>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1" style="width: 35%;">Observed Target</td><td id="alert-detail-target" class="mono text-xs py-1">--</td></tr>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1">Detection Engine</td><td id="alert-detail-engine" class="mono text-xs py-1">--</td></tr>
+                <tr style="border-bottom: 1px solid var(--border-light);"><td class="text-muted py-1">Detection Timestamp</td><td id="alert-detail-time" class="mono text-xs py-1">--</td></tr>
+                <tr><td class="text-muted py-1">Risk Score / Outcome</td><td id="alert-detail-outcome" class="mono text-xs py-1">--</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="alert-detail-forensics-container" class="mb-3 hidden">
+          <label class="form-label">FORENSIC TELEMETRY</label>
+          <pre id="alert-detail-forensics" class="mono text-xs p-2" style="background: var(--bg-subtle, #f1f5f9); border: 1px solid var(--border-light); border-radius: 4px; max-height: 120px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">--</pre>
+        </div>
+      </div>
+      <div class="modal-footer mt-3" style="display: flex; justify-content: space-between; align-items: center;">
+        <button id="btn-goto-alert-subsystem" class="btn btn-secondary text-xs">Navigate to Subsystem &rarr;</button>
+        <div style="display: flex; gap: 8px;">
+          <button id="btn-resolve-alert-detail" class="btn btn-secondary text-xs">Mark Resolved</button>
+          <button id="btn-dismiss-alert-detail" class="btn btn-primary text-xs">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Modal 1: Create User Modal -->
+  <div id="create-user-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="create-user-title">
+    <div class="modal-card" style="max-width: 460px;">
+      <div class="modal-header">
+        <h3 id="create-user-title" class="modal-title font-bold">Create Operator Account</h3>
+        <button type="button" class="btn-close" onclick="closeCreateUserModal()">&times;</button>
+      </div>
+      <form id="form-create-admin-user" onsubmit="handleCreateUserSubmit(event)" class="modal-body" style="padding-top: 0;">
+        <label for="new-user-username" class="form-label">USERNAME</label>
+        <input type="text" id="new-user-username" class="form-input" placeholder="Operator username" required autocomplete="off">
+
+        <label for="new-user-email" class="form-label mt-4">EMAIL ADDRESS</label>
+        <input type="email" id="new-user-email" class="form-input" placeholder="operator@cyberguard.local" required autocomplete="off">
+
+        <label for="new-user-password" class="form-label mt-4">TEMPORARY PASSWORD</label>
+        <input type="password" id="new-user-password" class="form-input" placeholder="Minimum 6 characters" required minlength="6">
+
+        <label for="new-user-role" class="form-label mt-4">ASSIGNED ROLE &amp; PRIVILEGES</label>
+        <select id="new-user-role" class="form-input">
+          <option value="user" selected>Standard Operator (ROLE_USER)</option>
+          <option value="admin">System Administrator (ROLE_ADMIN)</option>
+        </select>
+
+        <div id="create-user-error" class="info-alert mt-4 hidden" style="background: #FEF2F2; border-color: #FECDD3; color: #DC2626;"></div>
+
+        <div class="modal-footer mt-4" style="display:flex; justify-content:flex-end; gap:8px; padding:0;">
+          <button type="button" class="btn btn-secondary" onclick="closeCreateUserModal()">Cancel</button>
+          <button type="submit" id="btn-submit-create-user" class="btn btn-primary">Create User</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Admin Modal 2: Delete User Modal -->
+  <div id="delete-user-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="delete-user-title">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 id="delete-user-title" class="modal-title font-bold text-danger">Revoke &amp; Delete Account</h3>
+        <button type="button" class="btn-close" onclick="closeDeleteUserModal()">&times;</button>
+      </div>
+      <div class="modal-body" style="padding-top: 0;">
+        <p class="text-sm" style="color: var(--text-main); line-height: 1.5;">
+          Are you sure you want to permanently revoke and delete user <strong id="delete-user-name-target">--</strong> (ID: <span id="delete-user-id-target">--</span>)?
+        </p>
+        <div class="info-alert mt-3" style="background:#FFFBEB; border-color:#FDE68A; color:#B45309; font-size:12px;">
+          This operation purges active sessions and revokes cryptographic authorization tokens.
+        </div>
+        <div id="delete-user-error" class="info-alert mt-3 hidden" style="background:#FEF2F2; border-color:#FECDD3; color:#DC2626; font-size:12px;"></div>
+        <div class="modal-footer mt-4" style="display:flex; justify-content:flex-end; gap:8px; padding:0;">
+          <button type="button" class="btn btn-secondary" onclick="closeDeleteUserModal()">Cancel</button>
+          <button type="button" id="btn-confirm-delete-user" class="btn btn-primary" style="background:#DC2626; border-color:#DC2626;" onclick="confirmDeleteUser()">Revoke &amp; Delete</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Admin Modal 3: Trigger Retraining Modal -->
+  <div id="retrain-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="retrain-modal-title">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3 id="retrain-modal-title" class="modal-title font-bold">Trigger Background Retraining Pipeline</h3>
+        <button type="button" class="btn-close" onclick="closeRetrainModal()">&times;</button>
+      </div>
+      <form id="form-trigger-retrain" onsubmit="handleTriggerRetrain(event)" class="modal-body" style="padding-top: 0;">
+        <label for="retrain-epochs" class="form-label">TRAINING EPOCHS</label>
+        <input type="number" id="retrain-epochs" class="form-input" value="3" min="1" max="20" required>
+
+        <label for="retrain-batch-size" class="form-label mt-4">BATCH SIZE</label>
+        <input type="number" id="retrain-batch-size" class="form-input" value="16" min="1" max="64" required>
+
+        <label for="retrain-lr" class="form-label mt-4">LEARNING RATE</label>
+        <input type="number" id="retrain-lr" class="form-input" value="0.0001" step="0.00001" min="0.000001" max="0.01" required>
+
+        <div id="retrain-error-msg" class="info-alert mt-4 hidden" style="background: #FEF2F2; border-color: #FECDD3; color: #DC2626;"></div>
+
+        <div class="modal-footer mt-4" style="display:flex; justify-content:flex-end; gap:8px; padding:0;">
+          <button type="button" class="btn btn-secondary" onclick="closeRetrainModal()">Cancel</button>
+          <button type="submit" id="btn-launch-retrain" class="btn btn-primary">&#x26A1; Launch Job</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Email Security Intelligence & Forensic Dossier Modal (2-Column Grid) -->
+  <div id="email-detail-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="email-modal-title">
+    <div class="modal-card modal-xl" style="max-width: 1040px; width: 95vw; max-height: 90vh; display: flex; flex-direction: column;">
+      <div class="modal-header">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <svg style="width: 20px; height: 20px; color: #4F46E5;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          <h3 id="email-modal-title" class="modal-title font-bold">Email Forensic Dossier &amp; AI Analysis</h3>
+        </div>
+        <button type="button" class="btn-close" onclick="closeEmailDetailModal()" aria-label="Close dialog">&times;</button>
+      </div>
+
+      <div class="modal-body email-modal-grid" style="overflow-y: auto; flex: 1; padding: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+        <!-- Left Column: Sanitized Original Email -->
+        <div class="email-modal-col email-source-col" style="background: var(--bg-surface-alt, #F8FAFC); border: 1px solid var(--border-light, #E2E8F0); border-radius: 8px; padding: 16px;">
+          <h4 style="font-size: 13px; font-weight: 700; color: #1E293B; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Sanitized Email Artifact</h4>
+          
+          <div class="email-meta-field mb-2">
+            <span class="text-xs text-muted font-semibold" style="display:block;">SENDER:</span>
+            <div id="email-detail-sender" class="mono text-xs font-semibold" style="word-break: break-all;">--</div>
+          </div>
+          <div class="email-meta-field mb-2">
+            <span class="text-xs text-muted font-semibold" style="display:block;">REPLY-TO:</span>
+            <div id="email-detail-replyto" class="mono text-xs" style="word-break: break-all;">--</div>
+          </div>
+          <div class="email-meta-field mb-2">
+            <span class="text-xs text-muted font-semibold" style="display:block;">SUBJECT:</span>
+            <div id="email-detail-subject" class="text-xs font-bold" style="word-break: break-word;">--</div>
+          </div>
+          <div class="email-meta-field mb-3">
+            <span class="text-xs text-muted font-semibold" style="display:block;">RECEIVED TIME:</span>
+            <div id="email-detail-time" class="mono text-xs text-muted">--</div>
+          </div>
+
+          <!-- Email Auth Badges (SPF, DKIM, DMARC) -->
+          <div class="mb-3">
+            <span class="text-xs text-muted font-semibold mb-1" style="display:block;">AUTHENTICATION TELEMETRY:</span>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap;" id="email-detail-auth-badges">
+              <span id="badge-detail-spf" class="status-tag neutral text-xs">SPF: EVALUATED</span>
+              <span id="badge-detail-dkim" class="status-tag neutral text-xs">DKIM: EVALUATED</span>
+              <span id="badge-detail-dmarc" class="status-tag neutral text-xs">DMARC: EVALUATED</span>
+            </div>
+          </div>
+
+          <!-- Attachments -->
+          <div class="mb-3">
+            <span class="text-xs text-muted font-semibold mb-1" style="display:block;">ATTACHMENTS:</span>
+            <div id="email-detail-attachments" class="text-xs">
+              <span class="text-muted">None detected</span>
+            </div>
+          </div>
+
+          <!-- Sanitized Body Preview -->
+          <div class="mb-2">
+            <span class="text-xs text-muted font-semibold mb-1" style="display:block;">SANITIZED MESSAGE BODY:</span>
+            <div id="email-detail-body" style="background:#FFF; border:1px solid #CBD5E1; border-radius:6px; padding:12px; font-family:monospace; font-size:11px; max-height:220px; overflow-y:auto; white-space:pre-wrap; word-break:break-word; color:#334155;">
+              --
+            </div>
+          </div>
+        </div>
+
+        <!-- Right Column: AI Security Analyst Forensic Report -->
+        <div class="email-modal-col email-ai-col" style="background: #FFFFFF; border: 1px solid var(--border-light, #E2E8F0); border-radius: 8px; padding: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="font-size: 13px; font-weight: 700; color: #1E293B; text-transform: uppercase; letter-spacing: 0.5px;">AI Security Analyst Report</h4>
+            <span id="email-detail-category-badge" class="badge-neutral">ANALYZING...</span>
+          </div>
+
+          <div class="risk-score-strip mb-3" style="display: flex; align-items: center; justify-content: space-between; background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 6px; padding: 8px 12px;">
+            <span class="text-xs font-semibold text-muted">COMPOSITE RISK INDEX:</span>
+            <span id="email-detail-risk-score" class="font-bold text-base mono">--/100</span>
+          </div>
+
+          <!-- Executive Summary -->
+          <div class="mb-3">
+            <span class="text-xs text-muted font-semibold mb-1" style="display:block;">EXECUTIVE SUMMARY:</span>
+            <p id="email-detail-summary" class="text-xs" style="line-height: 1.5; color: #334155; margin: 0; background: #F1F5F9; border-radius: 6px; padding: 10px;">
+              --
+            </p>
+          </div>
+
+          <!-- 17-Point Forensic Breakdown or Findings -->
+          <div class="mb-3">
+            <span class="text-xs text-muted font-semibold mb-1" style="display:block;">FORENSIC INDICATORS &amp; LINEAGE:</span>
+            <div id="email-detail-indicators" style="max-height: 240px; overflow-y: auto; border: 1px solid #E2E8F0; border-radius: 6px; padding: 10px; background: #FAFAFA;">
+              <ul class="text-xs" style="margin: 0; padding-left: 18px; color: #334155;" id="email-detail-indicators-list">
+                <!-- Dynamically populated 17 forensic points -->
+              </ul>
+            </div>
+          </div>
+
+          <!-- Actionable Mitigation -->
+          <div class="mb-2">
+            <span class="text-xs text-muted font-semibold mb-1" style="display:block;">RECOMMENDED MITIGATION:</span>
+            <div id="email-detail-mitigation" class="text-xs" style="background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: 6px; padding: 10px; color: #1E40AF; line-height: 1.4;">
+              --
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; border-top: 1px solid var(--border-light, #E2E8F0); padding: 12px 20px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label class="text-xs font-bold text-muted">UPDATE CLASSIFICATION:</label>
+          <select id="select-modal-email-category" class="form-select text-xs" style="width: auto; padding: 4px 8px;" onchange="handleModalCategoryChange(this.value)">
+            <option value="Genuine / Trusted">Genuine / Trusted</option>
+            <option value="Phishing">Phishing</option>
+            <option value="Scam">Scam</option>
+            <option value="Fraud">Fraud</option>
+            <option value="Suspicious">Suspicious</option>
+            <option value="Needs Review">Needs Review</option>
+          </select>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-secondary text-xs" onclick="copyEmailReportToClipboard()">
+            <svg style="width: 14px; height: 14px; margin-right: 4px;" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copy Report
+          </button>
+          <button type="button" class="btn btn-primary text-xs" onclick="closeEmailDetailModal()">Close Dossier</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

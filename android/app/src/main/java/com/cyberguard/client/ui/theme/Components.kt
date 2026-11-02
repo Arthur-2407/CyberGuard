@@ -39,7 +39,7 @@ fun CyberGuardCard(
     containerColor: Color = ElevatedSurface,
     borderColor: Color = HolographicGlowBorder,
     showCornerReticles: Boolean = true,
-    cornerReticleColor: Color = CyberNeonCyan.copy(alpha = 0.5f),
+    cornerReticleColor: Color = SignalYellow.copy(alpha = 0.5f),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -126,7 +126,7 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier) {
                 .height(13.dp)
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = listOf(CyberNeonCyan, CyberBlue)
+                        colors = listOf(PrimaryRed, SignalYellow)
                     ),
                     shape = CutCornerShape(1.dp)
                 )
@@ -138,7 +138,7 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier) {
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold
             ),
-            color = CyberBlue,
+            color = SignalYellow,
             letterSpacing = 1.3.sp
         )
     }
@@ -356,6 +356,8 @@ fun AnimatedScanningChamber(
             .background(DeepSpaceBackground)
             .border(1.dp, CyberBlue.copy(alpha = 0.4f), CutCornerShape(12.dp))
     ) {
+        val scannerLaserColor = if (isScanning) StatusCritical else CyberNeonCyan
+
         // Holographic Grid Background & Corner Reticles
         Canvas(modifier = Modifier.fillMaxSize()) {
             val step = 20.dp.toPx()
@@ -393,7 +395,7 @@ fun AnimatedScanningChamber(
 
             // Sweeping Laser Beam
             val laserY = size.height * laserProgress
-            val laserColor = if (isScanning) StatusCritical else CyberNeonCyan
+            val laserColor = scannerLaserColor
             
             // Laser glow gradient
             drawRect(
@@ -561,22 +563,22 @@ fun CyberButton(
     icon: @Composable (() -> Unit)? = null
 ) {
     val containerColor = when (variant) {
-        CyberButtonVariant.PRIMARY -> if (enabled) CyberNeonCyan else HighlightSurface
+        CyberButtonVariant.PRIMARY -> if (enabled) PrimaryRed else HighlightSurface
         CyberButtonVariant.OUTLINED -> HighlightSurface
         CyberButtonVariant.SECONDARY -> HighlightSurface
-        CyberButtonVariant.DESTRUCTIVE -> if (enabled) StatusCritical.copy(alpha = 0.2f) else HighlightSurface
+        CyberButtonVariant.DESTRUCTIVE -> if (enabled) DeepRed.copy(alpha = 0.2f) else HighlightSurface
     }
 
     val contentColor = when (variant) {
-        CyberButtonVariant.PRIMARY -> if (enabled) DeepSpaceBackground else TextTertiary
-        CyberButtonVariant.OUTLINED -> if (enabled) CyberNeonCyan else TextTertiary
+        CyberButtonVariant.PRIMARY -> if (enabled) PureWhite else TextTertiary
+        CyberButtonVariant.OUTLINED -> if (enabled) SignalYellow else TextTertiary
         CyberButtonVariant.SECONDARY -> if (enabled) TextPrimary else TextTertiary
-        CyberButtonVariant.DESTRUCTIVE -> if (enabled) StatusCritical else TextTertiary
+        CyberButtonVariant.DESTRUCTIVE -> if (enabled) DeepRed else TextTertiary
     }
 
     val border = when (variant) {
-        CyberButtonVariant.OUTLINED -> BorderStroke(1.dp, if (enabled) CyberNeonCyan else DividerColor)
-        CyberButtonVariant.DESTRUCTIVE -> BorderStroke(1.dp, if (enabled) StatusCritical else DividerColor)
+        CyberButtonVariant.OUTLINED -> BorderStroke(1.dp, if (enabled) SignalYellow else DividerColor)
+        CyberButtonVariant.DESTRUCTIVE -> BorderStroke(1.dp, if (enabled) DeepRed else DividerColor)
         CyberButtonVariant.SECONDARY -> BorderStroke(1.dp, DividerColor)
         CyberButtonVariant.PRIMARY -> if (!enabled) BorderStroke(1.dp, DividerColor) else null
     }

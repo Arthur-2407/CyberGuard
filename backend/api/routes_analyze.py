@@ -14,6 +14,7 @@ Design:
 """
 
 from __future__ import annotations
+from backend.services.resource_scheduler import get_pipeline_scheduler, PipelineFeature
 
 import asyncio
 import functools
@@ -43,6 +44,7 @@ from backend.storage.database import (
     UserModel,
 )
 from backend.services.continuous_learning import ContinuousLearningService
+from backend.audio.preprocessor import load_audio, preprocess_audio, chunk_audio
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,164 @@ class AnalysisResponse(BaseModel):
     calibration_notice: Optional[str] = None
     external_intelligence: Optional[dict] = None
     pitch_analysis: Optional[dict] = None
+
+
+def _load_preprocess_and_chunk(
+    path: str,
+    max_duration: float,
+    sample_rate: int,
+    max_chunks: int = 5,
+):
+    audio_data, sr = load_audio(path, target_sr=sample_rate)
+    if max_duration > 0:
+        actual_duration = len(audio_data) / sample_rate
+        if actual_duration > max_duration:
+            raise ValueError(
+                f"Audio duration ({actual_duration:.1f}s) exceeds the maximum "
+                f"allowed duration of {max_duration:.0f}s. "
+                "Please upload a shorter file."
+            )
+    audio_data = preprocess_audio(
+        audio_data,
+        sr=sample_rate,
+        target_sr=sample_rate,
+        apply_vad=True,
+    )
+    raw_chunks = chunk_audio(
+        audio_data,
+        sr=sample_rate,
+        chunk_duration=4.0,
+        overlap_ratio=0.0,
+    )
+    if len(raw_chunks) > max_chunks:
+        sample_indices = np.linspace(0, len(raw_chunks) - 1, max_chunks, dtype=int)
+        chunks_out = [raw_chunks[idx] for idx in sample_indices]
+    else:
+        chunks_out = raw_chunks
+    return audio_data, chunks_out
+
+
+async def _persist_analysis_record_background(
+    current_user,
+    session_id: str,
+    filename: str,
+    file_hash_hex: str,
+    peak_risk: float,
+    mean_risk: float,
+    alert_level: str,
+    total_chunks: int,
+    duration_sec: float,
+    audio_data: Any,
+    sample_rate: int,
+    active_version: str,
+):
+    try:
+        vault_rel_path: Optional[str] = None
+        if current_user and getattr(current_user, "id", None):
+            try:
+                vault_dir = Path("data/audio_vault")
+                vault_dir.mkdir(parents=True, exist_ok=True)
+                vault_file = vault_dir / f"{file_hash_hex}.flac"
+                if not vault_file.exists() and audio_data is not None:
+                    import soundfile as sf
+                    sf.write(str(vault_file), audio_data[:320000], sample_rate)
+                vault_rel_path = str(vault_file.as_posix())
+            except Exception as v_err:
+                logger.warning(f"Audio vault write notice: {v_err}")
+
+            # 1. Persist user's personal AnalysisRecord into user's isolated database
+            user_session = get_user_db_session_sync(current_user)
+            try:
+                user_record = AnalysisRecordModel(
+                    analysis_id=session_id,
+                    user_id=current_user.id,
+                    filename=filename,
+                    audio_hash=file_hash_hex,
+                    audio_path=vault_rel_path,
+                    duration_sec=duration_sec,
+                    total_chunks=total_chunks,
+                    detector_version=active_version,
+                    native_probability=peak_risk,
+                    peak_risk=peak_risk,
+                    mean_risk=mean_risk,
+                    alert_level=alert_level,
+                    analysis_status="COMPLETED",
+                )
+                user_session.add(user_record)
+                user_session.commit()
+            except Exception as u_err:
+                user_session.rollback()
+                logger.warning(f"Failed to record analysis to user isolated database: {u_err}")
+            finally:
+                user_session.close()
+
+            # 2. Central Admin Review Queue: Restricted to authenticated user audio samples
+            try:
+                central_factory = get_session_factory("data/cyberguard.db")
+                with central_factory() as central_db:
+                    central_record = central_db.query(AnalysisRecordModel).filter(AnalysisRecordModel.analysis_id == session_id).first()
+                    if not central_record:
+                        central_record = AnalysisRecordModel(
+                            analysis_id=session_id,
+                            user_id=current_user.id,
+                            filename=filename,
+                            audio_hash=file_hash_hex,
+                            audio_path=vault_rel_path,
+                            duration_sec=duration_sec,
+                            total_chunks=total_chunks,
+                            detector_version=active_version,
+                            native_probability=peak_risk,
+                            peak_risk=peak_risk,
+                            mean_risk=mean_risk,
+                            alert_level=alert_level,
+                            analysis_status="COMPLETED",
+                        )
+                        central_db.add(central_record)
+
+                    existing_review = central_db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == f"REV_{session_id}").first()
+                    if not existing_review:
+                        review_item = ReviewQueueModel(
+                            review_id=f"REV_{session_id}",
+                            analysis_id=session_id,
+                            submitted_by_user_id=current_user.id,
+                            status="PENDING",
+                        )
+                        central_db.add(review_item)
+                    central_db.commit()
+            except Exception as c_err:
+                logger.warning(f"Failed to record audio to central admin training review queue: {c_err}")
+                try:
+                    from backend.storage.database import get_local_engine
+                    from sqlalchemy.orm import Session
+                    with Session(bind=get_local_engine()) as loc_db:
+                        if not loc_db.query(AnalysisRecordModel).filter(AnalysisRecordModel.analysis_id == session_id).first():
+                            loc_db.add(AnalysisRecordModel(
+                                analysis_id=session_id,
+                                user_id=current_user.id,
+                                filename=filename,
+                                audio_hash=file_hash_hex,
+                                audio_path=vault_rel_path,
+                                duration_sec=duration_sec,
+                                total_chunks=total_chunks,
+                                detector_version=active_version,
+                                native_probability=peak_risk,
+                                peak_risk=peak_risk,
+                                mean_risk=mean_risk,
+                                alert_level=alert_level,
+                                analysis_status="COMPLETED",
+                            ))
+                        if not loc_db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == f"REV_{session_id}").first():
+                            loc_db.add(ReviewQueueModel(
+                                review_id=f"REV_{session_id}",
+                                analysis_id=session_id,
+                                submitted_by_user_id=current_user.id,
+                                status="PENDING",
+                            ))
+                        loc_db.commit()
+                except Exception as loc_err:
+                    logger.debug(f"Local review queue fallback notice: {loc_err}")
+    except Exception as bg_e:
+        logger.warning(f"Background persistence error: {bg_e}")
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
@@ -161,11 +321,11 @@ async def analyze_audio_file(
         file_hash_hex = sha256_hash.hexdigest()
         t0 = _stage("upload", t0)
 
-        # ── Media normalization (audio/video → MP3) ───────────────────────────────
+        # ── Media normalization (audio/video → MP3/supported) ─────────────────────
         mp3_path: Optional[str] = None
         try:
             from backend.audio.preprocessor import normalize_to_mp3
-            mp3_path = normalize_to_mp3(tmp_path)
+            mp3_path = await asyncio.to_thread(normalize_to_mp3, tmp_path)
             if mp3_path != tmp_path:
                 # Delete original; mp3_path is now the working file
                 os.unlink(tmp_path)
@@ -177,46 +337,19 @@ async def analyze_audio_file(
             raise HTTPException(status_code=422, detail=f"Audio format error: {exc}")
         t0 = _stage("media_normalize", t0)
 
-        # ── Load and preprocess ───────────────────────────────────────────────────
+        # ── Load and preprocess (offloaded to thread worker to avoid event loop blocking) ───
         try:
-            audio, sr = load_audio(tmp_path, target_sr=app_settings.audio.sample_rate)
+            audio, chunks = await asyncio.to_thread(
+                _load_preprocess_and_chunk,
+                tmp_path,
+                app_settings.upload.max_duration_sec,
+                app_settings.audio.sample_rate,
+                5,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         except Exception as exc:
             raise HTTPException(status_code=422, detail=f"Could not decode audio file: {exc}")
-        t0 = _stage("audio_load", t0)
-
-        # ── Duration enforcement ──────────────────────────────────────────────────
-        max_dur = app_settings.upload.max_duration_sec
-        if max_dur > 0:
-            actual_duration = len(audio) / app_settings.audio.sample_rate
-            if actual_duration > max_dur:
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"Audio duration ({actual_duration:.1f}s) exceeds the maximum "
-                        f"allowed duration of {max_dur:.0f}s. "
-                        "Please upload a shorter file."
-                    ),
-                )
-
-        audio = preprocess_audio(
-            audio, sr=app_settings.audio.sample_rate,
-            target_sr=app_settings.audio.sample_rate,
-            apply_vad=True,
-        )
-        # For uploaded file analysis, avoid high streaming overlap ratios (which generate 75+ redundant chunks).
-        # We sample up to 8 representative chunks evenly across the file for optimal responsiveness and thorough neural coverage.
-        max_file_chunks = 8
-        raw_chunks = chunk_audio(
-            audio,
-            sr=app_settings.audio.sample_rate,
-            chunk_duration=4.0,  # 4.0s (64,000 samples) aligns with AASIST neural spectro-temporal receptive field
-            overlap_ratio=0.0,
-        )
-        if len(raw_chunks) > max_file_chunks:
-            sample_indices = np.linspace(0, len(raw_chunks) - 1, max_file_chunks, dtype=int)
-            chunks = [raw_chunks[idx] for idx in sample_indices]
-        else:
-            chunks = raw_chunks
         t0 = _stage("preprocess_chunk", t0)
 
         if not chunks:
@@ -241,48 +374,98 @@ async def analyze_audio_file(
                 db_path=str(app_settings.abs_path(app_settings.storage.db_path))
             )
             enrolled_emb = registry.get_embedding(speaker_id)
+            pitch_base = registry.get_pitch_profile(speaker_id)
             if enrolled_emb is not None:
-                consistency_checker.set_enrolled_profile(enrolled_emb, speaker_id)
+                consistency_checker.set_enrolled_profile(enrolled_emb, speaker_id, pitch_baseline=pitch_base)
                 needs_speaker_emb = True
         t0 = _stage("setup", t0)
 
-        # ── Run detection pipeline (offloaded to thread pool) ─────────────────────
-        loop = asyncio.get_event_loop()
-        chunk_scores = []
-
-        logger.info(
-            f"analysis_id={session_id} stage=model_inference "
-            f"chunks={len(chunks)} status=start"
+        # ── Intelligent Admission & Scheduling ───────────────────────────────────
+        scheduler = get_pipeline_scheduler()
+        job = await scheduler.acquire_pipeline_execution(
+            feature=PipelineFeature.VOICE_ANALYSIS,
+            session_id=session_id,
+            user_id=getattr(current_user, "id", None) if (current_user and current_user.is_active) else None,
+            username=getattr(current_user, "username", None) if (current_user and current_user.is_active) else None,
+            idempotency_key=f"{file_hash_hex}:{needs_speaker_emb}:{speaker_id or ''}",
         )
-        for i, chunk in enumerate(chunks):
-            result = await loop.run_in_executor(
-                None,
-                functools.partial(
-                    app_detector.process_chunk,
-                    chunk,
+
+        async def _execute_inference():
+            loop = asyncio.get_event_loop()
+            scores = []
+            logger.info(
+                f"analysis_id={session_id} stage=model_inference "
+                f"chunks={len(chunks)} status=start"
+            )
+            for i, chunk in enumerate(chunks):
+                try:
+                    result = await loop.run_in_executor(
+                        None,
+                        functools.partial(
+                            app_detector.process_chunk,
+                            chunk,
+                            chunk_id=i,
+                            use_speaker_embedding=needs_speaker_emb
+                        )
+                    )
+                except (MemoryError, RuntimeError) as mem_err:
+                    logger.warning(
+                        f"Memory pressure encountered on chunk {i}: {mem_err}. "
+                        "Engaging calibrated acoustic heuristic fallback to protect process."
+                    )
+                    import gc
+                    gc.collect()
+                    from backend.features.feature_fusion import extract_all_features
+                    try:
+                        f_bundle = extract_all_features(
+                            audio=chunk,
+                            sr=app_settings.audio.sample_rate,
+                            use_wav2vec2=False,
+                            use_speaker_embedding=False
+                        )
+                        h_score = app_detector._heuristic_score(f_bundle)
+                    except Exception:
+                        h_score = 0.50
+                    from backend.detection.detector import ChunkDetectionResult
+                    result = ChunkDetectionResult(
+                        chunk_id=i,
+                        timestamp=time.time(),
+                        synthetic_probability=float(h_score),
+                        processing_time_ms=5.0,
+                        features_available={"mfcc": True, "prosodic": True, "wav2vec2": False, "speaker_embedding": False, "aasist": False},
+                        speaker_embedding=None,
+                        detector_state="HEURISTIC_ONLY",
+                        calibration_mode="uncalibrated_heuristic",
+                        pitch_analysis={"pitch_verdict": "ACOUSTIC_HEURISTIC_FALLBACK", "is_pitch_anomaly": False}
+                    )
+
+                speaker_sim = None
+                if result.speaker_embedding is not None and needs_speaker_emb:
+                    c_result = consistency_checker.check(result.speaker_embedding, current_pitch=result.pitch_analysis)
+                    speaker_sim = c_result.get("similarity")
+
+                snapshot = risk_engine.update(
                     chunk_id=i,
-                    use_speaker_embedding=needs_speaker_emb
+                    detection_score=result.synthetic_probability,
+                    speaker_similarity=speaker_sim,
                 )
-            )
-            speaker_sim = None
-            if result.speaker_embedding is not None and needs_speaker_emb:
-                c_result = consistency_checker.check(result.speaker_embedding)
-                speaker_sim = c_result.get("similarity")
 
-            snapshot = risk_engine.update(
-                chunk_id=i,
-                detection_score=result.synthetic_probability,
-                speaker_similarity=speaker_sim,
-            )
+                scores.append({
+                    "chunk_id": i,
+                    "start_time_sec": round(i * 4.0, 1),
+                    "end_time_sec": round((i + 1) * 4.0, 1),
+                    "detection_score": result.synthetic_probability,
+                    "risk_score": snapshot.combined_risk,
+                    "alert_level": snapshot.alert_level.value,
+                    "processing_ms": result.processing_time_ms,
+                    "pitch_analysis": result.pitch_analysis,
+                })
+                # Eagerly release memory per chunk to keep RSS within low container ceilings
+                import gc
+                gc.collect()
+            return scores, risk_engine.get_session_summary()
 
-            chunk_scores.append({
-                "chunk_id": i,
-                "detection_score": result.synthetic_probability,
-                "risk_score": snapshot.combined_risk,
-                "alert_level": snapshot.alert_level.value,
-                "processing_ms": result.processing_time_ms,
-                "pitch_analysis": result.pitch_analysis,
-            })
+        chunk_scores, summary = await scheduler.run_with_admission(job, _execute_inference)
         t0 = _stage("model_inference", t0)
 
         # Aggregate session-level pitch & prosodic telemetry
@@ -292,9 +475,26 @@ async def analyze_audio_file(
             f0_stds = [p["f0_std_hz"] for p in valid_pitches if p.get("f0_std_hz", 0) > 0]
             jitters = [p["jitter"] for p in valid_pitches if p.get("jitter", 0) > 0]
             shimmers = [p["shimmer"] for p in valid_pitches if p.get("shimmer", 0) > 0]
-            hnrs = [p["hnr_db"] for p in valid_pitches if p.get("hnr_db", 0) > 0]
+            hnrs = [p["hnr_db"] for p in valid_pitches if p.get("hnr_db") is not None]
             stabilities = [p["pitch_stability_pct"] for p in valid_pitches if "pitch_stability_pct" in p]
             anomalies = [p["is_pitch_anomaly"] for p in valid_pitches]
+
+            is_session_anomaly = bool(any(anomalies) or (jitters and np.mean(jitters) >= 0.080))
+            is_session_organic = bool(
+                not is_session_anomaly and
+                f0_means and np.mean(f0_means) >= 60.0 and
+                f0_stds and np.mean(f0_stds) >= 12.0 and
+                jitters and 0.005 <= np.mean(jitters) <= 0.065
+            )
+
+            if is_session_anomaly:
+                session_pitch_verdict = "SYNTHETIC PITCH ANOMALY"
+            elif is_session_organic:
+                session_pitch_verdict = "ORGANIC HUMAN PROSODY"
+            elif not f0_means:
+                session_pitch_verdict = "UNVOICED / NO PITCH DETECTED"
+            else:
+                session_pitch_verdict = "ANALYZED / VARIABLE PROSODY"
 
             session_pitch = {
                 "f0_mean_hz": round(float(np.mean(f0_means)), 1) if f0_means else 0.0,
@@ -303,8 +503,9 @@ async def analyze_audio_file(
                 "shimmer": round(float(np.mean(shimmers)), 4) if shimmers else 0.0,
                 "hnr_db": round(float(np.mean(hnrs)), 1) if hnrs else 0.0,
                 "pitch_stability_pct": round(float(np.mean(stabilities)), 1) if stabilities else 85.0,
-                "pitch_verdict": "SYNTHETIC PITCH ANOMALY" if any(anomalies) or (jitters and np.mean(jitters) >= 0.060) else "ORGANIC HUMAN PROSODY",
-                "is_pitch_anomaly": bool(any(anomalies) or (jitters and np.mean(jitters) >= 0.060)),
+                "pitch_verdict": session_pitch_verdict,
+                "is_pitch_anomaly": is_session_anomaly,
+                "is_organic_human": is_session_organic,
             }
         else:
             session_pitch = {
@@ -314,18 +515,31 @@ async def analyze_audio_file(
                 "shimmer": 0.0,
                 "hnr_db": 0.0,
                 "pitch_stability_pct": 90.0,
-                "pitch_verdict": "ORGANIC HUMAN PROSODY",
+                "pitch_verdict": "UNVOICED / NO PITCH DETECTED",
                 "is_pitch_anomaly": False,
+                "is_organic_human": False,
             }
 
-        summary = risk_engine.get_session_summary()
+        summary = summary or risk_engine.get_session_summary()
         final_risk = chunk_scores[-1]["risk_score"] if chunk_scores else 0.0
+        peak_risk_val = float(summary["peak_risk"]) if isinstance(summary.get("peak_risk"), (int, float)) else 0.0
+        summary["peak_risk"] = peak_risk_val
 
         # Note: VirusTotal & URLhaus intelligence lookups are exclusively scoped to
         # the Phishing & URL tab to conserve API quota and avoid unnecessary threat lookups.
         vt_result = None
 
-        recommendation = threshold_engine.evaluate(summary["peak_risk"])
+        recommendation = threshold_engine.evaluate(peak_risk_val)
+        if peak_risk_val < 0.35 and session_pitch.get("is_organic_human"):
+            from backend.detection.threshold_engine import AlertRecommendation, AlertLevel
+            recommendation = AlertRecommendation(
+                alert_level=AlertLevel.SAFE,
+                risk_score=peak_risk_val,
+                title="Voice Verified — Organic Human Prosody",
+                message="Acoustic pitch dynamics and organic vocal cord biometrics confirm natural human voice.",
+                actions=["Continue conversation normally", "Organic human speech patterns verified"],
+                color="#22c55e",
+            )
 
         t_end = time.perf_counter()
         total_ms = (t_end - t_start) * 1000
@@ -426,83 +640,27 @@ async def analyze_audio_file(
                 except Exception as alert_err:
                     logger.warning(f"Failed to dispatch alert notification: {alert_err}")
 
-        # ── Model Version & Continuous Learning Vault Storage ─────────────────
-        central_factory = get_session_factory("data/cyberguard.db")
-        with central_factory() as central_db:
-            active_version = ContinuousLearningService.get_active_model_version(central_db)
+        # ── Model Version & Continuous Learning Vault Storage (Background Async) ───
+        active_version = ContinuousLearningService.get_active_model_version(None)
 
-        # Secure non-public audio storage for review & training:
-        # Strictly restricted to authenticated accounts. Guest audio is NEVER permanently stored on disk.
-        vault_rel_path: Optional[str] = None
+        # Offload audio vault write and database commits to non-blocking background task
         if current_user and getattr(current_user, "id", None):
-            try:
-                vault_dir = Path("data/audio_vault")
-                vault_dir.mkdir(parents=True, exist_ok=True)
-                vault_file = vault_dir / f"{file_hash_hex}.flac"
-                if not vault_file.exists():
-                    import soundfile as sf
-                    sf.write(str(vault_file), audio[:320000], app_settings.audio.sample_rate)
-                vault_rel_path = str(vault_file.as_posix())
-            except Exception as v_err:
-                logger.warning(f"Audio vault write notice: {v_err}")
-
-            # 1. Persist user's personal AnalysisRecord into user's isolated database
-            user_session = get_user_db_session_sync(current_user)
-            try:
-                user_record = AnalysisRecordModel(
-                    analysis_id=session_id,
-                    user_id=current_user.id,
+            asyncio.create_task(
+                _persist_analysis_record_background(
+                    current_user=current_user,
+                    session_id=session_id,
                     filename=file.filename or "unknown",
-                    audio_hash=file_hash_hex,
-                    audio_path=vault_rel_path,
-                    duration_sec=float(len(audio) / app_settings.audio.sample_rate),
-                    total_chunks=len(chunks),
-                    detector_version=active_version,
-                    native_probability=float(summary["peak_risk"]),
+                    file_hash_hex=file_hash_hex,
                     peak_risk=float(summary["peak_risk"]),
                     mean_risk=float(summary["mean_risk"]),
                     alert_level=recommendation.alert_level.value,
-                    analysis_status="COMPLETED",
+                    total_chunks=len(chunks),
+                    duration_sec=float(len(audio) / app_settings.audio.sample_rate),
+                    audio_data=audio,
+                    sample_rate=app_settings.audio.sample_rate,
+                    active_version=active_version,
                 )
-                user_session.add(user_record)
-                user_session.commit()
-            except Exception as u_err:
-                user_session.rollback()
-                logger.warning(f"Failed to record analysis to user isolated database: {u_err}")
-            finally:
-                user_session.close()
-
-            # 2. Central Admin Review Queue: Restricted to authenticated user audio samples
-            # with explicit submitted_by_user_id metadata for authorized model training
-            try:
-                with central_factory() as central_db:
-                    central_record = AnalysisRecordModel(
-                        analysis_id=session_id,
-                        user_id=current_user.id,
-                        filename=file.filename or "unknown",
-                        audio_hash=file_hash_hex,
-                        audio_path=vault_rel_path,
-                        duration_sec=float(len(audio) / app_settings.audio.sample_rate),
-                        total_chunks=len(chunks),
-                        detector_version=active_version,
-                        native_probability=float(summary["peak_risk"]),
-                        peak_risk=float(summary["peak_risk"]),
-                        mean_risk=float(summary["mean_risk"]),
-                        alert_level=recommendation.alert_level.value,
-                        analysis_status="COMPLETED",
-                    )
-                    central_db.add(central_record)
-
-                    review_item = ReviewQueueModel(
-                        review_id=f"REV_{session_id}",
-                        analysis_id=session_id,
-                        submitted_by_user_id=current_user.id,
-                        status="PENDING",
-                    )
-                    central_db.add(review_item)
-                    central_db.commit()
-            except Exception as c_err:
-                logger.warning(f"Failed to record audio to central admin training review queue: {c_err}")
+            )
 
         det_state = app_detector.detector_state if hasattr(app_detector, "detector_state") else ("NEURAL_READY" if getattr(app_detector, "has_neural_model", False) else "HEURISTIC_ONLY")
         calib_notice = (
@@ -520,6 +678,7 @@ async def analyze_audio_file(
             final_risk=final_risk,
             alert_level=recommendation.alert_level.value,
             recommendation={
+                "alert_level": recommendation.alert_level.value,
                 "title": recommendation.title,
                 "message": recommendation.message,
                 "actions": recommendation.actions,
@@ -546,6 +705,9 @@ async def analyze_audio_file(
                 os.unlink(tmp_path)
             except OSError as e:
                 logger.warning(f"Failed to delete analysis temp file {tmp_path}: {e}")
+        # Explicit garbage collection after audio decode and model inference to keep memory bounded
+        import gc
+        gc.collect()
 
 
 @router.get("/history/me")
@@ -558,6 +720,7 @@ async def get_my_analysis_history(
     try:
         records = (
             user_db.query(AnalysisRecordModel)
+            .filter(AnalysisRecordModel.user_id == current_user.id)
             .order_by(AnalysisRecordModel.id.desc())
             .limit(limit)
             .all()
@@ -578,3 +741,9 @@ async def get_my_analysis_history(
         ]
     finally:
         user_db.close()
+
+
+@router.get("/scheduler/status", tags=["System"])
+async def get_scheduler_status():
+    """Return live status of intelligent pipeline resource scheduler and active workloads."""
+    return get_pipeline_scheduler().get_system_status()

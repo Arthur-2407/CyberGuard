@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberGuard Shield — Access Blocked</title>
+  <link rel="stylesheet" href="blocked.css">
+</head>
+<body>
+  <div class="shield-container">
+    <div class="scanlines"></div>
+    <div class="glow-orb"></div>
+
+    <header class="shield-header">
+      <div class="shield-logo-wrap">
+        <img src="icons/icon48.png" alt="CyberGuard" class="shield-emblem">
+        <div class="shield-title-group">
+          <h1>CYBERGUARD <span class="accent-danger">INTERCEPT</span></h1>
+          <div class="subtitle">AUTOMATED TECHNICAL THREAT CONTAINMENT SYSTEM</div>
+        </div>
+      </div>
+      <div class="status-badge danger">THREAT BLOCKED</div>
+    </header>
+
+    <main class="shield-card">
+      <div class="alert-banner">
+        <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <div class="alert-text">
+          <h2 id="threat-title">DECEPTIVE OR MALICIOUS DESTINATION DETECTED</h2>
+          <p id="threat-lead">CyberGuard has actively prevented your browser from connecting to this website to protect your credentials, personal identity, and device integrity.</p>
+        </div>
+      </div>
+
+      <div class="forensic-grid">
+        <div class="forensic-item">
+          <span class="forensic-label">TARGET DOMAIN</span>
+          <span class="forensic-val highlight-target" id="field-domain">unknown.domain</span>
+        </div>
+        <div class="forensic-item">
+          <span class="forensic-label">THREAT CLASSIFICATION</span>
+          <span class="forensic-val text-danger" id="field-threat">PHISHING_CREDENTIAL_HARVESTING</span>
+        </div>
+        <div class="forensic-item">
+          <span class="forensic-label">EVIDENCE SOURCE</span>
+          <span class="forensic-val" id="field-source">CyberGuard SOC Threat Intelligence</span>
+        </div>
+        <div class="forensic-item">
+          <span class="forensic-label">TIMESTAMP</span>
+          <span class="forensic-val" id="field-time">2026-10-27 UTC</span>
+        </div>
+      </div>
+
+      <div class="reason-panel">
+        <div class="reason-title">EVIDENCE & INTERCEPTION REASONING:</div>
+        <div class="reason-body" id="field-reason">
+          Destination matched verified malicious signatures or exhibited deceptive credential-harvesting homoglyph patterns. Access was terminated before untrusted scripts could execute.
+        </div>
+      </div>
+
+      <div class="action-row">
+        <button id="btn-back" class="btn btn-primary">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+            <polyline points="15 18 9 12 15 6"></polyline>
+          </svg>
+          Return to Safety
+        </button>
+
+        <button id="btn-show-advanced" class="btn btn-secondary">
+          Advanced Options
+        </button>
+      </div>
+
+      <div id="advanced-drawer" class="advanced-drawer hidden">
+        <div class="advanced-content">
+          <h4>FALSE POSITIVE EXCEPTION / OVERRIDE</h4>
+          <p>If you are a security researcher or certain this website is safe, you can temporarily whitelist this domain on this browser. A security incident audit record will be registered.</p>
+          <div class="advanced-actions">
+            <button id="btn-override" class="btn btn-outline-danger">
+              Authorize Override & Whitelist Domain
+            </button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="shield-footer">
+      <span>CyberGuard SOC v1.0.0</span>
+      <span>Enforced locally via Chromium DeclarativeNetRequest</span>
+    </footer>
+  </div>
+
+  <script src="blocked.js"></script>
+</body>
+</html>

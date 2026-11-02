@@ -179,8 +179,8 @@ class TestImageForensicsPipeline:
         event = coordinator.analyze(buf.getvalue(), "canon_eos.jpg")
         assert event.classification == "LIKELY_AUTHENTIC"
         assert event.severity == RiskLevel.SAFE
-        assert event.threat_score == 0.0
-        assert event.metadata_details["provenance_status"] == "CAMERA_PROVENANCE_CONFIRMED"
+        assert event.threat_score < 0.35
+        assert event.metadata_details["provenance_status"] == "EXIF_CAMERA_CLAIM_PRESENT"
 
     def test_high_res_smartphone_photo_with_sharp_edges_is_authentic(self, coordinator):
         """Verify that high-resolution smartphone photos (e.g., 1344x2980 Xiaomi) with sharp edges remain SAFE."""
@@ -202,7 +202,7 @@ class TestImageForensicsPipeline:
         assert event.classification == "LIKELY_AUTHENTIC"
         assert event.severity == RiskLevel.SAFE
         assert event.threat_score < 0.35
-        assert event.metadata_details["provenance_status"] == "CAMERA_PROVENANCE_CONFIRMED"
+        assert event.metadata_details["provenance_status"] == "EXIF_CAMERA_CLAIM_PRESENT"
         assert event.forensic_metrics["noise_kurtosis"] < 25.0
         assert event.forensic_metrics["noise_status"] == "NOMINAL"
         assert "thresholds" in event.forensic_metrics

@@ -132,8 +132,14 @@ class ContinuousLearningService:
         global _TRAINING_PROGRESS
         return dict(_TRAINING_PROGRESS)
 
+    _cached_active_version: Optional[str] = None
+    _cached_version_timestamp: float = 0.0
+
     @classmethod
     def get_active_model_version(cls, db: Optional[Session] = None) -> str:
+        now = time.time()
+        if cls._cached_active_version and (now - cls._cached_version_timestamp) < 30.0 and db is None:
+            return cls._cached_active_version
         """
         Dynamically determine the active production model version.
         Single source of truth cascade:
@@ -163,7 +169,10 @@ class ContinuousLearningService:
                     .first()
                 )
                 if active_mv and active_mv.version:
-                    return str(active_mv.version).strip()
+                    res_v = str(active_mv.version).strip()
+                cls._cached_active_version = res_v
+                cls._cached_version_timestamp = time.time()
+                return res_v
 
                 latest_mv = (
                     db.query(ModelVersionModel)
@@ -171,7 +180,10 @@ class ContinuousLearningService:
                     .first()
                 )
                 if latest_mv and latest_mv.version:
-                    return str(latest_mv.version).strip()
+                    res_v = str(latest_mv.version).strip()
+                cls._cached_active_version = res_v
+                cls._cached_version_timestamp = time.time()
+                return res_v
         except Exception as e:
             logger.debug(f"Database version resolution notice: {e}")
         finally:
@@ -275,6 +287,87 @@ class ContinuousLearningService:
         return f"v{next_num:03d}"
 
     @staticmethod
+    def get_review_item(db: Session, target_id: str) -> Optional[ReviewQueueModel]:
+        """Look up review item by review_id, numeric id, or analysis_id with counterpart hybrid fallback."""
+        if not target_id or db is None:
+            return None
+        rev = db.query(ReviewQueueModel).filter(
+            (ReviewQueueModel.review_id == str(target_id)) |
+            (ReviewQueueModel.id == (int(target_id) if str(target_id).isdigit() else -1)) |
+            (ReviewQueueModel.analysis_id == str(target_id))
+        ).first()
+        if rev:
+            return rev
+
+        # Resilient hybrid fallback if record is in counterpart database
+        try:
+            is_pg = getattr(db.bind.dialect, "name", "") == "postgresql"
+            counterpart = None
+            if is_pg:
+                from backend.storage.database import get_local_engine
+                counterpart = Session(bind=get_local_engine())
+            else:
+                from backend.storage.sync_service import get_sync_service
+                sync_svc = get_sync_service()
+                if sync_svc.is_cloud_available():
+                    counterpart = sync_svc.get_cloud_session()
+
+            if counterpart:
+                try:
+                    fb_rev = counterpart.query(ReviewQueueModel).filter(
+                        (ReviewQueueModel.review_id == str(target_id)) |
+                        (ReviewQueueModel.id == (int(target_id) if str(target_id).isdigit() else -1)) |
+                        (ReviewQueueModel.analysis_id == str(target_id))
+                    ).first()
+                    if fb_rev:
+                        fb_ana = counterpart.query(AnalysisRecordModel).filter(
+                            AnalysisRecordModel.analysis_id == fb_rev.analysis_id
+                        ).first()
+                        if fb_ana:
+                            existing_ana = db.query(AnalysisRecordModel).filter(
+                                AnalysisRecordModel.analysis_id == fb_ana.analysis_id
+                            ).first()
+                            if not existing_ana:
+                                db.add(AnalysisRecordModel(
+                                    analysis_id=fb_ana.analysis_id,
+                                    user_id=fb_ana.user_id,
+                                    filename=fb_ana.filename,
+                                    audio_hash=fb_ana.audio_hash,
+                                    audio_path=fb_ana.audio_path,
+                                    duration_sec=fb_ana.duration_sec,
+                                    total_chunks=fb_ana.total_chunks,
+                                    detector_version=fb_ana.detector_version,
+                                    native_probability=fb_ana.native_probability,
+                                    peak_risk=fb_ana.peak_risk,
+                                    mean_risk=fb_ana.mean_risk,
+                                    alert_level=fb_ana.alert_level,
+                                    analysis_status=fb_ana.analysis_status,
+                                    created_at=fb_ana.created_at,
+                                ))
+                                db.flush()
+                        new_rev = ReviewQueueModel(
+                            review_id=fb_rev.review_id,
+                            analysis_id=fb_rev.analysis_id,
+                            submitted_by_user_id=fb_rev.submitted_by_user_id,
+                            status=fb_rev.status,
+                            reviewer_admin_id=fb_rev.reviewer_admin_id,
+                            reviewed_at=fb_rev.reviewed_at,
+                            ground_truth_label=fb_rev.ground_truth_label,
+                            approved_for_training=fb_rev.approved_for_training,
+                            rejection_reason=fb_rev.rejection_reason,
+                            notes=fb_rev.notes,
+                            created_at=fb_rev.created_at,
+                        )
+                        db.add(new_rev)
+                        db.commit()
+                        return new_rev
+                finally:
+                    counterpart.close()
+        except Exception as fb_err:
+            logger.debug(f"Counterpart review queue lookup notice: {fb_err}")
+        return None
+
+    @staticmethod
     def approve_review_sample(
         db: Session,
         review_id: str,
@@ -292,7 +385,7 @@ class ContinuousLearningService:
         Supports clean separation between Ground-Truth (BONAFIDE, SPOOF, INCONCLUSIVE)
         and Training Decision (APPROVE for retraining vs REJECT from retraining).
         """
-        review = db.query(ReviewQueueModel).filter(ReviewQueueModel.review_id == review_id).first()
+        review = ContinuousLearningService.get_review_item(db, review_id)
         if not review:
             raise ValueError(f"Review item {review_id} not found.")
 
@@ -508,11 +601,7 @@ class ContinuousLearningService:
         audio_hash: str = "unknown"
 
         if review_id:
-            review = db.query(ReviewQueueModel).filter(
-                (ReviewQueueModel.review_id == str(review_id)) |
-                (ReviewQueueModel.analysis_id == str(review_id)) |
-                (ReviewQueueModel.id == (int(review_id) if str(review_id).isdigit() else -1))
-            ).first()
+            review = ContinuousLearningService.get_review_item(db, review_id)
             if review:
                 target_analysis_id = review.analysis_id
                 review.status = "APPROVED"
