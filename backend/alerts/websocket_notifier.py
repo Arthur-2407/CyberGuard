@@ -2,19 +2,22 @@
 websocket_notifier.py — Real-time WebSocket alert push for CyberGuard.
 
 Manages connected WebSocket clients and delivers detection updates
-to the specific session that produced them — NOT to all clients.
+to the specific session or authorized user — NOT to all clients.
 
-Session isolation design:
-  - Each WebSocket connection is registered with its session_id on connect().
-  - notify() delivers the alert only to the WebSocket that owns the session.
-  - broadcast_raw() remains available for system-wide messages (health, etc.).
+Zero-Trust Isolation design:
+  - Each WebSocket connection is registered with its session_id, user_id, and role on connect().
+  - notify() delivers session risk updates only to the originating session.
+  - notify_threat_event() delivers threat telemetry only to the owning user or administrators.
+  - notify_incident_event() delivers incident updates only to the owning user or administrators.
+  - notify_alert_event() delivers alerts only to the owning session, owning user, or administrators.
+  - broadcast_raw() remains strictly available for system-wide notices (health, shutdown).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from fastapi import WebSocket
 
@@ -23,10 +26,10 @@ logger = logging.getLogger(__name__)
 
 class WebSocketNotifier:
     """
-    Manages active WebSocket connections with per-session routing.
+    Manages active WebSocket connections with strict user- and session-level routing.
 
-    Alerts are delivered ONLY to the originating session's WebSocket,
-    preventing cross-session data leakage when multiple clients are connected.
+    Alerts and threat telemetry are delivered ONLY to the owning session or user,
+    preventing cross-session and cross-user data leakage when multiple clients are connected.
     """
 
     def __init__(self):
@@ -34,28 +37,44 @@ class WebSocketNotifier:
         self._ws_to_session: Dict[WebSocket, str] = {}
         # session_id → ws mapping (for fast lookup by session)
         self._session_to_ws: Dict[str, WebSocket] = {}
+        # ws → metadata dictionary (session_id, user_id, role)
+        self._ws_metadata: Dict[WebSocket, Dict[str, Any]] = {}
 
-    async def connect(self, websocket: WebSocket, session_id: str) -> None:
+    async def connect(
+        self,
+        websocket: WebSocket,
+        session_id: str,
+        user_id: Optional[int] = None,
+        role: Optional[str] = "user"
+    ) -> None:
         """
-        Accept and register a new WebSocket connection bound to session_id.
+        Accept and register a new WebSocket connection bound to session_id and user identity.
 
         Args:
             websocket:  the incoming WebSocket connection
             session_id: the unique session identifier for this connection
+            user_id:    the authenticated user ID, or None if guest
+            role:       the user role ('admin', 'user', 'guest')
         """
         await websocket.accept()
         self._ws_to_session[websocket] = session_id
         self._session_to_ws[session_id] = websocket
+        self._ws_metadata[websocket] = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "role": (role or "user").lower(),
+        }
         logger.info(
-            f"WebSocket client connected (session={session_id}). "
+            f"WebSocket client connected (session={session_id}, user_id={user_id}, role={role}). "
             f"Total: {len(self._ws_to_session)}"
         )
 
     async def disconnect(self, websocket: WebSocket) -> None:
-        """Deregister a WebSocket connection and its session mapping."""
+        """Deregister a WebSocket connection and its session/metadata mappings."""
         session_id = self._ws_to_session.pop(websocket, None)
         if session_id is not None:
             self._session_to_ws.pop(session_id, None)
+        self._ws_metadata.pop(websocket, None)
         logger.info(
             f"WebSocket client disconnected (session={session_id}). "
             f"Total: {len(self._ws_to_session)}"
@@ -110,15 +129,111 @@ class WebSocketNotifier:
             await ws.send_text(payload)
         except Exception as exc:
             logger.debug(f"Failed to send to session {session_id}: {exc}. Removing stale connection.")
-            # Clean up stale connection
-            self._ws_to_session.pop(ws, None)
-            self._session_to_ws.pop(session_id, None)
+            await self.disconnect(ws)
+
+    async def notify_threat_event(self, event) -> None:
+        """
+        Deliver threat event ONLY to the owning user and administrators.
+        Guarantees zero-trust data isolation across users.
+        """
+        target_user_id = getattr(event, "user_id", None)
+        event_dict = event.model_dump() if hasattr(event, "model_dump") else (event.dict() if hasattr(event, "dict") else dict(event))
+        payload = json.dumps({
+            "type": "threat_event",
+            "event": event_dict
+        })
+        dead: Set[WebSocket] = set()
+        for ws, meta in list(self._ws_metadata.items()):
+            conn_user_id = meta.get("user_id")
+            conn_role = meta.get("role", "user")
+            is_admin = conn_role in ("admin", "role_admin")
+
+            should_deliver = False
+            if is_admin:
+                should_deliver = True
+            elif target_user_id is not None and conn_user_id == target_user_id:
+                should_deliver = True
+
+            if should_deliver:
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    dead.add(ws)
+
+        for ws in dead:
+            await self.disconnect(ws)
+
+    async def notify_incident_event(self, message: dict, user_id: Optional[int] = None) -> None:
+        """
+        Deliver incident update ONLY to the owning user and administrators.
+        """
+        target_uid = user_id
+        if target_uid is None and isinstance(message, dict):
+            target_uid = message.get("user_id")
+            if target_uid is None and isinstance(message.get("incident"), dict):
+                target_uid = message["incident"].get("user_id")
+
+        payload = json.dumps(message)
+        dead: Set[WebSocket] = set()
+        for ws, meta in list(self._ws_metadata.items()):
+            conn_user_id = meta.get("user_id")
+            conn_role = meta.get("role", "user")
+            is_admin = conn_role in ("admin", "role_admin")
+
+            should_deliver = False
+            if is_admin:
+                should_deliver = True
+            elif target_uid is not None and conn_user_id == target_uid:
+                should_deliver = True
+
+            if should_deliver:
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    dead.add(ws)
+
+        for ws in dead:
+            await self.disconnect(ws)
+
+    async def notify_alert_event(
+        self,
+        alert_payload: dict,
+        session_id: Optional[str] = None,
+        user_id: Optional[int] = None
+    ) -> None:
+        """
+        Deliver security alert event strictly to the owning session, owning user, or administrators.
+        """
+        payload = json.dumps(alert_payload)
+        dead: Set[WebSocket] = set()
+        for ws, meta in list(self._ws_metadata.items()):
+            conn_sid = meta.get("session_id")
+            conn_user_id = meta.get("user_id")
+            conn_role = meta.get("role", "user")
+            is_admin = conn_role in ("admin", "role_admin")
+
+            should_deliver = False
+            if is_admin:
+                should_deliver = True
+            elif session_id and conn_sid == session_id:
+                should_deliver = True
+            elif user_id is not None and conn_user_id == user_id:
+                should_deliver = True
+
+            if should_deliver:
+                try:
+                    await ws.send_text(payload)
+                except Exception:
+                    dead.add(ws)
+
+        for ws in dead:
+            await self.disconnect(ws)
 
     async def broadcast_raw(self, message: dict) -> None:
         """
         Send an arbitrary JSON message to ALL connected clients.
         Use only for system-wide messages (health pings, server shutdowns, etc.).
-        Do NOT use for session-specific data.
+        Do NOT use for session-specific or user-private data.
         """
         payload = json.dumps(message)
         dead: Set[WebSocket] = set()
@@ -128,9 +243,7 @@ class WebSocketNotifier:
             except Exception:
                 dead.add(ws)
         for ws in dead:
-            session_id = self._ws_to_session.pop(ws, None)
-            if session_id:
-                self._session_to_ws.pop(session_id, None)
+            await self.disconnect(ws)
 
     @property
     def connection_count(self) -> int:

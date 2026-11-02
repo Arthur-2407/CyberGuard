@@ -29,6 +29,12 @@ from backend.threats.models import (
     ThreatEvent, Evidence, Explanation, ThreatCategory, RiskLevel
 )
 from backend.detection.detector import VoiceCloneDetector
+from backend.analysis.forensics.c2pa_provenance import get_c2pa_engine
+from backend.analysis.forensics.image_forensics import get_image_forensics_engine
+from backend.models.vision_detector import get_vision_detector
+from backend.models.qwen_service import get_qwen_service
+from backend.analysis.forensics.video_forensics import get_video_forensics_engine
+from backend.analysis.forensics.correlation_engine import get_forensic_correlation_engine
 
 logger = logging.getLogger(__name__)
 
@@ -317,12 +323,14 @@ class DeepfakeCoordinator:
                 source="MetadataProvenance",
             ))
         elif metadata_details["camera_make"] or metadata_details["camera_model"]:
-            metadata_details["provenance_status"] = "CAMERA_PROVENANCE_CONFIRMED"
-            suspicion_delta -= self.image_config.camera_provenance_dampener
+            metadata_details["provenance_status"] = "EXIF_CAMERA_CLAIM_PRESENT"
+            metadata_details["sensor_signature_verified"] = False
+            metadata_details["cryptographic_provenance"] = False
+            # Unverified EXIF metadata claim does NOT reduce suspicion score
             cam_desc = f"{metadata_details.get('camera_make') or ''} {metadata_details.get('camera_model') or ''}".strip()
             evidences.append(Evidence(
-                evidence_type="camera_hardware_provenance",
-                description=f"Optical camera hardware provenance confirmed ({cam_desc}).",
+                evidence_type="camera_hardware_metadata_claim",
+                description=f"Camera hardware metadata tags present in container EXIF ({cam_desc}). Unverified device claim without cryptographic C2PA signature or reference sensor PRNU match.",
                 value=cam_desc,
                 severity_contribution=0.0,
                 source="MetadataProvenance",
@@ -342,6 +350,19 @@ class DeepfakeCoordinator:
     # ── FORENSIC DSP & MULTI-SIGNAL IMAGE SIGNALS ─────────────────────────────
 
     def _run_image_forensic_signals(self, img: Image.Image) -> Tuple[Dict[str, Any], List[Evidence], float]:
+        """
+        Calibrated multi-signal DSP forensic inspection:
+          1. Error Level Analysis (ELA) with spatial grid disparity & Base64 localization heatmap
+          2. 2D FFT with Hann windowing, high-frequency attenuation & off-axis periodic lattice peak detection
+          3. Native-resolution noise residue & sensor PRNU kurtosis with multi-quadrant disparity
+          4. Resolution-normalized Laplacian edge sharpness & resampling trace
+          5. Facial microtexture (waxy skin) and boundary seam discontinuity forensics
+          6. Inter-channel color gradient dispersion (optical lens chromatic dispersion)
+          7. Optional QR code payload scan
+        """
+        return get_image_forensics_engine().analyze(img)
+
+    def _unused_legacy_run_image_forensic_signals(self, img: Image.Image) -> Tuple[Dict[str, Any], List[Evidence], float]:
         """
         Calibrated multi-signal DSP forensic inspection:
           1. Error Level Analysis (ELA) with spatial grid disparity
@@ -957,6 +978,8 @@ class DeepfakeCoordinator:
             return self._build_unavailable_event(source, "image", "ImageForensicsEngine", correlation_id, start_time)
 
         try:
+            # Decompression bomb protection
+            Image.MAX_IMAGE_PIXELS = 89478485
             img = Image.open(io.BytesIO(media_bytes))
             is_animated = getattr(img, "is_animated", False) and getattr(img, "n_frames", 1) > 1
 
@@ -964,6 +987,27 @@ class DeepfakeCoordinator:
             media_info, metadata_details, meta_evidences, meta_suspicion = self._extract_image_metadata(
                 img, media_bytes, filename
             )
+
+            # Check C2PA / Content Credentials provenance
+            c2pa_engine = get_c2pa_engine()
+            c2pa_resp = c2pa_engine.analyze(media_bytes, filename)
+            if c2pa_resp.has_c2pa:
+                metadata_details["c2pa"] = c2pa_resp.to_dict()
+                c2pa_contrib = 0.45 if c2pa_resp.is_ai_generated_declared else (-0.30 if (c2pa_resp.status == "VALID_PROVENANCE" and c2pa_resp.signature_valid is True) else 0.0)
+                meta_evidences.append(Evidence(
+                    evidence_type="c2pa_content_credentials",
+                    description=c2pa_resp.explanation,
+                    value=c2pa_resp.claim_generator or "C2PA Signer",
+                    severity_contribution=c2pa_contrib,
+                    source="C2PAProvenanceEngine",
+                ))
+                if c2pa_resp.is_ai_generated_declared:
+                    metadata_details["provenance_status"] = "AI_GENERATOR_METADATA_CONFIRMED"
+                    meta_suspicion = max(meta_suspicion, self.image_config.ai_metadata_suspicion)
+                elif c2pa_resp.status == "VALID_PROVENANCE" and c2pa_resp.signature_valid is True:
+                    metadata_details["provenance_status"] = "C2PA_PROVENANCE_CONFIRMED"
+                else:
+                    metadata_details["provenance_status"] = "C2PA_MANIFEST_UNVERIFIED"
 
             # Check if animated (GIF or animated WebP)
             frame_analysis = None
@@ -977,72 +1021,71 @@ class DeepfakeCoordinator:
                 total_suspicion = signal_suspicion
                 all_evidences = meta_evidences + signal_evidences
 
+            # Neural vision deepfake model inspection (if configured and READY)
+            vision_detector = get_vision_detector(self.config)
+            vision_pred = vision_detector.predict(img)
+            if vision_pred.get("is_evaluated") and vision_pred.get("probability") is not None:
+                v_prob = vision_pred["probability"]
+                auth_prob = vision_pred.get("authentic_probability", round(1.0 - v_prob, 4))
+                forensic_metrics["neural_synthetic_probability"] = round(float(v_prob), 4)
+                forensic_metrics["neural_authentic_probability"] = round(float(auth_prob), 4)
+                forensic_metrics["p_synthetic"] = round(float(v_prob), 4)
+                forensic_metrics["neural_predicted_class"] = vision_pred.get("predicted_class", "AUTHENTIC" if v_prob < 0.50 else "SYNTHETIC_DEEPFAKE")
+                if v_prob >= 0.50:
+                    all_evidences.append(Evidence(
+                        evidence_type="neural_vision_deepfake_inference",
+                        description=f"Neural vision classifier ({vision_pred.get('model_family')}) detected synthetic indicators (probability: {v_prob:.2f}).",
+                        value=f"p={v_prob:.2f}",
+                        severity_contribution=round(float(v_prob), 2),
+                        source="VisionDeepfakeDetector",
+                    ))
+                    total_suspicion = 1.0 - ((1.0 - total_suspicion) * (1.0 - v_prob))
+                else:
+                    all_evidences.append(Evidence(
+                        evidence_type="neural_vision_nominal_baseline",
+                        description=f"Neural vision classifier ({vision_pred.get('model_family')}) verified authentic visual feature profile (p_synthetic={v_prob:.2f}, authentic={auth_prob:.2f}).",
+                        value=f"p={v_prob:.2f}",
+                        severity_contribution=0.0,
+                        source="VisionDeepfakeDetector",
+                    ))
+
             if metadata_details.get("provenance_status") == "AI_GENERATOR_METADATA_CONFIRMED":
                 total_suspicion = max(total_suspicion, self.image_config.ai_metadata_suspicion)
 
-            # Camera hardware provenance grounding (dampens false alarms if verified optical camera and natural sensor noise)
-            is_camera_provenance = (
-                metadata_details.get("provenance_status") == "CAMERA_PROVENANCE_CONFIRMED"
-                or bool(metadata_details.get("camera_make") and metadata_details.get("camera_model"))
-            )
-            if is_camera_provenance:
-                no_ai_meta = metadata_details.get("provenance_status") != "AI_GENERATOR_METADATA_CONFIRMED"
-                normal_sensor_noise = (
-                    forensic_metrics.get("noise_kurtosis", 0.0) <= self.image_config.noise_kurtosis_camera_max
-                    and forensic_metrics.get("noise_variance", 0.0) >= 0.20
-                )
-                if no_ai_meta and normal_sensor_noise:
-                    total_suspicion = max(0.0, total_suspicion - self.image_config.camera_provenance_dampener)
-                    all_evidences.append(Evidence(
-                        evidence_type="authentic_camera_provenance",
-                        description=f"Verified camera hardware provenance ({metadata_details.get('camera_make')} {metadata_details.get('camera_model')}) and natural sensor noise confirm authentic optical capture.",
-                        value=f"{metadata_details.get('camera_make')} {metadata_details.get('camera_model')}",
-                        severity_contribution=-self.image_config.camera_provenance_dampener,
-                        source="CameraProvenance",
-                    ))
+            thresholds = {
+                "manipulated": self.image_config.threshold_manipulated,
+                "inconclusive": self.image_config.threshold_inconclusive,
+                "critical": self.image_config.threshold_critical,
+                "camera_provenance_dampener": self.image_config.camera_provenance_dampener,
+                "ai_metadata_suspicion": self.image_config.ai_metadata_suspicion,
+            }
 
-            # Decision Fusion & Classification Calibration
-            if total_suspicion >= self.image_config.threshold_manipulated:
-                severity = RiskLevel.HIGH if total_suspicion < self.image_config.threshold_critical else RiskLevel.CRITICAL
-                classification = "LIKELY_MANIPULATED"
-                category = ThreatCategory.DEEPFAKE
-                summary = "Synthetic media or localized manipulation indicators detected across forensic frequency, metadata, and spatial domains."
-                reasoning = (
-                    f"Forensic indicators show significant anomalies (suspicion index: {total_suspicion:.2f}). "
-                    f"Key triggers include: {', '.join(e.evidence_type for e in all_evidences if e.severity_contribution > 0.15) or 'multi-domain anomalies'}."
-                )
-                actions = [
-                    "Flag media asset for manual forensic verification.",
-                    "Request original uncompressed camera file or authenticated RAW provenance.",
-                    "Verify sender identity and out-of-band communication context before taking sensitive action.",
-                ]
-            elif total_suspicion >= self.image_config.threshold_inconclusive:
-                severity = RiskLevel.LOW if total_suspicion < 0.50 else RiskLevel.MEDIUM
-                classification = "INCONCLUSIVE"
-                category = ThreatCategory.SAFE if total_suspicion < 0.50 else ThreatCategory.DEEPFAKE
-                summary = "Forensic inspection inconclusive. Moderate compression or unverified provenance observed without definitive manipulation proof."
-                reasoning = (
-                    f"Forensic signals fell into an intermediate threshold (suspicion index: {total_suspicion:.2f}). "
-                    f"No definitive generative AI signature confirmed; container provenance is unverified."
-                )
-                actions = [
-                    "Asset appears structurally consistent with compressed web media. Verify origin if used for high-risk identity workflows.",
-                ]
-            else:
-                severity = RiskLevel.SAFE
-                classification = "LIKELY_AUTHENTIC"
-                category = ThreatCategory.SAFE
-                summary = "Image verified authentic. Optical spectrum, noise distribution, and edge variance conform to natural photographic standards."
-                reasoning = "All evaluated forensic metrics (2D FFT frequency roll-off, ELA disparity, sensor noise kurtosis, edge variance) align with authentic photographic captures."
-                actions = [
-                    "Media asset verified within authentic optical parameters.",
-                ]
+            # Correlate all evidence via Calibrated Forensic Correlation Engine
+            verdict = get_forensic_correlation_engine().correlate_image(
+                forensic_metrics=forensic_metrics,
+                metadata_details=metadata_details,
+                c2pa_response=c2pa_resp.to_dict() if c2pa_resp.has_c2pa else None,
+                evidences=all_evidences,
+                base_suspicion=total_suspicion,
+                thresholds=thresholds,
+            )
+
+            total_suspicion = verdict.threat_score
+            classification = verdict.classification
+            severity = verdict.severity
+            category = verdict.threat_category
+            summary = verdict.summary
+            reasoning = verdict.reasoning
+            actions = verdict.recommended_actions
 
             forensic_metrics["manipulation_probability"] = round(float(total_suspicion), 4)
             forensic_metrics["risk_score"] = round(float(total_suspicion), 4)
             forensic_metrics["threat_score"] = round(float(total_suspicion), 4)
             forensic_metrics["metadata_profile"] = metadata_details["provenance_status"]
             forensic_metrics["exif_suspicious"] = (metadata_details["provenance_status"] == "AI_GENERATOR_METADATA_CONFIRMED")
+            forensic_metrics["forensic_matrix"] = verdict.forensic_matrix
+            forensic_metrics["grounding_status"] = verdict.grounding_status
+            forensic_metrics["c2pa_provenance"] = c2pa_resp.to_dict()
 
             threat_intelligence = {
                 "modality": "image",
@@ -1052,10 +1095,157 @@ class DeepfakeCoordinator:
                 "format": media_info["format"],
                 "suspicion_score": round(float(total_suspicion), 4),
                 "provenance_status": metadata_details["provenance_status"],
+                "grounding_status": verdict.grounding_status,
                 "camera": f"{metadata_details.get('camera_make') or ''} {metadata_details.get('camera_model') or ''}".strip() or "None",
                 "ai_generator_tags": metadata_details.get("ai_generator_tags", []),
+                "c2pa_status": c2pa_resp.status,
                 "qr_detected": forensic_metrics.get("qr_detected", False),
             }
+
+            matrix_dict = verdict.matrix.to_dict() if hasattr(verdict.matrix, "to_dict") else verdict.matrix.__dict__
+            forensic_metrics["matrix"] = matrix_dict
+
+            has_camera_exif = bool(metadata_details.get("camera_make") or metadata_details.get("camera_model"))
+            camera_str = f"{metadata_details.get('camera_make') or ''} {metadata_details.get('camera_model') or ''}".strip()
+            num_faces = forensic_metrics.get("faces_detected", 0)
+            face_app = forensic_metrics.get("facial_forensics_applicable", False)
+
+            score_contributions = {}
+            # 1. Noise Residual Anomaly
+            if forensic_metrics.get("noise_status") == "CRITICAL":
+                if forensic_metrics.get("noise_substatus") == "NOISE_FLATTENED":
+                    score_contributions["spatial_noise_flattening"] = {
+                        "contribution": 0.45,
+                        "observation": f"Variance ({forensic_metrics.get('noise_variance', 0):.3f}) < threshold (0.250). Severe smoothing/flattening.",
+                        "rule": "Spatial median filter residual flattening"
+                    }
+                else:
+                    score_contributions["synthetic_noise_kurtosis"] = {
+                        "contribution": 0.45,
+                        "observation": f"Extreme non-Gaussian noise residual kurtosis ({forensic_metrics.get('noise_kurtosis', 0):.1f}) deviating from physical CMOS/CCD shot noise.",
+                        "rule": "Heavy-tailed non-Gaussian residual"
+                    }
+            elif forensic_metrics.get("noise_status") == "MODERATE":
+                score_contributions["moderate_noise_kurtosis"] = {
+                    "contribution": 0.20,
+                    "observation": f"Elevated noise kurtosis ({forensic_metrics.get('noise_kurtosis', 0):.1f}).",
+                    "rule": "Mild non-Gaussian residual"
+                }
+
+            # 2. 2D FFT Frequency Harmonics
+            if forensic_metrics.get("fft_status") == "CRITICAL":
+                score_contributions["fft_frequency_lattice"] = {
+                    "contribution": 0.40,
+                    "observation": f"Prominent periodic lattice spikes ({forensic_metrics.get('fft_off_axis_spike_ratio', 0):.2f}x background).",
+                    "rule": "Synthetic generative lattice resonance"
+                }
+            elif forensic_metrics.get("fft_status") == "MODERATE":
+                score_contributions["mild_spectral_harmonics"] = {
+                    "contribution": 0.20,
+                    "observation": f"Periodic frequency harmonics observed in 2D spectrum ({forensic_metrics.get('fft_off_axis_spike_ratio', 0):.2f}x background).",
+                    "rule": "Mild frequency domain harmonics"
+                }
+
+            # 3. Error Level Analysis
+            if forensic_metrics.get("ela_status") == "CRITICAL":
+                score_contributions["ela_spatial_disparity"] = {
+                    "contribution": 0.35,
+                    "observation": f"Significant localized compression disparity ({forensic_metrics.get('ela_disparity', 0):.2f}).",
+                    "rule": "Localized compression/splicing disparity"
+                }
+            elif forensic_metrics.get("ela_status") == "MODERATE":
+                score_contributions["ela_moderate_disparity"] = {
+                    "contribution": 0.20,
+                    "observation": f"Moderate spatial compression disparity ({forensic_metrics.get('ela_disparity', 0):.2f}).",
+                    "rule": "Moderate compression disparity"
+                }
+
+            # 4. Facial Seam Boundary
+            if face_app and forensic_metrics.get("facial_status_level") == "CRITICAL":
+                score_contributions["facial_boundary_seam"] = {
+                    "contribution": 0.30,
+                    "observation": "Haar boundary discontinuity detected.",
+                    "rule": "Facial warping/splicing seam"
+                }
+
+            # 5. Generative AI Metadata
+            if metadata_details.get("provenance_status") == "AI_GENERATOR_METADATA_CONFIRMED":
+                score_contributions["ai_generator_metadata"] = {
+                    "contribution": 0.85,
+                    "observation": f"Explicit generative AI signature in container metadata: {metadata_details.get('ai_generator_tags', [])}.",
+                    "rule": "Declared generative AI container metadata"
+                }
+
+            # 6. Neural Vision Classifier (if evaluated)
+            if vision_pred.get("is_evaluated") and vision_pred.get("probability", 0) >= 0.50:
+                score_contributions["neural_vision_classifier"] = {
+                    "contribution": round(float(vision_pred["probability"]), 2),
+                    "observation": f"Neural vision model ({vision_pred.get('model_family')}) predicted synthetic score: {vision_pred['probability']:.2f}.",
+                    "rule": "Deep learning visual feature classification"
+                }
+
+            execution_manifest = {
+                "manifest_version": "2.4.0",
+                "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "media_sha256": media_info.get("sha256"),
+                "scoring_architecture": "Heuristic Multi-Signal Fusion (Uncalibrated Anomaly Composite)",
+                "calibration_reality": "Rule-based heuristic accumulation (Noisy-OR). Not an empirical Bayesian posterior probability.",
+                "total_threat_score": round(float(total_suspicion), 4),
+                "active_model_inventory": {
+                    "neural_vision_deepfake_detector": vision_detector.get_manifest_entry(),
+                    "frequency_domain_analyzer": {
+                        "status": "ACTIVE",
+                        "method": "2D FFT Hann-windowed azimuthal integration & off-axis lattice spike detection",
+                        "metrics": {
+                            "off_axis_spike_ratio": forensic_metrics.get("fft_off_axis_spike_ratio"),
+                            "high_freq_ratio": forensic_metrics.get("fft_high_freq_ratio")
+                        }
+                    },
+                    "compression_consistency": {
+                        "status": "ACTIVE",
+                        "method": "Error Level Analysis (ELA) with 4-quadrant spatial disparity",
+                        "metrics": {
+                            "ela_mean": forensic_metrics.get("ela_mean"),
+                            "ela_disparity": forensic_metrics.get("ela_disparity")
+                        }
+                    },
+                    "spatial_noise_residual": {
+                        "status": "ACTIVE",
+                        "method": "3x3 Median filter residual kurtosis & variance (spatial noise statistics)",
+                        "attribution_note": "Generic noise residual profiling only. Sensor PRNU camera attribution is UNAVAILABLE (requires physical camera reference database).",
+                        "metrics": {
+                            "variance": forensic_metrics.get("noise_variance"),
+                            "kurtosis": forensic_metrics.get("noise_kurtosis"),
+                            "substatus": forensic_metrics.get("noise_substatus")
+                        }
+                    },
+                    "facial_manipulation_biometrics": {
+                        "status": "ACTIVE" if face_app else "NOT_APPLICABLE",
+                        "method": "OpenCV Haar Cascade + boundary Laplacian gradient & microtexture variance",
+                        "faces_detected": num_faces,
+                        "neural_face_model": "None (heuristic spatial seam check only)"
+                    },
+                    "video_temporal_consistency": {
+                        "status": "NOT_APPLICABLE (STATIC IMAGE)",
+                        "method": "None",
+                        "limitations": "Static media. For video, temporal consistency is measured via inter-frame score variance. Optical flow, landmark tracking, and lip-sync are NOT implemented."
+                    },
+                    "container_provenance": {
+                        "c2pa_status": c2pa_resp.status,
+                        "c2pa_cryptographic_verification": c2pa_resp.status == "VALID_PROVENANCE" and c2pa_resp.signature_valid is True and not c2pa_resp.is_ai_generated_declared,
+                        "exif_metadata_present": has_camera_exif,
+                        "exif_camera_claimed": camera_str if has_camera_exif else "None",
+                        "hardware_signature_grounding": "UNVERIFIED (EXIF text is unauthenticated; no C2PA root of trust or PRNU database match)"
+                    },
+                    "analytical_reasoning_copilot": {
+                        "status": "ACTIVE",
+                        "model_family": "Qwen3.5-4B-Q4_K_M.gguf (llama_cpp) [Single Primary LLM]",
+                        "details": get_qwen_service().get_manifest_entry().get("details")
+                    }
+                },
+                "score_attribution": score_contributions or {"all_evaluated_signals": "NOMINAL (0.0 contribution)"}
+            }
+            forensic_metrics["execution_manifest"] = execution_manifest
 
             return ThreatEvent(
                 source=source,
@@ -1063,13 +1253,13 @@ class DeepfakeCoordinator:
                 modality="image",
                 threat_category=category,
                 severity=severity,
-                confidence=0.90 if classification == "LIKELY_AUTHENTIC" else (0.85 if classification == "LIKELY_MANIPULATED" else 0.70),
+                confidence=verdict.confidence,
                 classification=classification,
                 evidence=all_evidences,
                 explanation=Explanation(
                     summary=summary,
                     reasoning=reasoning,
-                    limitations="Forensic analysis performed via Heuristic Multi-Signal Digital Signal Processing (DSP) & Container Metadata Inspection. No proprietary neural vision deepfake model is active.",
+                    limitations=verdict.limitations,
                 ),
                 recommended_actions=actions,
                 detector="HeuristicForensicsEngine",
@@ -1081,6 +1271,10 @@ class DeepfakeCoordinator:
                 media_info=media_info,
                 metadata_details=metadata_details,
                 frame_analysis=frame_analysis,
+                matrix=matrix_dict,
+                c2pa_provenance=c2pa_resp.to_dict(),
+                execution_manifest=execution_manifest,
+                ela_heatmap_base64=forensic_metrics.get("ela_heatmap_base64"),
             )
 
         except Exception as exc:
@@ -1147,194 +1341,166 @@ class DeepfakeCoordinator:
         if not self.config or not getattr(self.config.cyberguard, "deepfake_video_enabled", True):
             return self._build_unavailable_event(source, "video", "VideoDeepfakeDetector", correlation_id, start_time)
 
-        tmp_video_path = None
-        extracted_audio_path = None
         try:
-            from backend.audio.preprocessor import _get_ffmpeg_executable
+            # 1. Run full Video Forensics Engine (Keyframes, Temporal Jitter, Soundtrack)
+            video_engine = get_video_forensics_engine(self.config, voice_detector=self.voice_detector)
+            v_res = video_engine.analyze(
+                media_bytes=media_bytes,
+                filename=filename,
+                source=source,
+                correlation_id=correlation_id,
+            )
 
-            ffmpeg_exe = _get_ffmpeg_executable()
-            suffix = os.path.splitext(filename)[1] or ".mp4"
-            fd, tmp_video_path = tempfile.mkstemp(suffix=suffix)
-            os.close(fd)
-            with open(tmp_video_path, "wb") as f:
-                f.write(media_bytes)
+            media_info = v_res["media_info"]
+            frame_analysis = v_res["frame_analysis"]
+            evidences = v_res["evidences"]
+            composite_risk = v_res["composite_risk"]
+            temporal_metrics = v_res["temporal_metrics"]
 
-            sha256 = hashlib.sha256(media_bytes).hexdigest()
-            file_size_bytes = len(media_bytes)
-
-            evidences: List[Evidence] = []
-            audio_risk = 0.0
-            has_soundtrack = False
-
-            # 1. Extract audio track from video and analyze with voice clone detector
-            fd2, extracted_audio_path = tempfile.mkstemp(suffix=".mp3")
-            os.close(fd2)
-
-            cmd_audio = [
-                ffmpeg_exe, "-y", "-i", tmp_video_path,
-                "-vn", "-acodec", "libmp3lame", "-ar", "16000", "-ac", "1",
-                extracted_audio_path
-            ]
-            r_audio = subprocess.run(cmd_audio, capture_output=True, timeout=30)
-            if r_audio.returncode == 0 and os.path.exists(extracted_audio_path) and os.path.getsize(extracted_audio_path) > 1000:
-                has_soundtrack = True
-                with open(extracted_audio_path, "rb") as af:
-                    audio_bytes = af.read()
-                audio_event = self._analyze_audio(
-                    audio_bytes, "extracted_audio.mp3", source=source, correlation_id=correlation_id, start_time=start_time
-                )
-                if audio_event.severity in (RiskLevel.HIGH, RiskLevel.CRITICAL):
-                    audio_risk = 0.85
-                    evidences.extend(audio_event.evidence)
-                elif audio_event.severity == RiskLevel.MEDIUM:
-                    audio_risk = 0.55
-                    evidences.extend(audio_event.evidence)
-                else:
-                    evidences.append(Evidence(
-                        evidence_type="video_soundtrack_authentic",
-                        description="Audio soundtrack extracted from video showed natural acoustic prosody.",
-                        source="VoiceCloneDetector",
-                    ))
-
-            # 2. Extract 6–8 keyframes across video duration using OpenCV or FFmpeg
-            frame_records = []
-            frame_scores = []
-            try:
-                import cv2
-                cap = cv2.VideoCapture(tmp_video_path)
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                fps = float(cap.get(cv2.CAP_PROP_FPS) or 25.0)
-                if total_frames > 0:
-                    sample_indices = np.linspace(0, total_frames - 1, num=min(8, total_frames), dtype=int)
-                    for idx in sample_indices:
-                        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-                        ret, cv_frame = cap.read()
-                        if ret and cv_frame is not None:
-                            frame_rgb = cv2.cvtColor(cv_frame, cv2.COLOR_BGR2RGB)
-                            pil_frame = Image.fromarray(frame_rgb)
-                            metrics, _, f_score = self._run_image_forensic_signals(pil_frame)
-                            frame_scores.append(f_score)
-                            frame_records.append({
-                                "frame_index": int(idx),
-                                "timestamp_sec": round(float(idx / fps), 2),
-                                "score": round(float(f_score), 4),
-                                "classification": "LIKELY_MANIPULATED" if f_score >= 0.65 else ("INCONCLUSIVE" if f_score >= 0.30 else "LIKELY_AUTHENTIC"),
-                                "ela_mean": metrics.get("ela_mean", 0.0),
-                                "fft_spike_ratio": metrics.get("fft_off_axis_spike_ratio", 0.0),
-                            })
-                cap.release()
-            except Exception as cap_err:
-                logger.debug(f"OpenCV video frame extraction notice: {cap_err}")
-
-            mean_visual_score = float(np.mean(frame_scores)) if frame_scores else 0.0
-            peak_visual_score = float(np.max(frame_scores)) if frame_scores else 0.0
-            temporal_var = float(np.var(frame_scores)) if frame_scores else 0.0
-            consistency = max(0.0, min(1.0, 1.0 - (temporal_var * 4.0)))
-
-            if frame_records:
+            # 2. Check C2PA Content Credentials in video container
+            c2pa_engine = get_c2pa_engine()
+            c2pa_resp = c2pa_engine.analyze(media_bytes, filename)
+            if c2pa_resp.has_c2pa:
+                media_info["c2pa"] = c2pa_resp.to_dict()
+                c2pa_contrib = 0.45 if c2pa_resp.is_ai_generated_declared else (-0.30 if (c2pa_resp.status == "VALID_PROVENANCE" and c2pa_resp.signature_valid is True) else 0.0)
                 evidences.append(Evidence(
-                    evidence_type="video_keyframe_forensics",
-                    description=f"Sampled {len(frame_records)} keyframes across video sequence (temporal consistency: {consistency:.2f}, mean manipulation index: {mean_visual_score:.2f}).",
-                    value=f"mean_visual={mean_visual_score:.2f}",
-                    severity_contribution=mean_visual_score,
-                    source="VideoForensicsEngine",
+                    evidence_type="c2pa_content_credentials",
+                    description=c2pa_resp.explanation,
+                    value=c2pa_resp.claim_generator or "C2PA Signer",
+                    severity_contribution=c2pa_contrib,
+                    source="C2PAProvenanceEngine",
                 ))
 
-            # Composite Risk Calculation
-            if has_soundtrack and frame_scores:
-                composite_risk = (audio_risk * 0.5) + (mean_visual_score * 0.5)
-            elif frame_scores:
-                composite_risk = mean_visual_score
-            else:
-                composite_risk = audio_risk
-
-            if composite_risk >= 0.65 or audio_risk >= 0.80:
-                severity = RiskLevel.HIGH if composite_risk < 0.85 else RiskLevel.CRITICAL
-                classification = "LIKELY_MANIPULATED"
-                category = ThreatCategory.DEEPFAKE
-                summary = "Deepfake video artifacts detected across audio-visual channels."
-                reasoning = "Multi-modal analysis revealed synthetic voice cloning or visual manipulation across sampled video frames."
-                actions = [
-                    "Do not authenticate sensitive actions or approve identity workflows based on this video.",
-                    "Request live interactive video challenge or verify identity through trusted out-of-band channel.",
-                ]
-            elif composite_risk >= 0.35:
-                severity = RiskLevel.LOW
-                classification = "INCONCLUSIVE"
-                category = ThreatCategory.SAFE
-                summary = "Forensic inspection inconclusive for video media."
-                reasoning = "Compression artifacts or mild acoustic variance detected without definitive synthetic manipulation markers."
-                actions = ["Inspect uncompressed video file or verify context before high-risk decisions."]
-            else:
-                severity = RiskLevel.SAFE
-                classification = "LIKELY_AUTHENTIC"
-                category = ThreatCategory.SAFE
-                summary = "Video authentic. Both audio soundtrack and sampled keyframes verified."
-                reasoning = "No synthetic manipulation detected in audio track or extracted video frames."
-                actions = ["Video verified within nominal operational parameters."]
-
-            media_info = {
-                "sha256": sha256,
-                "filename": filename,
-                "file_size_bytes": file_size_bytes,
-                "format": os.path.splitext(filename)[1].replace(".", "").upper(),
-                "has_audio": has_soundtrack,
+            # 3. Decision Fusion & Forensic Correlation
+            thresholds = {
+                "manipulated": self.image_config.threshold_manipulated,
+                "inconclusive": self.image_config.threshold_inconclusive,
+                "critical": self.image_config.threshold_critical,
             }
 
-            frame_analysis = {
-                "total_frames_sampled": len(frame_records),
-                "temporal_consistency": round(consistency, 3),
-                "mean_frame_score": round(mean_visual_score, 4),
-                "peak_frame_score": round(peak_visual_score, 4),
-                "has_soundtrack": has_soundtrack,
-                "frames": frame_records,
+            verdict = get_forensic_correlation_engine().correlate_video(
+                frame_analysis=frame_analysis,
+                media_info=media_info,
+                c2pa_response=c2pa_resp.to_dict() if c2pa_resp.has_c2pa else None,
+                evidences=evidences,
+                composite_risk=composite_risk,
+                thresholds=thresholds,
+            )
+
+            vision_detector = get_vision_detector(self.config)
+            has_soundtrack = media_info.get("has_audio", False)
+            execution_manifest = {
+                "manifest_version": "2.4.0",
+                "timestamp_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "media_sha256": media_info.get("sha256"),
+                "scoring_architecture": "Multi-Modal Video & Temporal Forensics Fusion",
+                "calibration_reality": "Rule-based heuristic accumulation (Noisy-OR). Not an empirical Bayesian posterior probability.",
+                "total_threat_score": round(float(verdict.threat_score), 4),
+                "active_model_inventory": {
+                    "neural_vision_deepfake_detector": vision_detector.get_manifest_entry(),
+                    "video_temporal_consistency": {
+                        "status": "ACTIVE",
+                        "method": "Keyframe sampling variance, temporal jitter index, and inter-frame anomaly deviation",
+                        "metrics": {
+                            "temporal_consistency": temporal_metrics.get("temporal_consistency", 1.0),
+                            "temporal_jitter_index": temporal_metrics.get("temporal_jitter_index", 0.0),
+                            "score_variance": temporal_metrics.get("score_variance", 0.0),
+                            "frames_sampled": frame_analysis.get("total_frames_sampled", 0),
+                        }
+                    },
+                    "audio_video_synchronization": {
+                        "status": "NOT_EVALUATED",
+                        "method": "None (Lip-sync tracking not implemented; soundtrack biometric authenticity analyzed independently)",
+                        "has_audio": has_soundtrack,
+                        "audio_risk": frame_analysis.get("audio_details", {}).get("audio_risk") if has_soundtrack else None,
+                    },
+                    "voice_authenticity_detector": {
+                        "status": "ACTIVE" if (self.voice_detector and has_soundtrack) else ("STANDBY" if self.voice_detector else "NOT_CONFIGURED"),
+                        "model": "AASIST / ECAPA-TDNN / VoiceCloneDetector (CNN-BiLSTM)",
+                    },
+                    "container_provenance": {
+                        "c2pa_status": c2pa_resp.status,
+                        "c2pa_cryptographic_verification": c2pa_resp.status == "VALID_PROVENANCE" and c2pa_resp.signature_valid is True and not c2pa_resp.is_ai_generated_declared,
+                    },
+                    "analytical_reasoning_copilot": {
+                        "status": "ACTIVE",
+                        "model_family": "Qwen3.5-4B-Q4_K_M.gguf (llama_cpp) [Single Primary LLM]",
+                        "details": get_qwen_service().get_manifest_entry().get("details")
+                    }
+                },
+                "score_attribution": {
+                    "mean_frame_score": round(float(frame_analysis.get("mean_frame_score", 0.0)), 4),
+                    "temporal_jitter_contribution": round(float(temporal_metrics.get("temporal_jitter_index", 0.0) * 0.25), 4),
+                    "audio_risk_contribution": round(float(frame_analysis.get("audio_details", {}).get("audio_risk", 0.0)), 4) if has_soundtrack else 0.0,
+                }
+            }
+
+            forensic_metrics = {
+                "composite_risk": round(float(composite_risk), 4),
+                "temporal_consistency": temporal_metrics.get("temporal_consistency", 1.0),
+                "temporal_jitter_index": temporal_metrics.get("temporal_jitter_index", 0.0),
+                "stream_dynamics": temporal_metrics.get("stream_dynamics", "NATURAL_MOTION"),
+                "score_variance": temporal_metrics.get("score_variance", 0.0),
+                "mean_frame_score": frame_analysis.get("mean_frame_score", 0.0),
+                "peak_frame_score": frame_analysis.get("peak_frame_score", 0.0),
+                "neural_synthetic_probability": frame_analysis.get("neural_synthetic_probability"),
+                "neural_authentic_probability": frame_analysis.get("neural_authentic_probability"),
+                "p_synthetic": frame_analysis.get("p_synthetic"),
+                "neural_predicted_class": frame_analysis.get("neural_predicted_class"),
+                "forensic_matrix": verdict.forensic_matrix,
+                "grounding_status": verdict.grounding_status,
+                "c2pa_provenance": c2pa_resp.to_dict(),
+                "execution_manifest": execution_manifest,
+                "engine_type": "Multi-Modal Video & Temporal Forensics Engine",
+            }
+
+            threat_intelligence = {
+                "modality": "video",
+                "filename": filename,
+                "sha256": media_info["sha256"],
+                "composite_risk": round(float(composite_risk), 4),
+                "has_soundtrack": media_info.get("has_audio", False),
+                "frames_sampled": frame_analysis.get("total_frames_sampled", 0),
+                "stream_dynamics": temporal_metrics.get("stream_dynamics", "NATURAL_MOTION"),
+                "neural_synthetic_probability": frame_analysis.get("neural_synthetic_probability"),
+                "p_synthetic": frame_analysis.get("p_synthetic"),
+                "duration_sec": media_info.get("duration_sec", 0.0),
+                "fps": media_info.get("fps", 0.0),
+                "resolution": media_info.get("resolution", "Unknown"),
+                "grounding_status": verdict.grounding_status,
             }
 
             return ThreatEvent(
                 source=source,
                 source_type="file",
                 modality="video",
-                threat_category=category,
-                severity=severity,
-                confidence=0.88 if classification != "INCONCLUSIVE" else 0.70,
-                classification=classification,
+                threat_category=verdict.threat_category,
+                severity=verdict.severity,
+                confidence=verdict.confidence,
+                classification=verdict.classification,
                 evidence=evidences,
                 explanation=Explanation(
-                    summary=summary,
-                    reasoning=reasoning,
-                    limitations="Multi-modal analysis combining FFmpeg audio track extraction, VoiceCloneDetector acoustic analysis, and keyframe forensic inspection.",
+                    summary=verdict.summary,
+                    reasoning=verdict.reasoning,
+                    limitations=verdict.limitations,
                 ),
-                recommended_actions=actions,
+                recommended_actions=verdict.recommended_actions,
                 detector="VideoForensicsEngine",
                 processing_time_ms=(time.time() - start_time) * 1000.0,
                 correlation_id=correlation_id,
-                threat_score=round(float(composite_risk), 4),
+                threat_score=round(float(verdict.threat_score), 4),
                 media_info=media_info,
                 frame_analysis=frame_analysis,
-                threat_intelligence={
-                    "modality": "video",
-                    "filename": filename,
-                    "sha256": sha256,
-                    "composite_risk": round(float(composite_risk), 4),
-                    "has_soundtrack": has_soundtrack,
-                    "frames_sampled": len(frame_records),
-                }
+                forensic_metrics=forensic_metrics,
+                threat_intelligence=threat_intelligence,
+                matrix=verdict.matrix.to_dict() if hasattr(verdict.matrix, "to_dict") else verdict.matrix.__dict__,
+                c2pa_provenance=c2pa_resp.to_dict(),
+                execution_manifest=execution_manifest,
             )
 
         except Exception as exc:
             logger.warning(f"Video deepfake analysis error: {exc}", exc_info=True)
             return self._build_error_event(source, "video", str(exc), correlation_id, start_time)
-        finally:
-            if tmp_video_path and os.path.exists(tmp_video_path):
-                try:
-                    os.unlink(tmp_video_path)
-                except OSError:
-                    pass
-            if extracted_audio_path and os.path.exists(extracted_audio_path):
-                try:
-                    os.unlink(extracted_audio_path)
-                except OSError:
-                    pass
 
     # ── HELPER FACTORIES ──────────────────────────────────────────────────────
 

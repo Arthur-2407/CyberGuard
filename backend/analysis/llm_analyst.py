@@ -18,6 +18,7 @@ import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from backend.models.qwen_service import get_qwen_service, QwenService
 
 logger = logging.getLogger(__name__)
 
@@ -78,44 +79,17 @@ class LLMSecurityAnalyst:
 
     def __init__(self, model_path: Optional[str] = None):
         self._provider = "Qwen3.5-4B-Q4_K_M (CyberGuard Qwen LLM)"
-        self._model_path = model_path or self._resolve_qwen_model_path()
-        self._llm_instance = None
-        self._load_attempted = False
+        self._model_path = model_path
+        self._qwen_service = get_qwen_service(model_path=model_path)
 
     def _resolve_qwen_model_path(self) -> Optional[str]:
-        candidates = [
-            Path("backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
-            Path("D:/BPUT/backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
-        ]
-        for c in candidates:
-            if c.exists() and c.stat().st_size > 1_000_000_000:
-                return str(c.resolve())
-        return None
+        p = self._qwen_service.resolve_model_path()
+        return str(p) if p else None
 
     def _get_qwen_model(self):
-        if self._llm_instance is not None:
-            return self._llm_instance
-        if self._load_attempted:
-            return None
-        self._load_attempted = True
-        path = self._model_path or self._resolve_qwen_model_path()
-        if not path or not os.path.exists(path):
-            logger.info("Qwen3.5 4B model path not found, using deterministic reasoning fallback.")
-            return None
-        try:
-            from llama_cpp import Llama
-            logger.info(f"Loading Qwen3.5 4B GGUF model from {path}...")
-            self._llm_instance = Llama(
-                model_path=path,
-                n_ctx=2048,
-                n_threads=4,
-                verbose=False,
-            )
-            logger.info("✓ Qwen3.5 4B GGUF loaded successfully as CyberGuard Qwen LLM.")
-            return self._llm_instance
-        except Exception as e:
-            logger.warning(f"Could not initialize llama-cpp for Qwen3.5: {e}")
-            return None
+        if not self._qwen_service.is_ready:
+            self._qwen_service.load_model()
+        return self._qwen_service._llm
 
     def _refine_with_qwen(
         self,
@@ -127,8 +101,7 @@ class LLMSecurityAnalyst:
         metadata_details: Dict[str, Any],
         threat_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, str]]:
-        llm = self._get_qwen_model()
-        if not llm:
+        if not self._qwen_service.is_ready and not self._qwen_service.load_model():
             return None
         try:
             ctx = threat_context or {}
@@ -153,7 +126,7 @@ class LLMSecurityAnalyst:
                 f"EXECUTIVE BRIEFING: <text>\n"
                 f"TECHNICAL DEEP DIVE: <text>"
             )
-            res = llm.create_chat_completion(
+            res = self._qwen_service.create_chat_completion(
                 messages=[
                     {"role": "system", "content": "You are a specialized cybersecurity forensic analyst AI powered by Qwen3.5 4B. Keep briefings concise, realistic, grounded in the actual threat modality (SMS, app package, URL, or audio), and user-friendly."},
                     {"role": "user", "content": prompt},

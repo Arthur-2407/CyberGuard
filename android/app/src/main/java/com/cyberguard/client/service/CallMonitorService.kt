@@ -47,6 +47,43 @@ class CallMonitorService : Service() {
         private const val ALERT_CHANNEL_ID = "CyberGuardSecurityAlert"
         private const val NOTIFICATION_ID = 1001
         private const val ALERT_NOTIFICATION_ID = 1002
+
+        @Volatile
+        var activeInstance: CallMonitorService? = null
+            private set
+
+        fun stopMonitoringDirectly(context: Context) {
+            val inst = activeInstance
+            if (inst != null) {
+                try {
+                    inst.stopMonitoring()
+                } catch (e: Exception) {
+                    Log.w("CallMonitorService", "Error stopping monitor via active instance: ${e.message}")
+                }
+            } else {
+                val intent = Intent(context, CallMonitorService::class.java).apply {
+                    action = ACTION_STOP_MONITORING
+                }
+                try {
+                    context.startService(intent)
+                } catch (_: Exception) {}
+            }
+            val repo = CallMonitorRepository.getInstance(context.applicationContext)
+            repo.updateTelemetry {
+                it.copy(
+                    callState = com.cyberguard.client.model.TelephonyCallState.IDLE,
+                    monitorState = MonitorState.IDLE,
+                    audioState = AudioCaptureState.IDLE,
+                    detectorState = DetectorState.IDLE,
+                    callerStatusMessage = "Call ended",
+                    currentRisk = 0.0,
+                    hasValidResult = false,
+                    alertLevel = "STANDBY",
+                    voiceClassification = "STANDBY",
+                    audioLevelRms = 0.0
+                )
+            }
+        }
     }
 
     private var telephonyManager: TelephonyManager? = null
@@ -58,6 +95,7 @@ class CallMonitorService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var monitoringJob: Job? = null
+    private var wsEventsJob: Job? = null
     
     private var webSocketClient: WebSocketEventClient? = null
     private var audioPipeline: RealTimeAudioPipeline? = null
@@ -72,6 +110,7 @@ class CallMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        activeInstance = this
         repository = CallMonitorRepository.getInstance(applicationContext)
         audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         telephonyManager = getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
@@ -306,6 +345,10 @@ class CallMonitorService : Service() {
             try {
                 repository.updateTelemetry { it.copy(
                     monitorState = MonitorState.ANALYZING,
+                    voiceClassification = "ANALYZING",
+                    alertLevel = "ANALYZING",
+                    hasValidResult = false,
+                    currentRisk = 0.0,
                     diagnosticReason = null
                 ) }
                 updateStatusNotification("CyberGuard Defense Matrix Active")
@@ -374,89 +417,28 @@ class CallMonitorService : Service() {
                 // Connect Backend or maintain Local Autonomous Mode
                 if (detectedUrl != null) {
                     repository.updateTelemetry { it.copy(backendState = BackendState.CONNECTING) }
-                    webSocketClient = WebSocketEventClient(okHttpClient, detectedUrl)
-                    webSocketClient?.connect()
+                    val client = WebSocketEventClient(repository.connectionManager.okHttpClient, detectedUrl)
+                    webSocketClient = client
+                    attachWebSocketListener(client, captureModeString)
+                    client.connect()
                 } else {
                     repository.updateTelemetry { it.copy(backendState = BackendState.DISCONNECTED) }
                     launch {
                         repository.connectionManager.startDiscovery()
                         repository.connectionManager.serverUrl.collect { newUrl ->
-                            if (!newUrl.isNullOrBlank() && webSocketClient == null) {
+                            if (!newUrl.isNullOrBlank() && (webSocketClient == null || webSocketClient?.isConnected?.value != true)) {
                                 repository.updateTelemetry { it.copy(backendState = BackendState.CONNECTING) }
-                                webSocketClient = WebSocketEventClient(okHttpClient, newUrl)
-                                webSocketClient?.connect()
+                                val client = WebSocketEventClient(repository.connectionManager.okHttpClient, newUrl)
+                                webSocketClient = client
+                                attachWebSocketListener(client, captureModeString)
+                                client.connect()
                             }
                         }
                     }
                 }
-                
-                // Listen to WS events
-                launch {
-                    webSocketClient?.events?.collect { event ->
-                        when (event) {
-                            is WsEvent.Connected -> {
-                                repository.updateTelemetry { it.copy(
-                                    backendState = BackendState.CONNECTED
-                                ) }
-                            }
-                            is WsEvent.SessionStarted -> {
-                                repository.updateTelemetry { it.copy(
-                                    detectorState = if (event.detectorReady) DetectorState.READY else DetectorState.UNAVAILABLE,
-                                    activeDetector = event.activeDetector?.let { det -> "READY ($det)" } ?: it.activeDetector
-                                ) }
-                            }
-                            is WsEvent.RiskUpdate -> {
-                                repository.updateTelemetry { it.copy(
-                                    hasValidResult = true,
-                                    currentRisk = event.riskScore,
-                                    alertLevel = event.alertLevel,
-                                    voiceClassification = event.voiceClassification,
-                                    activeDetector = event.activeDetector?.let { det -> "READY ($det)" } ?: it.activeDetector,
-                                    lastResultTimestamp = System.currentTimeMillis(),
-                                    monitorState = MonitorState.ANALYZING,
-                                    audioLevelRms = if (event.rms > 0) event.rms else it.audioLevelRms
-                                ) }
-                                if (event.alertLevel == "CRITICAL" || event.alertLevel == "HIGH" || event.voiceClassification == "CLONED_VOICE") {
-                                    triggerSecurityAlert(event.riskScore, event.alertLevel)
-                                }
-                            }
-                            is WsEvent.StatusUpdate -> {
-                                if (!repository.telemetry.value.hasValidResult) {
-                                    repository.updateTelemetry { it.copy(
-                                        alertLevel = event.status,
-                                        callerStatusMessage = if (event.detail.isNotEmpty()) event.detail else it.callerStatusMessage,
-                                        audioLevelRms = if (event.rms > 0) event.rms else it.audioLevelRms,
-                                        activeDetector = event.activeDetector?.let { det -> "READY ($det)" } ?: it.activeDetector,
-                                        monitorState = if (event.status == "WAITING_FOR_DATA" || event.status == "LISTENING") MonitorState.STREAMING else it.monitorState
-                                    ) }
-                                }
-                            }
-                            is WsEvent.Disconnected -> {
-                                repository.updateTelemetry { it.copy(
-                                    monitorState = MonitorState.UNAVAILABLE,
-                                    backendState = BackendState.ERROR,
-                                    detectorState = DetectorState.UNAVAILABLE,
-                                    diagnosticReason = "WebSocket Disconnected"
-                                ) }
-                                updateStatusNotification("Monitoring unavailable: WebSocket Disconnected")
-                            }
-                            is WsEvent.Error -> {
-                                repository.updateTelemetry { it.copy(
-                                    monitorState = MonitorState.UNAVAILABLE,
-                                    backendState = BackendState.ERROR,
-                                    detectorState = DetectorState.UNAVAILABLE,
-                                    diagnosticReason = "Backend Error: ${event.message}"
-                                ) }
-                                updateStatusNotification("Monitoring unavailable: ${event.message}")
-                            }
-                            else -> {}
-                        }
-                    }
-                }
 
-                // Wait briefly for WS to connect before sending control metadata
-                delay(500)
-
+                // Initial registration if socket connects fast
+                delay(300)
                 webSocketClient?.sendControlMessage("start_call_monitor", mapOf(
                     "audio_source" to (audioPipeline?.activeSourceDescription ?: "VOICE_COMMUNICATION"),
                     "capture_mode" to captureModeString
@@ -492,9 +474,112 @@ class CallMonitorService : Service() {
         }
     }
 
-    private fun stopMonitoring() {
+    private fun attachWebSocketListener(client: WebSocketEventClient, captureModeString: String) {
+        wsEventsJob?.cancel()
+        wsEventsJob = serviceScope.launch {
+            client.events.collect { event ->
+                when (event) {
+                    is WsEvent.Connected -> {
+                        repository.updateTelemetry { it.copy(
+                            backendState = BackendState.CONNECTED
+                        ) }
+                        client.sendControlMessage("start_call_monitor", mapOf(
+                            "audio_source" to (audioPipeline?.activeSourceDescription ?: "VOICE_COMMUNICATION"),
+                            "capture_mode" to captureModeString
+                        ))
+                        Log.i("CallMonitorService", "WebSocket uplink connected; start_call_monitor registered ($captureModeString).")
+                    }
+                    is WsEvent.SessionStarted -> {
+                        repository.updateTelemetry { it.copy(
+                            detectorState = if (event.detectorReady) DetectorState.READY else DetectorState.UNAVAILABLE,
+                            activeDetector = event.activeDetector?.let { det -> "READY ($det)" } ?: it.activeDetector
+                        ) }
+                    }
+                    is WsEvent.RiskUpdate -> {
+                        repository.updateTelemetry { it.copy(
+                            hasValidResult = true,
+                            currentRisk = event.riskScore,
+                            alertLevel = event.alertLevel,
+                            voiceClassification = event.voiceClassification,
+                            activeDetector = event.activeDetector?.let { det -> "READY ($det)" } ?: it.activeDetector,
+                            lastResultTimestamp = System.currentTimeMillis(),
+                            monitorState = MonitorState.ANALYZING,
+                            audioLevelRms = if (event.rms > 0) event.rms else it.audioLevelRms
+                        ) }
+                        if (event.alertLevel == "CRITICAL" || event.alertLevel == "HIGH" || event.voiceClassification == "CLONED_VOICE") {
+                            triggerSecurityAlert(event.riskScore, event.alertLevel)
+                        }
+                    }
+                    is WsEvent.StatusUpdate -> {
+                        if (!repository.telemetry.value.hasValidResult) {
+                            val resolvedCls = when (event.status) {
+                                "WAITING_FOR_SPEECH" -> "WAITING FOR SPEECH"
+                                "INSUFFICIENT_AUDIO" -> "COLLECTING AUDIO"
+                                "WAITING_FOR_DATA", "LISTENING" -> "COLLECTING AUDIO"
+                                else -> "ANALYZING"
+                            }
+                            repository.updateTelemetry { it.copy(
+                                alertLevel = event.status,
+                                voiceClassification = resolvedCls,
+                                callerStatusMessage = if (event.detail.isNotEmpty()) event.detail else it.callerStatusMessage,
+                                audioLevelRms = if (event.rms > 0) event.rms else it.audioLevelRms,
+                                activeDetector = event.activeDetector?.let { det -> "READY ($det)" } ?: it.activeDetector,
+                                monitorState = if (event.status == "WAITING_FOR_DATA" || event.status == "LISTENING") MonitorState.STREAMING else it.monitorState
+                            ) }
+                        }
+                    }
+                    is WsEvent.Disconnected -> {
+                        if (monitoringJob?.isActive == true) {
+                            repository.updateTelemetry { it.copy(backendState = BackendState.CONNECTING) }
+                            serviceScope.launch {
+                                delay(2000)
+                                if (monitoringJob?.isActive == true && client.isConnected.value != true) {
+                                    Log.d("CallMonitorService", "Attempting WebSocket reconnect...")
+                                    client.connect()
+                                }
+                            }
+                        } else {
+                            repository.updateTelemetry { it.copy(
+                                backendState = BackendState.DISCONNECTED,
+                                detectorState = DetectorState.UNAVAILABLE,
+                                diagnosticReason = "WebSocket Disconnected"
+                            ) }
+                        }
+                    }
+                    is WsEvent.Error -> {
+                        if (monitoringJob?.isActive == true) {
+                            repository.updateTelemetry { it.copy(
+                                backendState = BackendState.ERROR,
+                                diagnosticReason = "Uplink Notice: ${event.message}. Reconnecting..."
+                            ) }
+                            serviceScope.launch {
+                                delay(2500)
+                                if (monitoringJob?.isActive == true && client.isConnected.value != true) {
+                                    Log.d("CallMonitorService", "Attempting WebSocket reconnect after error: ${event.message}")
+                                    client.connect()
+                                }
+                            }
+                        } else {
+                            repository.updateTelemetry { it.copy(
+                                monitorState = MonitorState.UNAVAILABLE,
+                                backendState = BackendState.ERROR,
+                                detectorState = DetectorState.UNAVAILABLE,
+                                diagnosticReason = "Backend Error: ${event.message}"
+                            ) }
+                            updateStatusNotification("Monitoring unavailable: ${event.message}")
+                        }
+                    }
+                    else -> {}
+                }
+            }
+        }
+    }
+
+    fun stopMonitoring() {
         monitoringJob?.cancel()
         monitoringJob = null
+        wsEventsJob?.cancel()
+        wsEventsJob = null
         audioPipeline?.stop()
         audioPipeline = null
         
@@ -516,7 +601,22 @@ class CallMonitorService : Service() {
             Log.w("CallMonitorService", "Audio routing reset notice: ${audioResetEx.message}")
         }
         
-        repository.resetTelemetry()
+        repository.updateTelemetry {
+            it.copy(
+                callState = com.cyberguard.client.model.TelephonyCallState.IDLE,
+                monitorState = MonitorState.IDLE,
+                audioState = AudioCaptureState.IDLE,
+                detectorState = DetectorState.IDLE,
+                callerStatusMessage = "Call ended",
+                currentRisk = 0.0,
+                hasValidResult = false,
+                alertLevel = "STANDBY",
+                voiceClassification = "STANDBY",
+                audioLevelRms = 0.0
+            )
+        }
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        notificationManager?.cancel(ALERT_NOTIFICATION_ID)
         updateStatusNotification("Actively monitoring Calls, SMS & Apps")
     }
 
@@ -1164,13 +1264,17 @@ class CallMonitorService : Service() {
                     val tm = telephonyManager
                     val am = audioManager
                     val callState = tm?.callState ?: TelephonyManager.CALL_STATE_IDLE
-                    val isAudioInCall = am?.mode == AudioManager.MODE_IN_CALL || am?.mode == AudioManager.MODE_IN_COMMUNICATION
+                    // Only true hardware cellular telephony mode indicates active call.
+                    // MODE_IN_COMMUNICATION is held by CyberGuard itself and must never prevent detecting call end.
+                    val isAudioInCall = am?.mode == AudioManager.MODE_IN_CALL
                     val currentRepoCallState = repository.telemetry.value.callState
+                    val isCurrentlyMonitoring = repository.telemetry.value.monitorState == MonitorState.ANALYZING ||
+                            repository.telemetry.value.monitorState == MonitorState.STREAMING
 
                     if ((callState == TelephonyManager.CALL_STATE_OFFHOOK || isAudioInCall) && currentRepoCallState != TelephonyCallState.ACTIVE) {
                         Log.d("CallMonitorService", "Background Watchdog detected active in-progress call! Auto-activating pipeline.")
                         handleCallStateChange(TelephonyManager.CALL_STATE_OFFHOOK)
-                    } else if (callState == TelephonyManager.CALL_STATE_IDLE && !isAudioInCall && currentRepoCallState == TelephonyCallState.ACTIVE) {
+                    } else if (callState == TelephonyManager.CALL_STATE_IDLE && !isAudioInCall && (currentRepoCallState == TelephonyCallState.ACTIVE || isCurrentlyMonitoring)) {
                         Log.d("CallMonitorService", "Background Watchdog detected call end. Stopping pipeline.")
                         handleCallStateChange(TelephonyManager.CALL_STATE_IDLE)
                     }
@@ -1224,6 +1328,9 @@ class CallMonitorService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (activeInstance == this) {
+            activeInstance = null
+        }
         stopMonitoring()
         unregisterDynamicReceivers()
         unregisterPackageInstallerCallback()

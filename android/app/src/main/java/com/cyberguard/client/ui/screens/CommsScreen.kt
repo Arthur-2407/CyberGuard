@@ -378,7 +378,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                     ) {
                         val activeDetDisplay = if (isCoreConnected) {
                             if (telemetry.activeDetector.isNotBlank()) telemetry.activeDetector
-                            else systemStatus?.activeDetectorVersion?.let { "READY ($it)" } ?: "READY (v025)"
+                            else systemStatus?.activeDetectorVersion?.let { "READY ($it)" } ?: "READY (v032)"
                         } else "WAITING FOR NODE"
                         StatusRow(
                             "DETECTOR CORE",
@@ -547,8 +547,13 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                         ) {
                             StatusRow(
                                 "RISK SCORE",
-                                String.format(Locale.US, "%.1f%%", telemetry.currentRisk * 100),
+                                if (telemetry.hasValidResult) {
+                                    String.format(Locale.US, "%.1f%%", telemetry.currentRisk * 100)
+                                } else {
+                                    "--"
+                                },
                                 when {
+                                    !telemetry.hasValidResult -> CyberBlue
                                     telemetry.currentRisk >= 0.75 -> StatusCritical
                                     telemetry.currentRisk >= 0.40 -> StatusWarning
                                     else -> StatusOnline
@@ -560,6 +565,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                 when (telemetry.voiceClassification) {
                                     "GENUINE_VOICE" -> StatusOnline
                                     "CLONED_VOICE" -> StatusCritical
+                                    "ANALYZING", "COLLECTING AUDIO", "WAITING FOR SPEECH" -> CyberNeonCyan
                                     else -> CyberBlue
                                 }
                             )

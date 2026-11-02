@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberGuard Shield</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-wrap">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo-row">
+        <img src="icons/icon32.png" alt="CyberGuard" class="logo-icon">
+        <div class="title-wrap">
+          <div class="title">CYBERGUARD</div>
+          <div class="subtitle">REAL-TIME BROWSER DEFENSE</div>
+        </div>
+      </div>
+      <label class="toggle-switch" title="Toggle Real-Time Protection">
+        <input type="checkbox" id="toggle-shield" checked>
+        <span class="slider"></span>
+      </label>
+    </header>
+
+    <!-- Telemetry Status Badges -->
+    <section class="status-grid">
+      <div class="status-card">
+        <span class="status-label">SOC BACKEND</span>
+        <div class="status-indicator-row">
+          <span class="dot" id="dot-backend"></span>
+          <span class="status-val" id="text-backend">CHECKING...</span>
+        </div>
+      </div>
+      <div class="status-card">
+        <span class="status-label">INPRIVATE / INCOGNITO</span>
+        <div class="status-indicator-row">
+          <span class="dot" id="dot-incognito"></span>
+          <span class="status-val" id="text-incognito">CHECKING...</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Incognito Alert Banner (shown when incognito permission not granted) -->
+    <div id="incognito-banner" class="incognito-banner hidden">
+      <div class="banner-text">
+        <strong>InPrivate protection disabled.</strong>
+        <span>Allow in browser settings to protect private windows.</span>
+      </div>
+      <button id="btn-fix-incognito" class="btn-micro">Setup</button>
+    </div>
+
+    <!-- Security KPI Counters -->
+    <section class="kpi-row">
+      <div class="kpi-box">
+        <span class="kpi-num" id="kpi-scanned">0</span>
+        <span class="kpi-title">URLs Inspected</span>
+      </div>
+      <div class="kpi-box danger">
+        <span class="kpi-num text-danger" id="kpi-blocked">0</span>
+        <span class="kpi-title">Threats Blocked</span>
+      </div>
+    </section>
+
+    <!-- Real-Time URL Inspector -->
+    <section class="inspector-section">
+      <div class="section-title">ON-DEMAND THREAT PROBE</div>
+      <div class="input-group">
+        <input type="text" id="input-url" placeholder="Paste URL to inspect..." spellcheck="false">
+        <button id="btn-scan" class="btn-action">Scan</button>
+      </div>
+      <div id="scan-result" class="scan-result hidden"></div>
+    </section>
+
+    <!-- Footer Links -->
+    <footer class="footer-links">
+      <a href="#" id="link-current-tab" class="f-link">Inspect Current Tab</a>
+      <a href="#" id="link-soc-dashboard" class="f-link highlight">Open SOC Lab</a>
+      <a href="#" id="link-options" class="f-link">Manage Rules</a>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

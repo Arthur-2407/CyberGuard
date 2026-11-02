@@ -64,6 +64,7 @@ data/audio_vault/
 *.m4a
 *.ogg
 demo/
+New folder/
 *_out.mp3
 test.mp3
 test_out.mp3
@@ -247,3 +248,12 @@ Problem_Statement_9.pdf
 # ------------------------------------------------------------------------------
 verification/
 
+
+# ------------------------------------------------------------------------------
+# 13. Node.js & Electron Desktop Packaging Artifacts
+# ------------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+desktop/node_modules/
+desktop/frontend/
+desktop/dist/

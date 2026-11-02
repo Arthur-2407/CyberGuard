@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CyberGuard Shield — Settings & Threat Rules</title>
+  <link rel="stylesheet" href="blocked.css">
+  <style>
+    .options-container {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    .options-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+    }
+    .setting-section {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 24px;
+    }
+    .setting-section h3 {
+      font-size: 14px;
+      font-family: var(--font-mono);
+      color: var(--accent-cyan);
+      margin-bottom: 12px;
+      letter-spacing: 0.05em;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .input-field {
+      width: 100%;
+      background: rgba(0, 0, 0, 0.4);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 6px;
+      padding: 10px 14px;
+      color: #fff;
+      font-family: var(--font-mono);
+      font-size: 13px;
+    }
+    .table-wrap {
+      max-height: 250px;
+      overflow-y: auto;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.2);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      font-family: var(--font-mono);
+    }
+    th, td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+    th {
+      background: rgba(0, 0, 0, 0.4);
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .btn-table-del {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="options-container">
+    <header class="shield-header" style="border-radius: 10px; margin-bottom: 24px;">
+      <div class="shield-logo-wrap">
+        <img src="icons/icon48.png" alt="CyberGuard" class="shield-emblem">
+        <div class="shield-title-group">
+          <h1>CYBERGUARD <span class="accent-danger">RULES & ENGINE SETTINGS</span></h1>
+          <div class="subtitle">PERSISTENT POLICY & THREAT MATRIX ORCHESTRATION</div>
+        </div>
+      </div>
+      <div class="status-badge" style="background: rgba(6,182,212,0.15); color: #38bdf8;">MANIFEST V3</div>
+    </header>
+
+    <div class="options-grid">
+      <!-- Backend URL Setting -->
+      <section class="setting-section">
+        <h3>SOC BACKEND INTEGRATION</h3>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">
+          Configure the target CyberGuard Python FastAPI & Threat Intelligence endpoint. By default, points to your local on-demand Docker container (http://127.0.0.1:3000) or an active Cloudflare Tunnel.
+        </p>
+        <div class="form-group">
+          <label for="cfg-backend-url">Backend Origin API Base</label>
+          <input type="text" id="cfg-backend-url" class="input-field" placeholder="http://127.0.0.1:3000">
+        </div>
+        <button id="btn-save-backend" class="btn btn-primary" style="padding: 8px 18px; font-size: 12px;">Save Endpoint</button>
+        <span id="save-status" style="font-size: 12px; margin-left: 10px; color: #10b981;"></span>
+      </section>
+
+      <!-- Persistent Blocklist -->
+      <section class="setting-section">
+        <h3>LOCALLY ENFORCED MALICIOUS DOMAIN BLOCKLIST</h3>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">
+          Domains registered in this blocklist are halted pre-request by the Chromium network engine via DeclarativeNetRequest rules.
+        </p>
+        <div class="table-wrap">
+          <table id="table-blocked">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Classification</th>
+                <th>Reason</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Whitelisted Domains -->
+      <section class="setting-section">
+        <h3>AUTHORIZED WHITELIST & OVERRIDES</h3>
+        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 14px;">
+          Domains explicitly authorized to bypass automated technical blocking.
+        </p>
+        <div class="table-wrap">
+          <table id="table-whitelist">
+            <thead>
+              <tr>
+                <th>Domain</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

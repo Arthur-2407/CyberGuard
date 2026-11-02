@@ -158,13 +158,41 @@ def extract_wav2vec2(
 
 
 def preload_wav2vec2(model_name: str = "facebook/wav2vec2-base") -> bool:
-    """
-    Eagerly load wav2vec2 at application startup.
-    Call this from FastAPI startup event.
-    """
+    """Load wav2vec2 model on demand."""
     return _load_wav2vec2(model_name)
 
 
+def is_wav2vec2_loaded_in_memory() -> bool:
+    """Check if wav2vec2 is currently resident in RAM."""
+    return _WAV2VEC2_AVAILABLE and _WAV2VEC2_MODEL is not None
+
+
 def is_wav2vec2_available() -> bool:
-    """Check if wav2vec2 has been successfully loaded."""
-    return _WAV2VEC2_AVAILABLE
+    """Check if wav2vec2 is available (in memory or torch/transformers installed)."""
+    if _WAV2VEC2_AVAILABLE:
+        return True
+    try:
+        import transformers
+        return _TORCH_AVAILABLE
+    except ImportError:
+        return False
+
+
+def unload_wav2vec2() -> None:
+    """Release wav2vec2 tensors from active RAM."""
+    global _WAV2VEC2_MODEL, _WAV2VEC2_PROCESSOR, _WAV2VEC2_AVAILABLE, _WAV2VEC2_LOAD_ATTEMPTED
+    _WAV2VEC2_MODEL = None
+    _WAV2VEC2_PROCESSOR = None
+    _WAV2VEC2_AVAILABLE = False
+    _WAV2VEC2_LOAD_ATTEMPTED = False
+    import gc
+    gc.collect()
+
+
+def get_wav2vec2_status() -> str:
+    """Return truthful lifecycle state."""
+    if is_wav2vec2_loaded_in_memory():
+        return "READY_IN_MEMORY"
+    elif is_wav2vec2_available():
+        return "AVAILABLE_ON_DISK"
+    return "UNAVAILABLE"

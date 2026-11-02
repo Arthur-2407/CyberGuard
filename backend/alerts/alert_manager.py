@@ -120,35 +120,44 @@ class AlertManager:
             except Exception as exc:
                 logger.error(f"Notifier {type(notifier).__name__} failed: {exc}")
 
-        # Broadcast real-time security alert event to connected clients
+        # Deliver real-time security alert event to authorized clients
         try:
             from backend.main import get_app_ws_notifier
             ws_notifier = get_app_ws_notifier()
-            if ws_notifier and hasattr(ws_notifier, "broadcast_raw"):
-                alert_payload = {
-                    "type": "security_alert",
-                    "alert": {
-                        "alert_id": f"ALT-{event.session_id[:8] if event.session_id else 'SES'}-{event.chunk_id}",
-                        "session_id": event.session_id,
-                        "chunk_id": event.chunk_id,
-                        "timestamp": event.timestamp,
-                        "risk_score": event.risk_score,
-                        "alert_level": event.alert_level,
-                        "recommendation": event.recommendation,
-                        "recommendation_title": event.recommendation.get("title", "") if isinstance(event.recommendation, dict) else "",
-                        "speaker_id": event.speaker_id,
-                        "speaker_similarity": event.speaker_similarity,
-                        "detection_score": event.detection_score,
-                        "voice_classification": "CLONED_VOICE" if event.risk_score >= 0.60 else "GENUINE_VOICE",
-                    }
+            alert_payload = {
+                "type": "security_alert",
+                "alert": {
+                    "alert_id": f"ALT-{event.session_id[:8] if event.session_id else 'SES'}-{event.chunk_id}",
+                    "session_id": event.session_id,
+                    "chunk_id": event.chunk_id,
+                    "timestamp": event.timestamp,
+                    "risk_score": event.risk_score,
+                    "alert_level": event.alert_level,
+                    "recommendation": event.recommendation,
+                    "recommendation_title": event.recommendation.get("title", "") if isinstance(event.recommendation, dict) else "",
+                    "speaker_id": event.speaker_id,
+                    "speaker_similarity": event.speaker_similarity,
+                    "detection_score": event.detection_score,
+                    "voice_classification": "CLONED_VOICE" if event.risk_score >= 0.60 else "GENUINE_VOICE",
+                    "user_id": getattr(event, "user_id", None)
                 }
+            }
+            if ws_notifier and hasattr(ws_notifier, "notify_alert_event"):
+                await ws_notifier.notify_alert_event(
+                    alert_payload,
+                    session_id=event.session_id,
+                    user_id=getattr(event, "user_id", None)
+                )
+            elif ws_notifier and hasattr(ws_notifier, "broadcast_raw"):
                 await ws_notifier.broadcast_raw(alert_payload)
         except Exception as exc:
             logger.debug(f"Alert broadcast skipped: {exc}")
 
-    def get_session_history(self, session_id: str) -> List[dict]:
-        """Return all alerts for a given session."""
+    def get_session_history(self, session_id: str, user_id: Optional[int] = None, is_admin: bool = False) -> List[dict]:
+        """Return all alerts for a given session with user isolation."""
         events = self._session_alerts.get(session_id, [])
+        if user_id is not None and not is_admin:
+            events = [e for e in events if getattr(e, "user_id", None) == user_id]
         return [
             {
                 "chunk_id": e.chunk_id,
@@ -162,9 +171,13 @@ class AlertManager:
             for e in events
         ]
 
-    def get_recent_alerts(self, limit: int = 50) -> List[dict]:
-        """Return most recent alerts across all sessions."""
-        recent = self._history[-limit:]
+    def get_recent_alerts(self, limit: int = 50, user_id: Optional[int] = None, is_admin: bool = False) -> List[dict]:
+        """Return most recent alerts scoped strictly to caller's ownership boundary."""
+        if user_id is not None and not is_admin:
+            filtered = [e for e in self._history if getattr(e, "user_id", None) == user_id]
+            recent = filtered[-limit:]
+        else:
+            recent = self._history[-limit:]
         return [
             {
                 "alert_id": f"ALT-{e.session_id[:8] if e.session_id else 'SES'}-{e.chunk_id}",

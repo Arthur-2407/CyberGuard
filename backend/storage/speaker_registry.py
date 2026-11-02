@@ -41,6 +41,8 @@ class SpeakerRegistry:
         organization: Optional[str] = None,
         role: Optional[str] = None,
         num_samples: int = 1,
+        pitch_meta: Optional[dict] = None,
+        user_id: Optional[int] = None,
     ) -> str:
         """
         Store a new speaker profile.
@@ -52,6 +54,7 @@ class SpeakerRegistry:
             organization:   organization name
             role:           role/title
             num_samples:    number of audio samples used to create this profile
+            pitch_meta:     optional pitch characteristics (mean F0, std, etc.)
 
         Returns:
             speaker_id (str)
@@ -68,20 +71,21 @@ class SpeakerRegistry:
             # Check for existing
             existing = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id).first()
             if existing:
-                existing.set_embedding(embedding)
+                existing.set_embedding(embedding, pitch_meta=pitch_meta)
                 existing.num_samples = num_samples
                 existing.name = name
                 logger.info(f"Updated speaker profile: {speaker_id}")
             else:
                 profile = SpeakerProfile(
                     speaker_id=speaker_id,
+                    user_id=user_id,
                     name=name,
                     organization=organization,
                     role=role,
                     num_samples=num_samples,
                     embedding_dim=len(embedding),
                 )
-                profile.set_embedding(embedding)
+                profile.set_embedding(embedding, pitch_meta=pitch_meta)
                 db.add(profile)
                 logger.info(f"Enrolled new speaker: {speaker_id} ({name})")
 
@@ -107,13 +111,29 @@ class SpeakerRegistry:
         finally:
             db.close()
 
-    def list_speakers(self) -> List[dict]:
+    def get_pitch_profile(self, speaker_id: str) -> Optional[dict]:
+        """Retrieve stored pitch profile baseline for a speaker."""
+        if not _DB_AVAILABLE:
+            return None
+        db = self._get_session()
+        try:
+            profile = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id).first()
+            if profile and hasattr(profile, "get_pitch_profile"):
+                return profile.get_pitch_profile()
+            return None
+        finally:
+            db.close()
+
+    def list_speakers(self, user_id: Optional[int] = None, is_admin: bool = False) -> List[dict]:
         """Return a list of all enrolled speakers (metadata only, no embeddings)."""
         if not _DB_AVAILABLE:
             return []
         db = self._get_session()
         try:
-            profiles = db.query(SpeakerProfile).all()
+            query = db.query(SpeakerProfile)
+            if user_id is not None and not is_admin:
+                query = query.filter((SpeakerProfile.user_id == user_id) | (SpeakerProfile.user_id.is_(None)))
+            profiles = query.all()
             return [
                 {
                     "speaker_id": p.speaker_id,
@@ -128,13 +148,16 @@ class SpeakerRegistry:
         finally:
             db.close()
 
-    def delete_speaker(self, speaker_id: str) -> bool:
+    def delete_speaker(self, speaker_id: str, user_id: Optional[int] = None, is_admin: bool = False) -> bool:
         """Delete a speaker profile (GDPR/PDP compliance)."""
         if not _DB_AVAILABLE:
             return False
         db = self._get_session()
         try:
-            profile = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id).first()
+            query = db.query(SpeakerProfile).filter_by(speaker_id=speaker_id)
+            if user_id is not None and not is_admin:
+                query = query.filter(SpeakerProfile.user_id == user_id)
+            profile = query.first()
             if profile:
                 db.delete(profile)
                 db.commit()

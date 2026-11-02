@@ -123,33 +123,55 @@ class EmailNotifier:
             try:
                 u_int = int(u_id) if (isinstance(u_id, int) or (isinstance(u_id, str) and str(u_id).strip().isdigit())) else None
                 if u_int is not None and u_int > 0:
-                    from backend.storage.database import get_session_factory, UserModel
-                    factory = get_session_factory("data/cyberguard.db")
-                    with factory() as db:
-                        user_row = db.query(UserModel).filter(UserModel.id == u_int).first()
-                        if not user_row:
-                            return None, None, None, "ACCOUNT_NOT_FOUND"
-                        if not user_row.is_active:
-                            return user_row.id, user_row.username, None, "ACCOUNT_INACTIVE"
-                        if not user_row.email or not BrevoEmailClient.is_valid_email(str(user_row.email).strip()):
-                            return user_row.id, user_row.username, None, "NO_ELIGIBLE_ACCOUNT_EMAIL"
-                        return user_row.id, user_row.username, str(user_row.email).strip().lower(), None
+                    from backend.storage.database import get_session_factory, UserModel, get_local_engine
+                    from sqlalchemy.orm import Session
+                    user_row = None
+                    try:
+                        factory = get_session_factory("data/cyberguard.db")
+                        with factory() as db:
+                            user_row = db.query(UserModel).filter(UserModel.id == u_int).first()
+                    except Exception:
+                        try:
+                            local_eng = get_local_engine()
+                            with Session(bind=local_eng) as loc_db:
+                                user_row = loc_db.query(UserModel).filter(UserModel.id == u_int).first()
+                        except Exception:
+                            pass
+                    if not user_row:
+                        return None, None, None, "ACCOUNT_NOT_FOUND"
+                    if not user_row.is_active:
+                        return user_row.id, user_row.username, None, "ACCOUNT_INACTIVE"
+                    if not user_row.email or not BrevoEmailClient.is_valid_email(str(user_row.email).strip()):
+                        return user_row.id, user_row.username, None, "NO_ELIGIBLE_ACCOUNT_EMAIL"
+                    return user_row.id, user_row.username, str(user_row.email).strip().lower(), None
             except Exception as exc:
                 logger.debug(f"User ID lookup error in email notifier: {exc}")
 
         # 2. Secondary: If user_email is present on verified event
         if u_email and BrevoEmailClient.is_valid_email(str(u_email)):
             try:
-                from backend.storage.database import get_session_factory, UserModel
-                factory = get_session_factory("data/cyberguard.db")
-                with factory() as db:
-                    user_row = db.query(UserModel).filter(
-                        UserModel.email == str(u_email).strip().lower()
-                    ).first()
-                    if user_row:
-                        if not user_row.is_active:
-                            return user_row.id, user_row.username, None, "ACCOUNT_INACTIVE"
-                        return user_row.id, user_row.username, str(user_row.email).strip().lower(), None
+                from backend.storage.database import get_session_factory, UserModel, get_local_engine
+                from sqlalchemy.orm import Session
+                user_row = None
+                try:
+                    factory = get_session_factory("data/cyberguard.db")
+                    with factory() as db:
+                        user_row = db.query(UserModel).filter(
+                            UserModel.email == str(u_email).strip().lower()
+                        ).first()
+                except Exception:
+                    try:
+                        local_eng = get_local_engine()
+                        with Session(bind=local_eng) as loc_db:
+                            user_row = loc_db.query(UserModel).filter(
+                                UserModel.email == str(u_email).strip().lower()
+                            ).first()
+                    except Exception:
+                        pass
+                if user_row:
+                    if not user_row.is_active:
+                        return user_row.id, user_row.username, None, "ACCOUNT_INACTIVE"
+                    return user_row.id, user_row.username, str(user_row.email).strip().lower(), None
             except Exception as exc:
                 logger.debug(f"User email verification error in email notifier: {exc}")
 
@@ -448,7 +470,12 @@ class EmailNotifier:
             user_id=user_id,
             username=username,
         )
-        self._dispatched_threat_fingerprints.add(err_fingerprint)
+        if res.get("status") == "sent" or res.get("delivery_status") in ("PROVIDER_ACCEPTED", "DELIVERED"):
+            self._dispatched_threat_fingerprints.add(err_fingerprint)
+        else:
+            self._last_sent_by_target.pop(session_id, None)
+            self._last_sent_by_target.pop(cooldown_key, None)
+            self._last_sent_by_target.pop(global_recipient_key, None)
         return res
 
     async def notify_threat_event(
@@ -595,8 +622,13 @@ class EmailNotifier:
             username=username,
         )
 
-        # Mark fingerprint as sent so this specific threat is never emailed again
-        self._dispatched_threat_fingerprints.add(err_fingerprint)
+        # Mark fingerprint as sent only when delivery was accepted by provider
+        if dispatch_res.get("status") == "sent" or dispatch_res.get("delivery_status") in ("PROVIDER_ACCEPTED", "DELIVERED"):
+            self._dispatched_threat_fingerprints.add(err_fingerprint)
+        else:
+            self._last_sent_by_target.pop(cooldown_key, None)
+            self._last_sent_by_target.pop(global_recipient_key, None)
+            self._last_sent_by_target.pop(str(event_id), None)
         return dispatch_res
 
     async def send_test_alert(
@@ -604,8 +636,10 @@ class EmailNotifier:
         severity: str = "CRITICAL",
         subject: Optional[str] = None,
         recipient: Optional[str] = None,
+        user_id: Optional[int] = None,
+        username: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Manual test alert dispatch from SOC Admin Console."""
+        """Manual test alert dispatch from SOC Console."""
         cfg = get_settings().email_alerts
         policy = self._get_active_policy()
         target_recipient = (
@@ -635,6 +669,8 @@ class EmailNotifier:
             target_id=f"TEST-{uuid.uuid4().hex[:8]}",
             threat_type="ADMIN_TEST_VERIFICATION",
             is_manual_test=True,
+            user_id=user_id,
+            username=username,
         )
 
     async def _dispatch_email(
@@ -865,8 +901,8 @@ class EmailNotifier:
             except Exception as smtp_err:
                 logger.debug(f"Brevo SMTP Relay dispatch attempt: {smtp_err}")
 
-            # Fall back to Brevo Transactional REST API if SMTP had IP restrictions or was unconfigured
-            if result is None or (not result.success and ("525" in str(result.error_message) or "IP" in str(result.error_message))):
+            # Fall back to Brevo Transactional REST API if SMTP had IP restrictions and a REST API key is configured
+            if (result is None or not result.success) and not (cfg.brevo_api_key or "").startswith("xsmtpsib-") and (cfg.brevo_api_key or "").strip():
                 api_result = await brevo_client.send_alert_email(
                     recipient=primary_target,
                     subject=subject,
@@ -982,14 +1018,31 @@ class EmailNotifier:
         except Exception as exc:
             logger.warning(f"Failed to append email alert to disk log: {exc}")
 
-    def get_recent_email_alerts(self, limit: int = 50) -> List[Dict[str, Any]]:
+    def get_recent_email_alerts(
+        self,
+        limit: int = 50,
+        user_id: Optional[int] = None,
+        recipient: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """Return recently dispatched email alerts from database with journal fallback."""
         session = _get_db_session()
         if session:
             try:
                 from backend.storage.database import EmailAlertRecordModel
+                query = session.query(EmailAlertRecordModel)
+                if user_id is not None and recipient:
+                    query = query.filter(
+                        (EmailAlertRecordModel.user_id == user_id) |
+                        (EmailAlertRecordModel.recipient == str(recipient).strip().lower())
+                    )
+                elif user_id is not None:
+                    query = query.filter(EmailAlertRecordModel.user_id == user_id)
+                elif recipient:
+                    query = query.filter(
+                        EmailAlertRecordModel.recipient == str(recipient).strip().lower()
+                    )
                 rows = (
-                    session.query(EmailAlertRecordModel)
+                    query
                     .order_by(EmailAlertRecordModel.id.desc())
                     .limit(limit)
                     .all()
@@ -1001,6 +1054,7 @@ class EmailNotifier:
                             "id": r.id,
                             "alert_id": r.alert_id,
                             "timestamp": r.timestamp.strftime("%Y-%m-%d %H:%M:%S UTC") if r.timestamp else "",
+                            "user_id": r.user_id,
                             "recipient": r.recipient,
                             "subject": r.subject,
                             "alert_level": r.alert_level,
@@ -1023,7 +1077,19 @@ class EmailNotifier:
                 session.close()
 
         # Fallback to in-memory deque
-        return list(self._journal)[:limit]
+        filtered = []
+        for rec in self._journal:
+            rec_uid = rec.get("user_id")
+            rec_rcp = str(rec.get("recipient") or "").strip().lower()
+            if user_id is not None and rec_uid == user_id:
+                filtered.append(rec)
+            elif recipient and rec_rcp == str(recipient).strip().lower():
+                filtered.append(rec)
+            elif user_id is None and recipient is None:
+                filtered.append(rec)
+            if len(filtered) >= limit:
+                break
+        return filtered
 
 
 _email_notifier_instance: Optional[EmailNotifier] = None

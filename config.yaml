@@ -162,3 +162,17 @@ image_forensics:
   color_decorrelation_critical: 0.35
   color_decorrelation_moderate: 0.50
 
+malware:
+  enabled: true
+  clamscan_path: "clamscan"
+  clamd_host: "127.0.0.1"
+  clamd_port: 3310
+  clamd_enabled: true
+  yara_enabled: true
+  yara_rules_dir: "data/yara_rules"
+  max_scan_size_bytes: 1073741824
+  scan_timeout_sec: 60.0
+  archive_max_files: 1000
+  archive_max_total_bytes: 1073741824
+  archive_max_ratio: 50.0
+

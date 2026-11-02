@@ -130,7 +130,7 @@ fun LiveMonitorScreen(navController: NavController, viewModel: MainViewModel) {
                     streamStatusText = if (event.detectorReady) "ANALYZING" else "STREAMING (HEURISTIC)"
                 }
                 is WsEvent.StatusUpdate -> {
-                    if (event.status == "WAITING_FOR_DATA") {
+                    if (event.status == "WAITING_FOR_DATA" || event.status == "WAITING_FOR_SPEECH") {
                         streamStatusText = "AWAITING VOICE ACTIVITY"
                     }
                 }
@@ -635,4 +635,5 @@ fun LiveMonitorScreen(navController: NavController, viewModel: MainViewModel) {
         }
     }
 }
+
 

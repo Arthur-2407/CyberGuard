@@ -12,7 +12,7 @@ data class CallMonitorTelemetry(
     val audioState: AudioCaptureState = AudioCaptureState.IDLE,
     val backendState: BackendState = BackendState.DISCONNECTED,
     val detectorState: DetectorState = DetectorState.IDLE,
-    val activeDetector: String = "READY (v025)",
+    val activeDetector: String = "READY (v032)",
     val audioSource: String = "NONE",
     val captureMode: String = "NONE",
     val diagnosticReason: String? = null,

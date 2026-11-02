@@ -4,11 +4,27 @@
   "cleanUrls": true,
   "rewrites": [
     {
-      "source": "/health",
-      "destination": "/health.json"
+      "source": "/api/(.*)",
+      "destination": "https://cyberguard-backend-8rbz.onrender.com/api/$1"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/health",
+      "destination": "https://cyberguard-backend-8rbz.onrender.com/health"
+    },
+    {
+      "source": "/personal",
+      "destination": "/personal/index.html"
+    },
+    {
+      "source": "/personal/",
+      "destination": "/personal/index.html"
+    },
+    {
+      "source": "/personal/(.*)",
+      "destination": "/personal/$1"
+    },
+    {
+      "source": "/((?!api/|personal/).*)",
       "destination": "/index.html"
     }
   ],

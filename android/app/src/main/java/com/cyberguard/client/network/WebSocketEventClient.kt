@@ -1,6 +1,7 @@
 package com.cyberguard.client.network
 
 import android.util.Log
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -45,7 +46,7 @@ class WebSocketEventClient(
     val isConnected: StateFlow<Boolean> = _isConnected
     
     // Use SharedFlow for events so rapid messages aren't dropped
-    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 64)
+    private val _events = MutableSharedFlow<WsEvent>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
     val events: SharedFlow<WsEvent> = _events
     
     val connectionError = MutableStateFlow<String?>(null)

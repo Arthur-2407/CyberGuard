@@ -11,7 +11,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from backend.storage.auth import require_admin
+from backend.storage.auth import require_admin, require_user, get_optional_user
 from backend.storage.database import UserModel
 
 logger = logging.getLogger(__name__)
@@ -21,17 +21,27 @@ alerts_router = APIRouter(prefix="/api/alerts", tags=["Alerts"])
 
 
 @alerts_router.get("/recent")
-async def get_recent_alerts(limit: int = 50):
-    """Get the most recent alerts across all sessions."""
+async def get_recent_alerts(
+    limit: int = 50,
+    current_user: Optional[UserModel] = Depends(get_optional_user),
+):
+    """Get the most recent alerts scoped strictly to caller's ownership boundary."""
     from backend.main import get_app_alert_manager
-    return {"alerts": get_app_alert_manager().get_recent_alerts(limit=limit)}
+    if current_user is None or not getattr(current_user, "is_active", False):
+        return {"alerts": [], "requires_authentication": True}
+    is_admin = getattr(current_user, "role", "").lower() in ["admin", "role_admin"]
+    return {"alerts": get_app_alert_manager().get_recent_alerts(limit=limit, user_id=current_user.id, is_admin=is_admin)}
 
 
 @alerts_router.get("/session/{session_id}")
-async def get_session_alerts(session_id: str):
-    """Get all alerts for a specific session."""
+async def get_session_alerts(
+    session_id: str,
+    current_user: UserModel = Depends(require_user),
+):
+    """Get all alerts for a specific session scoped strictly to caller's ownership boundary."""
     from backend.main import get_app_alert_manager
-    alerts = get_app_alert_manager().get_session_history(session_id)
+    is_admin = getattr(current_user, "role", "").lower() in ["admin", "role_admin"]
+    alerts = get_app_alert_manager().get_session_history(session_id, user_id=current_user.id, is_admin=is_admin)
     return {"session_id": session_id, "alerts": alerts}
 
 
@@ -129,7 +139,7 @@ async def get_system_status():
     }
     operational_count = sum(
         1 for v in capabilities.values()
-        if v in ("READY", "NEURAL_READY", "ACTIVE", "HEURISTIC_ONLY")
+        if v in ("READY", "NEURAL_READY", "ACTIVE", "HEURISTIC_ONLY", "AVAILABLE_ON_DISK", "READY_IN_MEMORY")
     )
 
     from backend.services.continuous_learning import ContinuousLearningService

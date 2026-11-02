@@ -13,8 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,9 +33,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
+import com.cyberguard.client.network.ConnectionManager
 import com.cyberguard.client.network.ConnectionState
 import com.cyberguard.client.ui.MainViewModel
 import com.cyberguard.client.ui.Screen
+import com.cyberguard.client.ui.components.ConnectionSettingsModal
 import com.cyberguard.client.ui.theme.*
 import kotlin.math.*
 
@@ -46,6 +47,8 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
     val state by viewModel.connectionState.collectAsState()
     val discoveryStatusText by viewModel.discoveryStatus.collectAsState()
     val detectedGateway = viewModel.detectedGatewayIp
+    val connectionConfig by viewModel.connectionConfig.collectAsState()
+    val failoverNotice by viewModel.failoverNotice.collectAsState()
 
     // Interactive state for tactical HUD & radar inspection
     var selectedThreatDetail by remember { mutableStateOf<String?>(null) }
@@ -745,14 +748,16 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                         }
                         Spacer(modifier = Modifier.width(10.dp))
                         Column(modifier = Modifier.weight(1f)) {
+                            val failureTitle = when {
+                                state == ConnectionState.NETWORK_UNAVAILABLE -> "LOCAL INTERFACE OFFLINE"
+                                state == ConnectionState.DISCOVERY_TIMEOUT -> "BROADCAST BEACON TIMEOUT"
+                                state == ConnectionState.AUTH_REQUIRED -> "AUTHENTICATION REQUIRED"
+                                state == ConnectionState.BACKEND_UNHEALTHY -> "NODE HEALTH CHECK FAILED"
+                                !discoveryStatusText.isNullOrBlank() && discoveryStatusText != "ALL CONFIGURED NODES UNREACHABLE" -> discoveryStatusText
+                                else -> "TARGET BACKEND UNREACHABLE"
+                            }
                             Text(
-                                text = when (state) {
-                                    ConnectionState.NETWORK_UNAVAILABLE -> "LOCAL INTERFACE OFFLINE"
-                                    ConnectionState.DISCOVERY_TIMEOUT -> "BROADCAST BEACON TIMEOUT"
-                                    ConnectionState.BACKEND_UNREACHABLE -> "TARGET PORT 3000 REFUSED"
-                                    ConnectionState.BACKEND_UNHEALTHY -> "NODE HEALTH CHECK FAILED"
-                                    else -> "DEFENSE UPLINK STANDBY"
-                                },
+                                text = failureTitle,
                                 style = MaterialTheme.typography.titleMedium.copy(
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
@@ -760,13 +765,15 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                                 ),
                                 color = StatusWarning
                             )
+                            val failureSubtitle = when {
+                                !failoverNotice.isNullOrBlank() -> failoverNotice!!
+                                state == ConnectionState.NETWORK_UNAVAILABLE -> "Activate Wi-Fi or Ethernet to enable peer discovery."
+                                state == ConnectionState.AUTH_REQUIRED -> "Node reachable but requires operator login credentials."
+                                state == ConnectionState.BACKEND_UNHEALTHY -> "Node responded with non-200 status code."
+                                else -> "Ensure server is running on PC or configure active tunnel."
+                            }
                             Text(
-                                text = when (state) {
-                                    ConnectionState.NETWORK_UNAVAILABLE -> "Activate Wi-Fi or Ethernet to enable peer discovery."
-                                    ConnectionState.BACKEND_UNREACHABLE -> "Node found but port 3000 is closed. Ensure server is running on PC."
-                                    ConnectionState.BACKEND_UNHEALTHY -> "Node responded with non-200 status code."
-                                    else -> "Ensure CyberGuard PC server is running via start_server.bat."
-                                },
+                                text = failureSubtitle,
                                 style = MaterialTheme.typography.bodyMedium.copy(fontSize = 10.5.sp),
                                 color = TextSecondary,
                                 modifier = Modifier.padding(top = 2.dp)
@@ -775,7 +782,13 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                     }
 
                     // 1. Priority Candidate: Auto-Detected Local Host Candidate
-                    val localCandidateIp = detectedGateway ?: "192.168.29.1"
+                    val localCandidateIp = if (connectionConfig.localHost.isNotBlank()) {
+                        connectionConfig.localHost
+                    } else {
+                        val rawHost = detectedGateway ?: if (ConnectionManager.isEmulatorEnvironment()) "10.0.2.2" else ConnectionManager.DEFAULT_LOCAL_HOST
+                        rawHost.removePrefix("http://").removePrefix("https://").substringBefore(":").substringBefore("/").trim()
+                    }
+                    val localPort = connectionConfig.localPort
                     Spacer(modifier = Modifier.height(10.dp))
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -790,18 +803,18 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "AUTO-DETECTED HOST CANDIDATE",
+                                    text = "CONFIGURED LOCAL CANDIDATE",
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 8.5.sp),
                                     color = CyberNeonCyan
                                 )
                                 Text(
-                                    text = "$localCandidateIp:3000",
+                                    text = "$localCandidateIp:$localPort",
                                     style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 12.5.sp),
                                     color = TextPrimary
                                 )
                             }
                             Button(
-                                onClick = { viewModel.connectManually(localCandidateIp, "3000") },
+                                onClick = { viewModel.connectManually(localCandidateIp, localPort.toString()) },
                                 colors = ButtonDefaults.buttonColors(containerColor = CyberNeonCyan, contentColor = DeepSpaceBackground),
                                 shape = RoundedCornerShape(6.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -812,6 +825,9 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                     }
 
                     // 2. Secondary Candidate: Deployed Cloud Defense Node
+                    val candidateCloudUrl = if (connectionConfig.cloudUrl.isNotBlank()) connectionConfig.cloudUrl else ConnectionManager.DEFAULT_CLOUD_BACKEND_URL
+                    val displayCloudText = candidateCloudUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
+                    val formattedDisplay = if (displayCloudText.length > 35) displayCloudText.take(15) + "..." + displayCloudText.takeLast(17) else displayCloudText
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
@@ -826,18 +842,18 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "DEPLOYED CLOUD NODE",
+                                    text = "VERIFIED CLOUD BACKEND (TUNNEL / API)",
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace, fontSize = 8.5.sp),
                                     color = CyberBlue
                                 )
                                 Text(
-                                    text = "cyber-guard-backend...vercel.app",
-                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.5.sp),
+                                    text = formattedDisplay,
+                                    style = MaterialTheme.typography.titleMedium.copy(fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 11.sp),
                                     color = TextPrimary
                                 )
                             }
                             Button(
-                                onClick = { viewModel.connectToDeployedBackend() },
+                                onClick = { viewModel.connectToDeployedBackend(candidateCloudUrl) },
                                 colors = ButtonDefaults.buttonColors(containerColor = CyberBlue, contentColor = DeepSpaceBackground),
                                 shape = RoundedCornerShape(6.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
@@ -847,8 +863,31 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
                         }
                     }
 
-                    // 3. Autonomous System Auto-Detect & Re-Sync Trigger
-                    Spacer(modifier = Modifier.height(10.dp))
+                    // 3. Smart Connection Settings Modal Trigger Button
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = { viewModel.openConnectionSettings() },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = HighlightSurface, contentColor = CyberNeonCyan),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(1.dp, CyberNeonCyan.copy(alpha = 0.7f)),
+                        contentPadding = PaddingValues(vertical = 8.dp)
+                    ) {
+                        Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "CONFIGURE ENDPOINT & HYBRID MODES",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                letterSpacing = 0.6.sp
+                            )
+                        )
+                    }
+
+                    // 4. Autonomous System Auto-Detect & Re-Sync Trigger
+                    Spacer(modifier = Modifier.height(8.dp))
                     Button(
                         onClick = { viewModel.retryDiscovery() },
                         modifier = Modifier.fillMaxWidth(),
@@ -957,6 +996,14 @@ fun SplashScreen(navController: NavController, viewModel: MainViewModel) {
         }
 
         Spacer(modifier = Modifier.height(12.dp))
+    }
+
+    val showConnectionSettings by viewModel.showConnectionSettings.collectAsState()
+    if (showConnectionSettings) {
+        ConnectionSettingsModal(
+            viewModel = viewModel,
+            onDismiss = { viewModel.closeConnectionSettings() }
+        )
     }
 }
 
