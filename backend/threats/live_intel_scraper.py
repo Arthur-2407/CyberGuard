@@ -18,8 +18,12 @@ import logging
 import re
 import urllib.parse
 from typing import Any, Dict, List, Optional
+import time
 
 logger = logging.getLogger(__name__)
+
+# Module-level circuit breaker to prevent repeated delays when DuckDuckGo is rate-limited or unavailable
+_ddgs_circuit_open_until: float = 0.0
 
 
 class LiveIntelScraper:
@@ -33,9 +37,16 @@ class LiveIntelScraper:
     def search_duckduckgo_osint(query: str, max_results: int = 4) -> List[Dict[str, str]]:
         """
         Query DuckDuckGo for live OSINT intelligence on domains, URLs, package names, or hashes.
+        Enforces a circuit breaker and fast-fail timeout to prevent blocking core threat intelligence.
         """
+        global _ddgs_circuit_open_until
         results: List[Dict[str, str]] = []
         if not query or query.strip() in ("N/A", "unknown", ""):
+            return results
+
+        # If circuit breaker is active (due to recent 429/403/timeout), skip immediately
+        if time.time() < _ddgs_circuit_open_until:
+            logger.debug(f"DuckDuckGo OSINT query skipped (circuit breaker active for next {_ddgs_circuit_open_until - time.time():.1f}s)")
             return results
 
         try:
@@ -43,7 +54,7 @@ class LiveIntelScraper:
                 from ddgs import DDGS
             except ImportError:
                 from duckduckgo_search import DDGS
-            with DDGS() as ddgs:
+            with DDGS(timeout=2.0) as ddgs:
                 clean_query = query.strip()
                 # If query is full URL, search domain and path keyword
                 if clean_query.startswith("http://") or clean_query.startswith("https://"):
@@ -58,7 +69,13 @@ class LiveIntelScraper:
                         "link": item.get("href", "") or item.get("link", ""),
                     })
         except Exception as exc:
-            logger.debug(f"DuckDuckGo OSINT query notice for '{query}': {exc}")
+            # Trip circuit breaker for 60 seconds on rate limits or engine failures
+            exc_str = str(exc).lower()
+            if "429" in exc_str or "rate" in exc_str or "403" in exc_str or "timeoutexception" in exc_str:
+                _ddgs_circuit_open_until = time.time() + 60.0
+                logger.info(f"DuckDuckGo OSINT rate-limited/timed out ({exc}). Circuit open for 60s to protect latency.")
+            else:
+                logger.debug(f"DuckDuckGo OSINT query notice for '{query}': {exc}")
         return results
 
     @staticmethod
@@ -202,6 +219,46 @@ class LiveIntelScraper:
             page_intel["meta_description"] = dom.get("meta_description") or ""
             page_intel["clean_body_text"] = traf.get("clean_text") or ""
             page_intel["dom_inspection"] = dom
+
+            try:
+                from backend.analysis.web_inspector import WebInspector
+                web_insp = WebInspector.inspect_html(html, target_url=url, status_code=page_intel["status_code"], is_live=page_intel["is_live"])
+                page_intel["web_inspection"] = web_insp.to_dict()
+                if web_insp.credential_harvesting.has_credential_forms:
+                    dom["has_credential_forms"] = True
+                if web_insp.credential_harvesting.has_password_field:
+                    dom["has_password_field"] = True
+                dom["credential_status"] = "HARVESTING_DETECTED" if dom.get("has_credential_forms") else "CLEAN"
+                dom["permission_abuse"] = web_insp.sensitive_permissions.abuse_detected
+                dom["probes_camera"] = web_insp.sensitive_permissions.probes_camera
+                dom["probes_geolocation"] = web_insp.sensitive_permissions.probes_geolocation
+                for p in web_insp.sensitive_permissions.suspicious_patterns:
+                    if p not in dom["suspicious_indicators"]:
+                        dom["suspicious_indicators"].append(p)
+            except Exception as w_err:
+                logger.debug(f"WebInspector integration notice: {w_err}")
+        else:
+            try:
+                from backend.analysis.web_inspector import WebInspectionResult, InspectionState
+                web_insp = WebInspectionResult(
+                    target_url=url,
+                    is_live=False,
+                    status_code=page_intel["status_code"],
+                    state=InspectionState.UNREACHABLE,
+                    page_title="",
+                    forms_count=0,
+                    scripts_count=0,
+                )
+                page_intel["web_inspection"] = web_insp.to_dict()
+                page_intel["dom_inspection"] = {
+                    "has_credential_forms": False,
+                    "has_password_field": False,
+                    "credential_status": "UNVERIFIED_UNREACHABLE",
+                    "inspection_status": "OFFLINE_OR_UNREACHABLE",
+                    "suspicious_indicators": [],
+                }
+            except Exception as w_err:
+                logger.debug(f"WebInspector offline notice: {w_err}")
 
         # 2. Dynamic Playwright rendering if credential forms or dynamic scripts are detected
         need_dynamic = page_intel["dom_inspection"].get("has_credential_forms") or not page_intel["clean_body_text"]
@@ -411,10 +468,15 @@ class LiveIntelScraper:
                 "rendering_engine": page_data.get("rendering_engine", "HTTP+BS4"),
                 "has_credential_forms": page_data.get("dom_inspection", {}).get("has_credential_forms", False),
                 "has_password_field": page_data.get("dom_inspection", {}).get("has_password_field", False),
+                "credential_status": page_data.get("dom_inspection", {}).get("credential_status", "UNVERIFIED_UNREACHABLE" if not page_data.get("is_live") else "CLEAN"),
+                "permission_abuse": page_data.get("dom_inspection", {}).get("permission_abuse", False),
+                "probes_camera": page_data.get("dom_inspection", {}).get("probes_camera", False),
+                "probes_geolocation": page_data.get("dom_inspection", {}).get("probes_geolocation", False),
                 "suspicious_indicators": page_data.get("dom_inspection", {}).get("suspicious_indicators", []),
                 "form_actions": page_data.get("dom_inspection", {}).get("form_actions", []),
                 "crawl4ai_markdown_snippet": (page_data.get("crawl4ai_markdown", "")[:250]) if page_data.get("crawl4ai_markdown") else None,
             },
+            "web_inspection": page_data.get("web_inspection"),
             "qwen_llm_synthesis": {
                 "model": "Qwen3.5-4B-Q4_K_M",
                 "executive_briefing": qwen_briefing,

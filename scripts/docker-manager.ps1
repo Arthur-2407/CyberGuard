@@ -129,7 +129,11 @@ switch ($Command) {
             Write-Host "  LIVE SECURE TUNNEL URL:" -ForegroundColor White
             Write-Host "  $url" -ForegroundColor Yellow -BackgroundColor Black
             Write-Host "----------------------------------------------------------------" -ForegroundColor Green
-            Write-Host "Copy and paste this URL into your Vercel or GitHub Pages frontend or Android app:" -ForegroundColor Gray
+            Write-Host "Direct Frontends with Tunnel preconfigured:" -ForegroundColor Cyan
+            Write-Host "  Vercel:       https://cyber-guard-backend-ashen.vercel.app/?api_base=$url" -ForegroundColor White
+            Write-Host "  GitHub Pages: https://arthur-2407.github.io/CyberGuard/?api_base=$url" -ForegroundColor White
+            Write-Host ""
+            Write-Host "Or configure manually via CyberGuard UI:" -ForegroundColor Gray
             Write-Host "  1. Open CyberGuard Console or Android App" -ForegroundColor Gray
             Write-Host "  2. Go to 'Connection Settings' / 'Configure Endpoint'" -ForegroundColor Gray
             Write-Host "  3. Set Cloud URL to the address above and click 'Save and Test'" -ForegroundColor Gray

@@ -1,4 +1,4 @@
-name: CyberGuard Windows Desktop Installer Release
+name: CyberGuard Windows Desktop Dual Edition Release
 
 on:
   push:
@@ -6,7 +6,6 @@ on:
       - 'v*'
     paths:
       - 'desktop/**'
-      - 'frontend/**'
       - '.github/workflows/release-windows.yml'
   workflow_dispatch:
 
@@ -14,8 +13,8 @@ permissions:
   contents: write
 
 jobs:
-  build-windows-installer:
-    name: Build & Package CyberGuard-Setup.exe
+  build-windows-distributions:
+    name: Build & Package Standard Installer & Portable Edition
     runs-on: windows-latest
     timeout-minutes: 30
 
@@ -35,29 +34,37 @@ jobs:
         run: |
           npm ci || npm install
 
-      - name: Sync Latest Frontend Assets
-        shell: pwsh
-        run: |
-          Copy-Item -Path "frontend/*" -Destination "desktop/frontend" -Recurse -Force -Exclude ".backup*"
-
-      - name: Build & Package Windows NSIS Installer
+      - name: Build & Package Standard Installer and Portable Edition
         working-directory: desktop
         run: |
           npm run dist
 
-      - name: Verify Installer Artifact
+      - name: Verify Installer Artifacts
         shell: pwsh
         run: |
           $installerPath = "dist/windows/CyberGuard-Setup.exe"
+          $portablePath = "dist/windows/CyberGuard-Portable.exe"
+
           if (-not (Test-Path $installerPath)) {
-            Write-Error "Installer artifact was not generated at expected location: $installerPath"
+            Write-Error "Installer artifact was not generated at: $installerPath"
             exit 1
           }
-          $hash = Get-FileHash -Algorithm SHA256 $installerPath
-          $size = (Get-Item $installerPath).Length / 1MB
-          Write-Host "✓ Verified Windows Installer: $installerPath"
-          Write-Host "Size: $([math]::Round($size, 2)) MB"
-          Write-Host "SHA-256: $($hash.Hash)"
+          if (-not (Test-Path $portablePath)) {
+            Write-Error "Portable artifact was not generated at: $portablePath"
+            exit 1
+          }
+
+          $installerHash = Get-FileHash -Algorithm SHA256 $installerPath
+          $installerSize = (Get-Item $installerPath).Length / 1MB
+          Write-Host "✓ Verified Windows NSIS Installer: $installerPath"
+          Write-Host "  Size: $([math]::Round($installerSize, 2)) MB"
+          Write-Host "  SHA-256: $($installerHash.Hash)"
+
+          $portableHash = Get-FileHash -Algorithm SHA256 $portablePath
+          $portableSize = (Get-Item $portablePath).Length / 1MB
+          Write-Host "✓ Verified Windows Portable Edition: $portablePath"
+          Write-Host "  Size: $([math]::Round($portableSize, 2)) MB"
+          Write-Host "  SHA-256: $($portableHash.Hash)"
 
       - name: Upload Installer Artifact
         uses: actions/upload-artifact@v4
@@ -67,9 +74,19 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish GitHub Release Asset
+      - name: Upload Portable Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CyberGuard-Portable-Windows-x64
+          path: dist/windows/CyberGuard-Portable.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release Assets
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/windows/CyberGuard-Setup.exe
+          files: |
+            dist/windows/CyberGuard-Setup.exe
+            dist/windows/CyberGuard-Portable.exe
           generate_release_notes: true

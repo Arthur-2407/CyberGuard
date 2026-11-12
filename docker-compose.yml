@@ -40,6 +40,8 @@ services:
       - OMP_NUM_THREADS=2
       - MKL_NUM_THREADS=2
       - OPENBLAS_NUM_THREADS=2
+      - DB_SYNC_INTERVAL_SEC=${DB_SYNC_INTERVAL_SEC:-180}
+      - CYBERGUARD_PREWARM_LLM=${CYBERGUARD_PREWARM_LLM:-false}
     volumes:
       # Persist SQLite databases, scan history, threat telemetry, and model card
       - ./data:/app/data
@@ -74,7 +76,12 @@ services:
         condition: service_healthy
     networks:
       - cyberguard-net
-    command: ["tunnel", "--url", "http://cyberguard-backend:3000"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
+    command: ${CLOUDFLARE_TUNNEL_COMMAND:-tunnel --url http://cyberguard-backend:3000}
 
 volumes:
   clamav-db:

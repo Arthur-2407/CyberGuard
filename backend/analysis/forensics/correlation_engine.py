@@ -67,16 +67,22 @@ class CorrelationVerdict:
 
                 # Determine scores grounded in actual measured signals
                 ai_cat = parent.forensic_matrix.get("ai_generation")
-                if ai_cat in ("DETECTED", "ANOMALY_CONFIRMED"):
+                v_prob = m.get("neural_synthetic_probability", m.get("p_synthetic"))
+                ai_meta_confirmed = (
+                    m.get("provenance_status") == "AI_GENERATOR_METADATA_CONFIRMED"
+                    or m.get("ai_meta_confirmed") is True
+                )
+                if ai_meta_confirmed:
+                    self.ai_generation_score = 1.0
+                elif v_prob is not None:
+                    # Grounded directly in evaluated neural deepfake model probability
+                    self.ai_generation_score = round(float(v_prob), 2)
+                elif ai_cat in ("DETECTED", "ANOMALY_CONFIRMED"):
                     self.ai_generation_score = round(max(float(parent.threat_score), 0.70), 2)
                 elif ai_cat == "INCONCLUSIVE":
                     self.ai_generation_score = round(float(parent.threat_score), 2)
                 else:
-                    v_prob = m.get("neural_synthetic_probability", m.get("p_synthetic"))
-                    if v_prob is not None:
-                        self.ai_generation_score = round(float(v_prob), 2)
-                    else:
-                        self.ai_generation_score = round(min(float(parent.threat_score), 0.15), 2)
+                    self.ai_generation_score = round(min(float(parent.threat_score), 0.15), 2)
 
                 manip_cat = parent.forensic_matrix.get("image_manipulation")
                 if manip_cat in ("EVIDENCE_DETECTED", "ANOMALY_CONFIRMED"):
@@ -87,7 +93,7 @@ class CorrelationVerdict:
                     self.image_manipulation_score = 0.0
 
                 face_cat = parent.forensic_matrix.get("face_manipulation")
-                if face_cat in ("NOT_APPLICABLE", None) or m.get("faces_detected", 0) == 0:
+                if face_cat in ("NOT_APPLICABLE", None) or m.get("faces_detected", 0) == 0 or m.get("facial_forensics_applicable") is False:
                     self.face_manipulation_score = None
                 elif face_cat in ("DETECTED", "ANOMALY_CONFIRMED"):
                     self.face_manipulation_score = round(min(1.0, max(0.70, float(m.get("face_seam_ratio", 0.75)))), 2)
@@ -261,7 +267,17 @@ class ForensicCorrelationEngine:
 
         # ── 2. Derive Independent Analytical Outcomes ────────────────────────────
         # AI Generation
-        if ai_meta_confirmed or (fft_crit and (noise_flat or ela_crit)):
+        v_prob = forensic_metrics.get("neural_synthetic_probability", forensic_metrics.get("p_synthetic"))
+        if ai_meta_confirmed:
+            ai_gen_outcome = "DETECTED"
+        elif v_prob is not None:
+            if v_prob >= 0.65:
+                ai_gen_outcome = "DETECTED"
+            elif v_prob >= 0.35:
+                ai_gen_outcome = "INCONCLUSIVE"
+            else:
+                ai_gen_outcome = "NOT_DETECTED"
+        elif fft_crit and (noise_flat or ela_crit):
             ai_gen_outcome = "DETECTED"
         elif total_suspicion >= t_incon:
             ai_gen_outcome = "INCONCLUSIVE"
@@ -279,7 +295,8 @@ class ForensicCorrelationEngine:
 
         # Face Manipulation
         face_app = forensic_metrics.get("facial_forensics_applicable", False)
-        if not face_app:
+        face_det_status = forensic_metrics.get("face_detection_status", "")
+        if not face_app or face_det_status in ("FACE_DETECTED_INSUFFICIENT_RESOLUTION", "INSUFFICIENT_RESOLUTION", "NO_FACE_DETECTED", "DETECTOR_UNAVAILABLE", "DETECTION_ERROR"):
             face_manip_outcome = "NOT_APPLICABLE"
         elif forensic_metrics.get("facial_status_level") == "CRITICAL":
             face_manip_outcome = "DETECTED"
@@ -301,6 +318,7 @@ class ForensicCorrelationEngine:
             "VALID_PROVENANCE": "VALID",
             "INVALID_PROVENANCE": "INVALID",
             "MISSING_PROVENANCE": "MISSING",
+            "NO_CREDENTIALS_PRESENT": "MISSING",
             "UNSUPPORTED_PROVENANCE": "UNSUPPORTED",
             "VERIFICATION_UNAVAILABLE": "VERIFICATION_UNAVAILABLE",
         }
@@ -343,11 +361,18 @@ class ForensicCorrelationEngine:
             severity = RiskLevel.LOW if total_suspicion < 0.50 else RiskLevel.MEDIUM
             classification = "INCONCLUSIVE"
             category = ThreatCategory.SAFE if total_suspicion < 0.50 else ThreatCategory.DEEPFAKE
-            summary = "Forensic inspection inconclusive. Moderate compression or unverified provenance observed without definitive manipulation proof."
-            reasoning = (
-                f"Forensic signals fell into an intermediate threshold (suspicion index: {total_suspicion:.2f}). "
-                f"Container provenance is unverified or compressed web artifacts resemble mild generative residuals."
-            )
+            if total_suspicion < 0.50:
+                summary = "Forensic inspection inconclusive (low anomaly profile). Nominal visual features with unverified provenance."
+                reasoning = (
+                    f"Forensic signals fell into low-inconclusive baseline range (suspicion index: {total_suspicion:.2f}). "
+                    f"Container provenance is unverified; no definitive generative AI markers confirmed."
+                )
+            else:
+                summary = "Forensic inspection inconclusive with elevated anomaly risk. Moderate compression artifacts or DSP anomalies observed."
+                reasoning = (
+                    f"Forensic signals fell into intermediate anomaly range (suspicion index: {total_suspicion:.2f}). "
+                    f"Container provenance is unverified and DSP frequency/noise profiles exhibit elevated variance."
+                )
             actions = [
                 "Inspect higher resolution or uncompressed original file if used for high-risk identity workflows.",
             ]

@@ -45,7 +45,6 @@ fun ConnectionSettingsModal(
     val activeEndpoint by viewModel.activeEndpoint.collectAsState()
     val activeEndpointType by viewModel.activeEndpointType.collectAsState()
     val failoverNotice by viewModel.failoverNotice.collectAsState()
-    val isFailoverActive by viewModel.isFailoverActive.collectAsState()
 
     var selectedMode by remember(currentConfig) { mutableStateOf(currentConfig.mode) }
     var selectedPriority by remember(currentConfig) { mutableStateOf(currentConfig.hybridPriority) }
@@ -665,8 +664,8 @@ fun ConnectionSettingsModal(
                         },
                         modifier = Modifier.weight(1.5f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = CyberNeonCyan,
-                            contentColor = DeepSpaceBackground
+                            containerColor = PrimaryRed,
+                            contentColor = PureWhite
                         ),
                         shape = RoundedCornerShape(6.dp)
                     ) {

@@ -182,74 +182,89 @@ class ImageForensicsEngine:
         peak_to_median = float(p99 / med_hi)
 
         s_freq = 0.0
-        if off_axis_max_spike >= self.config.fft_lattice_spike_critical and (critical_spike_count >= 2 or p99_spike >= 2.5):
-            s_freq = max(s_freq, 0.45)
+        is_compact_asset = min(w, h) < 128
+        if is_compact_asset:
+            # Low-resolution assets cannot be reliably evaluated for high-frequency latent diffusion
+            # or transposed-convolution upsampling via 256x256 bilinear interpolation,
+            # which naturally attenuates frequencies beyond the native Nyquist limit.
             evidences.append(Evidence(
-                evidence_type="spectral_periodic_lattice",
-                description=f"2D FFT frequency spectrum reveals prominent periodic lattice spikes ({off_axis_max_spike:.2f}x background), indicative of neural transposed-convolution upsampling artifacts.",
-                value=f"spike_ratio={off_axis_max_spike:.2f}",
-                severity_contribution=0.45,
-                source="HeuristicForensics",
-            ))
-        elif moderate_spike_count >= self.config.fft_lattice_min_peaks and off_axis_max_spike >= self.config.fft_lattice_spike_moderate:
-            s_freq = max(s_freq, 0.20)
-            evidences.append(Evidence(
-                evidence_type="mild_spectral_harmonics",
-                description=f"Periodic frequency harmonics observed in 2D spectrum ({off_axis_max_spike:.2f}x background, {moderate_spike_count} harmonic peaks).",
-                value=f"spike_ratio={off_axis_max_spike:.2f}",
-                severity_contribution=0.20,
-                source="HeuristicForensics",
-            ))
-
-        is_large_natural = max(w, h) >= 800
-        if energy_ratio < self.config.fft_high_freq_attenuation_critical:
-            if not is_large_natural:
-                s_freq = max(s_freq, 0.45)
-                evidences.append(Evidence(
-                    evidence_type="spectral_high_freq_attenuation",
-                    description=f"Severe high-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}), consistent with neural latent diffusion upsampling without optical sensor detail.",
-                    value=f"hf_ratio={energy_ratio:.4f}",
-                    severity_contribution=0.45,
-                    source="HeuristicForensics",
-                ))
-            else:
-                s_freq = max(s_freq, 0.20)
-                evidences.append(Evidence(
-                    evidence_type="spectral_high_freq_attenuation",
-                    description=f"High-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}).",
-                    value=f"hf_ratio={energy_ratio:.4f}",
-                    severity_contribution=0.20,
-                    source="HeuristicForensics",
-                ))
-        elif energy_ratio < self.config.fft_high_freq_attenuation_moderate:
-            if not is_large_natural:
-                s_freq = max(s_freq, 0.20)
-                evidences.append(Evidence(
-                    evidence_type="spectral_high_freq_attenuation",
-                    description=f"Moderate high-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}).",
-                    value=f"hf_ratio={energy_ratio:.4f}",
-                    severity_contribution=0.20,
-                    source="HeuristicForensics",
-                ))
-        elif energy_ratio > self.config.fft_high_freq_boost_threshold:
-            s_freq = max(s_freq, 0.25)
-            evidences.append(Evidence(
-                evidence_type="spectral_high_freq_boost",
-                description=f"Anomalous high-frequency energy concentration (HF ratio: {energy_ratio:.4f}), indicative of synthetic checkerboard noise or artificial post-processing.",
+                evidence_type="spectral_compact_resolution_baseline",
+                description=f"2D FFT frequency spectrum evaluated across native compact asset ({w}x{h}). High-frequency roll-off reflects physical resolution boundaries rather than latent diffusion upsampling.",
                 value=f"hf_ratio={energy_ratio:.4f}",
-                severity_contribution=0.25,
-                source="HeuristicForensics",
-            ))
-
-        if s_freq == 0.0:
-            evidences.append(Evidence(
-                evidence_type="spectral_distribution_natural",
-                description="2D FFT radial energy demonstrates smooth natural power-law drop-off without synthetic grid spikes.",
-                value=f"high_low_ratio={energy_ratio:.4f}",
                 severity_contribution=0.0,
                 source="HeuristicForensics",
             ))
-        fft_status = "CRITICAL" if s_freq >= 0.40 else ("MODERATE" if s_freq >= 0.20 else "NOMINAL")
+            fft_status = "NOMINAL"
+            s_freq = 0.0
+        else:
+            if off_axis_max_spike >= self.config.fft_lattice_spike_critical and (critical_spike_count >= 2 or p99_spike >= 2.5):
+                s_freq = max(s_freq, 0.45)
+                evidences.append(Evidence(
+                    evidence_type="spectral_periodic_lattice",
+                    description=f"2D FFT frequency spectrum reveals prominent periodic lattice spikes ({off_axis_max_spike:.2f}x background), indicative of neural transposed-convolution upsampling artifacts.",
+                    value=f"spike_ratio={off_axis_max_spike:.2f}",
+                    severity_contribution=0.45,
+                    source="HeuristicForensics",
+                ))
+            elif moderate_spike_count >= self.config.fft_lattice_min_peaks and off_axis_max_spike >= self.config.fft_lattice_spike_moderate:
+                s_freq = max(s_freq, 0.20)
+                evidences.append(Evidence(
+                    evidence_type="mild_spectral_harmonics",
+                    description=f"Periodic frequency harmonics observed in 2D spectrum ({off_axis_max_spike:.2f}x background, {moderate_spike_count} harmonic peaks).",
+                    value=f"spike_ratio={off_axis_max_spike:.2f}",
+                    severity_contribution=0.20,
+                    source="HeuristicForensics",
+                ))
+
+            is_large_natural = max(w, h) >= 800
+            if energy_ratio < self.config.fft_high_freq_attenuation_critical:
+                if not is_large_natural:
+                    s_freq = max(s_freq, 0.45)
+                    evidences.append(Evidence(
+                        evidence_type="spectral_high_freq_attenuation",
+                        description=f"Severe high-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}), consistent with neural latent diffusion upsampling without optical sensor detail.",
+                        value=f"hf_ratio={energy_ratio:.4f}",
+                        severity_contribution=0.45,
+                        source="HeuristicForensics",
+                    ))
+                else:
+                    s_freq = max(s_freq, 0.20)
+                    evidences.append(Evidence(
+                        evidence_type="spectral_high_freq_attenuation",
+                        description=f"High-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}).",
+                        value=f"hf_ratio={energy_ratio:.4f}",
+                        severity_contribution=0.20,
+                        source="HeuristicForensics",
+                    ))
+            elif energy_ratio < self.config.fft_high_freq_attenuation_moderate:
+                if not is_large_natural:
+                    s_freq = max(s_freq, 0.20)
+                    evidences.append(Evidence(
+                        evidence_type="spectral_high_freq_attenuation",
+                        description=f"Moderate high-frequency attenuation in Fourier spectrum (HF ratio: {energy_ratio:.4f}).",
+                        value=f"hf_ratio={energy_ratio:.4f}",
+                        severity_contribution=0.20,
+                        source="HeuristicForensics",
+                    ))
+            elif energy_ratio > self.config.fft_high_freq_boost_threshold:
+                s_freq = max(s_freq, 0.25)
+                evidences.append(Evidence(
+                    evidence_type="spectral_high_freq_boost",
+                    description=f"Anomalous high-frequency energy concentration (HF ratio: {energy_ratio:.4f}), indicative of synthetic checkerboard noise or artificial post-processing.",
+                    value=f"hf_ratio={energy_ratio:.4f}",
+                    severity_contribution=0.25,
+                    source="HeuristicForensics",
+                ))
+
+            if s_freq == 0.0:
+                evidences.append(Evidence(
+                    evidence_type="spectral_distribution_natural",
+                    description="2D FFT radial energy demonstrates smooth natural power-law drop-off without synthetic grid spikes.",
+                    value=f"high_low_ratio={energy_ratio:.4f}",
+                    severity_contribution=0.0,
+                    source="HeuristicForensics",
+                ))
+            fft_status = "CRITICAL" if s_freq >= 0.40 else ("MODERATE" if s_freq >= 0.20 else "NOMINAL")
         domain_anomalies.append(s_freq)
 
         # ── 3. Native-Resolution Multi-Region Noise Residual & PRNU Kurtosis ────
@@ -309,13 +324,16 @@ class ImageForensicsEngine:
         s_noise = 0.0
         noise_status = "NOMINAL"
         noise_substatus = "NOMINAL_GAUSSIAN"
+        excess_kurt = float(kurtosis - 3.0)
+        is_compact_asset = min(orig_h, orig_w) < 128
+
         if res_var < self.config.noise_variance_flattened:
             s_noise = 0.45
             noise_status = "CRITICAL"
             noise_substatus = "NOISE_FLATTENED"
             evidences.append(Evidence(
                 evidence_type="synthetic_noise_flattening",
-                description=f"Severe sensor noise residual flattening (variance: {res_var:.3f}, kurtosis: {kurtosis:.1f}), characteristic of synthetic rendering or heavy diffusion denoising.",
+                description=f"Severe sensor noise residual flattening (variance: {res_var:.3f}, kurtosis: {kurtosis:.1f}, excess: {excess_kurt:.1f}), characteristic of synthetic rendering or heavy diffusion denoising.",
                 value=f"variance={res_var:.3f}",
                 severity_contribution=0.45,
                 source="HeuristicForensics",
@@ -326,48 +344,75 @@ class ImageForensicsEngine:
             noise_substatus = "HEAVY_TAIL"
             evidences.append(Evidence(
                 evidence_type="synthetic_noise_kurtosis_anomaly",
-                description=f"Extreme non-Gaussian noise residual kurtosis ({kurtosis:.1f}, variance: {res_var:.3f}), characteristic of latent diffusion denoising artifacts deviating from physical CMOS/CCD sensor shot noise.",
+                description=f"Extreme non-Gaussian noise residual kurtosis ({kurtosis:.1f}, excess: {excess_kurt:.1f}, variance: {res_var:.3f}), characteristic of latent diffusion denoising artifacts deviating from physical CMOS/CCD sensor shot noise.",
                 value=f"kurtosis={kurtosis:.1f}",
                 severity_contribution=0.45,
                 source="HeuristicForensics",
             ))
         elif kurtosis >= self.config.noise_kurtosis_moderate:
-            s_noise = 0.25
-            noise_status = "MODERATE"
-            noise_substatus = "ELEVATED_KURTOSIS"
+            if is_compact_asset and res_var >= 1.0:
+                s_noise = 0.0
+                noise_status = "NOMINAL"
+                noise_substatus = "COMPACT_EDGE_KURTOSIS"
+                evidences.append(Evidence(
+                    evidence_type="sensor_noise_compact_profile",
+                    description=f"Sensor noise residual exhibits elevated kurtosis ({kurtosis:.1f}, excess: {excess_kurt:.1f}, variance: {res_var:.3f}) attributable to high edge density on compact ({orig_w}x{orig_h}) asset; non-Gaussian, but typical for compressed web portraits.",
+                    value=f"kurtosis={kurtosis:.1f}",
+                    severity_contribution=0.0,
+                    source="HeuristicForensics",
+                ))
+            else:
+                s_noise = 0.25
+                noise_status = "MODERATE"
+                noise_substatus = "ELEVATED_KURTOSIS"
+                evidences.append(Evidence(
+                    evidence_type="synthetic_noise_kurtosis_anomaly",
+                    description=f"Elevated noise residual kurtosis ({kurtosis:.1f}, excess: {excess_kurt:.1f}, variance: {res_var:.3f}) deviating from natural camera sensor profile.",
+                    value=f"kurtosis={kurtosis:.1f}",
+                    severity_contribution=0.25,
+                    source="HeuristicForensics",
+                ))
+        elif kurtosis >= self.config.noise_kurtosis_mild:
+            if is_compact_asset or res_var >= 5.0:
+                s_noise = 0.0
+                noise_status = "NOMINAL"
+                noise_substatus = "COMPACT_EDGE_KURTOSIS"
+                evidences.append(Evidence(
+                    evidence_type="sensor_noise_compact_profile",
+                    description=f"Sensor noise residual exhibits elevated kurtosis ({kurtosis:.1f}, excess: {excess_kurt:.1f}, variance: {res_var:.3f}) attributable to high edge density on compact ({orig_w}x{orig_h}) asset; non-Gaussian, but consistent with natural compressed portrait.",
+                    value=f"kurtosis={kurtosis:.1f}",
+                    severity_contribution=0.0,
+                    source="HeuristicForensics",
+                ))
+            else:
+                s_noise = 0.15
+                noise_status = "MODERATE"
+                noise_substatus = "MILD_ANOMALY"
+                evidences.append(Evidence(
+                    evidence_type="mild_noise_anomaly",
+                    description=f"Mild sensor noise residual anomaly observed (variance: {res_var:.3f}, kurtosis: {kurtosis:.1f}, excess: {excess_kurt:.1f}).",
+                    value=f"kurtosis={kurtosis:.1f}",
+                    severity_contribution=0.15,
+                    source="HeuristicForensics",
+                ))
+        elif 2.0 <= kurtosis <= 6.0:
+            s_noise = 0.0
+            noise_status = "NOMINAL"
+            noise_substatus = "NOMINAL_GAUSSIAN"
             evidences.append(Evidence(
-                evidence_type="synthetic_noise_kurtosis_anomaly",
-                description=f"Elevated noise residual kurtosis ({kurtosis:.1f}, variance: {res_var:.3f}) deviating from natural camera sensor profile.",
+                evidence_type="sensor_noise_nominal",
+                description=f"Sensor noise residual exhibits natural Gaussian-consistent statistics (kurtosis: {kurtosis:.1f}, excess kurtosis: {excess_kurt:.1f}, variance: {res_var:.3f}).",
                 value=f"kurtosis={kurtosis:.1f}",
-                severity_contribution=0.25,
+                severity_contribution=0.0,
                 source="HeuristicForensics",
             ))
-        elif res_var < 0.25 and kurtosis <= 20.0:
+        else:
             s_noise = 0.0
             noise_status = "NOMINAL"
             noise_substatus = "NOMINAL_SMOOTH"
             evidences.append(Evidence(
                 evidence_type="sensor_noise_nominal",
-                description=f"Sensor noise residual exhibits natural Gaussian-consistent statistics (kurtosis: {kurtosis:.1f}, variance: {res_var:.3f}) with expected camera ISP smoothing on uniform surfaces.",
-                value=f"kurtosis={kurtosis:.1f}",
-                severity_contribution=0.0,
-                source="HeuristicForensics",
-            ))
-        elif kurtosis >= self.config.noise_kurtosis_mild and res_var < 1.0:
-            s_noise = 0.15
-            noise_status = "MODERATE"
-            noise_substatus = "MILD_ANOMALY"
-            evidences.append(Evidence(
-                evidence_type="mild_noise_anomaly",
-                description=f"Mild sensor noise residual anomaly observed (variance: {res_var:.3f}, kurtosis: {kurtosis:.1f}).",
-                value=f"kurtosis={kurtosis:.1f}",
-                severity_contribution=0.15,
-                source="HeuristicForensics",
-            ))
-        else:
-            evidences.append(Evidence(
-                evidence_type="sensor_noise_nominal",
-                description=f"Sensor noise residual exhibits natural Gaussian-consistent statistics (kurtosis: {kurtosis:.1f}, variance: {res_var:.3f}).",
+                description=f"Sensor noise residual exhibits near-Gaussian statistics with mild tail divergence (kurtosis: {kurtosis:.1f}, excess kurtosis: {excess_kurt:.1f}, variance: {res_var:.3f}).",
                 value=f"kurtosis={kurtosis:.1f}",
                 severity_contribution=0.0,
                 source="HeuristicForensics",
@@ -536,9 +581,16 @@ class ImageForensicsEngine:
             "color_channel_correlation": round(float(color_corr), 4),
             "faces_detected": face_info["faces_detected"],
             "facial_forensics_applicable": face_info["facial_forensics_applicable"],
+            "face_detection_status": face_info.get("face_detection_status", "NO_FACE_DETECTED"),
+            "face_detection_confidence": face_info.get("face_detection_confidence", 0.0),
             "facial_status": face_info["status"],
             "facial_status_level": facial_status_level,
             "face_bounding_boxes": face_info.get("face_boxes", []),
+            "excess_kurtosis": round(float(kurtosis - 3.0), 1),
+            "noise_excess_kurtosis": round(float(kurtosis - 3.0), 1),
+            "original_dimensions": [w, h],
+            "fft_analysis_dimensions": [256, 256],
+            "ela_analysis_dimensions": [sample_img.size[0], sample_img.size[1]],
             "qr_detected": qr_detected,
             "engine_type": "Heuristic Multi-Signal DSP & Forensics",
             "thresholds": {
@@ -615,10 +667,12 @@ class ImageForensicsEngine:
             return {
                 "faces_detected": 0,
                 "facial_forensics_applicable": False,
-                "status": "No face detected; facial forensics not applicable",
+                "face_detection_status": "DETECTOR_UNAVAILABLE",
+                "status": "Face detector cascade unavailable; facial forensics not applicable",
                 "facial_status_level": "NOMINAL",
                 "facial_anomaly_score": 0.0,
                 "face_boxes": [],
+                "face_detection_confidence": 0.0,
             }
 
         try:
@@ -640,19 +694,27 @@ class ImageForensicsEngine:
             cur_h, cur_w = cv_gray.shape[:2]
 
             min_side = min(cur_h, cur_w)
-            min_face = max(48, min(80, int(min_side * 0.08)))
-            raw_faces = face_cascade.detectMultiScale(
-                cv_gray, scaleFactor=1.10, minNeighbors=5, minSize=(min_face, min_face)
-            )
+            if min_side < 120:
+                min_face = max(16, int(min_side * 0.15))
+                raw_faces = face_cascade.detectMultiScale(
+                    cv_gray, scaleFactor=1.05, minNeighbors=3, minSize=(min_face, min_face)
+                )
+            else:
+                min_face = max(40, min(80, int(min_side * 0.08)))
+                raw_faces = face_cascade.detectMultiScale(
+                    cv_gray, scaleFactor=1.10, minNeighbors=5, minSize=(min_face, min_face)
+                )
 
             if len(raw_faces) == 0:
                 return {
                     "faces_detected": 0,
                     "facial_forensics_applicable": False,
+                    "face_detection_status": "NO_FACE_DETECTED",
                     "status": "No face detected; facial boundary and warping forensics not applicable",
                     "facial_status_level": "NOMINAL",
                     "facial_anomaly_score": 0.0,
                     "face_boxes": [],
+                    "face_detection_confidence": 0.0,
                 }
 
             # Optional eye cascade for anthropomorphic verification
@@ -669,9 +731,9 @@ class ImageForensicsEngine:
 
             valid_faces = []
             for (fx, fy, fw, fh) in raw_faces:
-                # 1. Anthropomorphic Aspect Ratio Check: human faces are roughly [0.72, 1.35]
+                # 1. Anthropomorphic Aspect Ratio Check: human faces are roughly [0.65, 1.45]
                 aspect_ratio = float(fw) / float(fh)
-                if aspect_ratio < 0.72 or aspect_ratio > 1.35:
+                if aspect_ratio < 0.65 or aspect_ratio > 1.45:
                     continue
 
                 face_roi_gray = cv_gray[fy:fy + fh, fx:fx + fw]
@@ -682,15 +744,15 @@ class ImageForensicsEngine:
                     ycrcb = cv2.cvtColor(face_roi_bgr, cv2.COLOR_BGR2YCrCb)
                     cr, cb = ycrcb[:, :, 1], ycrcb[:, :, 2]
                     # Standard Kovac / Peer / Chai skin boundaries in YCrCb
-                    skin_mask = (cr >= 130) & (cr <= 175) & (cb >= 78) & (cb <= 135)
+                    skin_mask = (cr >= 125) & (cr <= 180) & (cb >= 75) & (cb <= 140)
                     skin_frac = float(np.mean(skin_mask))
                     # Reject if virtually no skin tone in the candidate box (e.g. text on paper, foliage, desk)
-                    if skin_frac < 0.10:
+                    if skin_frac < 0.08:
                         continue
 
                 # 3. Horizontal Bilateral Symmetry Check
                 half_w = fw // 2
-                if half_w >= 16 and fh >= 24:
+                if half_w >= 8 and fh >= 12:
                     left_half = face_roi_gray[:, :half_w].astype(np.float32)
                     right_half = np.fliplr(face_roi_gray[:, fw - half_w:]).astype(np.float32)
                     std_l, std_r = float(np.std(left_half)), float(np.std(right_half))
@@ -699,8 +761,8 @@ class ImageForensicsEngine:
                     else:
                         sym_corr = 0.0
 
-                    # If symmetry is negative or extremely low on low-contrast box, verify eye presence
-                    if sym_corr < 0.10:
+                    # If symmetry is negative or extremely low on low-contrast box, verify eye presence on standard res
+                    if sym_corr < 0.10 and min_side >= 120:
                         has_eye = False
                         if eye_cascade is not None and not eye_cascade.empty():
                             upper_roi = face_roi_gray[:int(fh * 0.60), :]
@@ -716,10 +778,12 @@ class ImageForensicsEngine:
                 return {
                     "faces_detected": 0,
                     "facial_forensics_applicable": False,
+                    "face_detection_status": "NO_FACE_DETECTED",
                     "status": "No face detected; facial boundary and warping forensics not applicable",
                     "facial_status_level": "NOMINAL",
                     "facial_anomaly_score": 0.0,
                     "face_boxes": [],
+                    "face_detection_confidence": 0.0,
                 }
 
             # Valid faces present: Proceed with forensic inspection
@@ -730,7 +794,21 @@ class ImageForensicsEngine:
                     "xmin": round(float(fx) / cur_w, 3),
                     "ymax": round(float(fy + fh) / cur_h, 3),
                     "xmax": round(float(fx + fw) / cur_w, 3),
+                    "box_pixels": [int(fx), int(fy), int(fw), int(fh)],
                 })
+
+            min_valid_face_dim = min(min(fw, fh) for (_, _, fw, fh) in valid_faces)
+            if min_valid_face_dim < 44:
+                return {
+                    "faces_detected": face_count,
+                    "facial_forensics_applicable": False,
+                    "face_detection_status": "FACE_DETECTED",
+                    "status": f"{face_count} face(s) detected; biometric warping forensics not applicable (compact face resolution: {min_valid_face_dim}px < 44px baseline)",
+                    "facial_status_level": "NOMINAL",
+                    "facial_anomaly_score": 0.0,
+                    "face_boxes": face_boxes,
+                    "face_detection_confidence": 0.88,
+                }
 
             bg_lap_var = float(cv2.Laplacian(cv_gray, cv2.CV_32F).var()) + 1e-5
             facial_smoothing = False
@@ -801,6 +879,8 @@ class ImageForensicsEngine:
             return {
                 "faces_detected": face_count,
                 "facial_forensics_applicable": True,
+                "face_detection_status": "FACE_DETECTED",
+                "face_detection_confidence": 0.95,
                 "status": status_desc,
                 "facial_status_level": facial_status_level,
                 "facial_anomaly_score": round(float(anomaly_score), 3),
@@ -818,6 +898,8 @@ class ImageForensicsEngine:
             return {
                 "faces_detected": 0,
                 "facial_forensics_applicable": False,
+                "face_detection_status": "DETECTION_ERROR",
+                "face_detection_confidence": 0.0,
                 "status": f"No face detected (inspection neutral: {cv_err})",
                 "facial_status_level": "NOMINAL",
                 "facial_anomaly_score": 0.0,

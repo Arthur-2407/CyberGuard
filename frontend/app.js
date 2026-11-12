@@ -82,13 +82,19 @@ function getResolvedApiBase() {
 
       const params = new URLSearchParams(window.location.search);
 
-      const qpBase = params.get('api_base') || params.get('backend_url');
+      const qpBase = params.get('api_base') || params.get('backend_url') || params.get('tunnel');
 
       if (qpBase && qpBase.trim()) {
 
         const cleaned = qpBase.trim().replace(/\/+$/, '');
 
         localStorage.setItem('cyberguard_api_base', cleaned);
+
+        if (cleaned.includes('.trycloudflare.com') || cleaned.includes('cloudflare') || cleaned.includes('.ngrok') || cleaned.includes('.loca.lt')) {
+          localStorage.setItem('cyberguard_custom_tunnel', cleaned);
+          localStorage.setItem('cyberguard_hybrid_active_base', cleaned);
+          localStorage.setItem('cyberguard_connection_mode', 'hybrid');
+        }
 
         return cleaned;
 
@@ -110,7 +116,7 @@ function getResolvedApiBase() {
         return `http://127.0.0.1:${port}`;
       } else if (mode === 'hybrid') {
 
-        const hybridBase = localStorage.getItem('cyberguard_hybrid_active_base');
+        const hybridBase = localStorage.getItem('cyberguard_hybrid_active_base') || localStorage.getItem('cyberguard_custom_tunnel');
 
         if (hybridBase) return hybridBase;
 
@@ -120,10 +126,7 @@ function getResolvedApiBase() {
 
       } else if (mode === 'deployed') {
 
-        const custom = localStorage.getItem('cyberguard_custom_tunnel');
-
-        if (custom && custom.trim()) return custom.trim().replace(/\/+$/, '');
-
+        // Mode A (Deployed Cloud): Always route to deployed cloud backend, never to local tunnel
         if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) return '';
 
         return 'https://cyberguard-backend-8rbz.onrender.com';
@@ -214,6 +217,13 @@ function _resolveWsUrl() {
 
   if (isHttps && IS_EXTERNAL_ORIGIN) {
 
+    if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) {
+      const fallbackCloud = (typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.cloud_backend_url)
+        ? window.__CYBERGUARD_CONFIG__.cloud_backend_url.replace(/^http/, 'ws')
+        : 'wss://cyberguard-backend-8rbz.onrender.com';
+      return `${fallbackCloud}/ws/stream`;
+    }
+
     return `wss://${location.host}/ws/stream`;
 
   }
@@ -240,11 +250,25 @@ function setCyberGuardApiBase(url) {
 
     API_BASE = cleaned;
 
+    window.API_BASE = cleaned;
+
+    if (cleaned.includes('.trycloudflare.com') || cleaned.includes('cloudflare') || cleaned.includes('.ngrok') || cleaned.includes('.loca.lt')) {
+      localStorage.setItem('cyberguard_custom_tunnel', cleaned);
+      localStorage.setItem('cyberguard_hybrid_active_base', cleaned);
+      localStorage.setItem('cyberguard_connection_mode', 'hybrid');
+      if (window.CyberGuardConnection) {
+        window.CyberGuardConnection.mode = 'hybrid';
+        window.CyberGuardConnection.hybridActiveBase = cleaned;
+      }
+    }
+
   } else {
 
     localStorage.removeItem('cyberguard_api_base');
 
     API_BASE = getResolvedApiBase();
+
+    window.API_BASE = API_BASE;
 
   }
 
@@ -460,17 +484,8 @@ const CyberGuardConnection = {
 
       } else {
 
-        const custom = localStorage.getItem('cyberguard_custom_tunnel') || '';
-
-        if (custom) {
-
-          localStorage.setItem('cyberguard_api_base', custom);
-
-        } else {
-
-          localStorage.removeItem('cyberguard_api_base');
-
-        }
+        // Mode A (Deployed Cloud): Clear manual endpoint override so it connects to deployed cloud
+        localStorage.removeItem('cyberguard_api_base');
 
       }
 
@@ -800,8 +815,47 @@ const CyberGuardConnection = {
 
 
 
-      // Local Docker was offline or permission-gated -> probe Cloud Backend
+      // Stage 2 in Mode C (Hybrid): Probe Cloudflare Tunnel if configured or active
+      const customTunnel = (localStorage.getItem('cyberguard_custom_tunnel') || '').trim().replace(/\/+$/, '');
+      if (customTunnel && customTunnel.startsWith('http')) {
+        try {
+          const t0 = performance.now();
+          const tunnelResp = await _nativeFetch(`${customTunnel}/api/health`, {
+            method: 'GET',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/json' }
+          });
+          if (tunnelResp && tunnelResp.ok) {
+            const raw = await tunnelResp.text().catch(() => '');
+            let tunnelData = null;
+            try { tunnelData = JSON.parse(raw); } catch (_) { tunnelData = null; }
+            if (tunnelData && (tunnelData.status === 'ok' || tunnelData.status === 'operational')) {
+              clearTimeout(timeoutId);
+              const tLatency = Math.round(performance.now() - t0);
+              this.hybridActiveBase = customTunnel;
+              localStorage.setItem('cyberguard_hybrid_active_base', customTunnel);
+              API_BASE = customTunnel;
+              window.API_BASE = customTunnel;
+              try {
+                WS_URL = _resolveWsUrl();
+                window.WS_URL = WS_URL;
+              } catch (_) {}
+              this.lastLatency = tLatency;
+              this.status = (tunnelData.detector_ready === false) ? 'DEGRADED' : 'CONNECTED';
+              this.lastError = null;
+              this.retryDelay = this.minRetryDelay;
+              updateSystemStatus('online');
+              this.updateUI();
+              this.scheduleCheck(15000);
+              this.isChecking = false;
+              this.activeAbortController = null;
+              return;
+            }
+          }
+        } catch (_) {}
+      }
 
+      // Stage 3 in Mode C (Hybrid): Local Docker and Tunnel unavailable -> probe Cloud Backend
       const cloudBase = (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) ? '' : 'https://cyberguard-backend-8rbz.onrender.com';
 
       try {
@@ -1671,41 +1725,23 @@ async function cyberGuardFetch(resource, init = {}) {
 
 
   const isLoopback = isLoopbackUrl(url);
-
-  const isSecure = typeof location !== 'undefined' && (location.protocol === 'https:' || (typeof window !== 'undefined' && window.isSecureContext));
-
-
+  const isPublicWebSecure = typeof location !== 'undefined' && location.protocol === 'https:' && location.hostname && !location.hostname.includes('localhost') && !location.hostname.includes('127.0.0.1');
 
   const options = { ...init };
-
   options.headers = { ...(init.headers || {}) };
 
-
-
   // Attach auth header if available and not already specified
-
   if (typeof getAuthToken === 'function' && !options.headers['Authorization']) {
-
     try {
-
       const token = getAuthToken();
-
       if (token) options.headers['Authorization'] = `Bearer ${token}`;
-
     } catch (_) {}
-
   }
 
-
-
   // W3C / Chrome Private Network Access (PNA): targetAddressSpace: 'loopback'
-
-  // Applies only to verified loopback destinations from secure (HTTPS) origins
-
-  if (isLoopback && isSecure) {
-
+  // Applies only to verified loopback destinations from public secure (HTTPS) origins (e.g. Vercel, GitHub Pages)
+  if (isLoopback && isPublicWebSecure) {
     options.targetAddressSpace = 'loopback';
-
   }
 
 
@@ -1772,7 +1808,7 @@ async function cyberGuardFetch(resource, init = {}) {
 
     }
 
-    if (isLoopback && isSecure && (msg.includes('failed to fetch') || msg.includes('networkerror'))) {
+    if (isLoopback && isPublicWebSecure && (msg.includes('failed to fetch') || msg.includes('networkerror'))) {
 
       const pnaErr = new Error(
 
@@ -1791,17 +1827,14 @@ async function cyberGuardFetch(resource, init = {}) {
     }
 
     if (msg.includes('failed to fetch') || msg.includes('networkerror') || msg.includes('refused')) {
-
+      const isLocalUrl = typeof url === 'string' && (url.includes('127.0.0.1') || url.includes('localhost') || url.includes(':3000'));
       const netErr = new Error(
-
-        `Unable to reach CyberGuard backend at ${url}. Ensure Docker container is running (docker compose up -d).`
-
+        isLocalUrl
+          ? `Unable to reach local CyberGuard backend at ${url}. Ensure Docker container is running (docker compose up -d).`
+          : `Unable to reach CyberGuard cloud backend at ${url}. Please verify your network connection, remote server availability, or backend URL in settings.`
       );
-
       netErr.isNetworkError = true;
-
       throw netErr;
-
     }
 
     throw err;
@@ -3936,6 +3969,26 @@ function showTab(name) {
 
     updatePipelineStepper(selectedAnalyzeFile ? 1 : 0);
 
+    const voiceResults = document.getElementById('results-body');
+
+    if (voiceResults && (!voiceResults.innerHTML || voiceResults.innerHTML.trim() === '' || !currentAnalysisData)) {
+
+      if (!currentAnalysisData) {
+
+        restoreVoiceForensicPlaceholder();
+
+      } else {
+
+        initVoiceInteractiveLogo();
+
+      }
+
+    } else {
+
+      initVoiceInteractiveLogo();
+
+    }
+
   }
 
   if (name === 'overview') updateOverview();
@@ -4927,6 +4980,66 @@ async function analyzeFile() {
 }
 
 
+
+// ── Voice Forensic Assessment Animated Logo & Empty State Suite ─────────────
+
+function initVoiceInteractiveLogo() {
+  const container = document.getElementById('voice-interactive-logo');
+  if (!container) return;
+
+  if (container._hasVoiceInteractiveInit) return;
+  container._hasVoiceInteractiveInit = true;
+
+  const circle = document.getElementById('acoustic-sonar-circle');
+
+  // Gentle acoustic sonar ping feedback on circle click
+  if (circle) {
+    circle.style.cursor = 'pointer';
+    circle.addEventListener('click', function(e) {
+      e.stopPropagation();
+      circle.classList.remove('acoustic-ping-active');
+      void circle.offsetWidth;
+      circle.classList.add('acoustic-ping-active');
+      setTimeout(() => circle.classList.remove('acoustic-ping-active'), 700);
+
+      if (window.cyberAudio && typeof window.cyberAudio.playTabHoverBlip === 'function') {
+        window.cyberAudio.playTabHoverBlip();
+      }
+    });
+  }
+}
+
+function restoreVoiceForensicPlaceholder() {
+  const voiceResults = document.getElementById('results-body');
+  if (!voiceResults) return;
+
+  voiceResults.innerHTML = `
+    <div class="acoustic-radar-holo" id="voice-interactive-logo">
+      <div class="acoustic-sonar-circle" id="acoustic-sonar-circle" title="Acoustic Sonar Sensor">
+        <div class="acoustic-sonar-wave"></div>
+        <div class="acoustic-sonar-wave"></div>
+        <svg class="acoustic-logo-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.6" style="filter:drop-shadow(0 0 8px rgba(0,212,255,0.5));">
+          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="22"/>
+          <line x1="8" y1="22" x2="16" y2="22"/>
+        </svg>
+      </div>
+      <div class="acoustic-logo-title" id="acoustic-sensor-title">
+        <span class="soc-pulse-dot" style="background:#00d4ff; box-shadow:0 0 6px #00d4ff;"></span>
+        ACOUSTIC SENSORS ONLINE
+      </div>
+      <div class="acoustic-logo-sub" id="acoustic-sensor-sub">
+        Drop an audio or video file to start forensic evaluation.
+      </div>
+    </div>
+  `;
+
+  initVoiceInteractiveLogo();
+}
+
+window.restoreVoiceForensicPlaceholder = restoreVoiceForensicPlaceholder;
+window.initVoiceInteractiveLogo = initVoiceInteractiveLogo;
 
 function renderAnalysisResults(data) {
 
@@ -8118,11 +8231,11 @@ async function scanThreat() {
 
     const currentBase = getResolvedApiBase();
 
-    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    const isStaticHost = typeof location !== 'undefined' && location.hostname.includes('github.io');
 
     if (!currentBase && isStaticHost) {
 
-      throw new Error('No backend API connected. To perform scans, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+      throw new Error('No backend API connected. To perform scans, configure a secure backend URL in Backend Settings or enable Mode B (Local Docker: http://127.0.0.1:3000).');
 
     }
 
@@ -8245,91 +8358,113 @@ async function searchIOC() {
 
 
 
+  const clientAnalysisId = 'ti_' + Date.now().toString(36) + '_' + Math.random().toString(36).substring(2, 7);
   const controller = new AbortController();
-
   const searchTimeout = setTimeout(() => {
-
     controller.abort(new Error('Search timed out waiting for intelligence providers.'));
-
   }, 60000);
 
-
-
   try {
-
     const isLocal = window.CyberGuardConnection && window.CyberGuardConnection.mode === 'local';
-
     const currentBase = isLocal ? (getResolvedApiBase() || `http://127.0.0.1:${window.CyberGuardConnection.port || '3000'}`) : getResolvedApiBase();
-
-    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    const isStaticHost = typeof location !== 'undefined' && location.hostname.includes('github.io');
 
     if (!isLocal && !currentBase && isStaticHost) {
-
-      throw new Error('No backend API connected. To perform Threat Intelligence queries, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
-
+      throw new Error('No backend API connected. To perform Threat Intelligence queries, configure a secure backend URL in Backend Settings or enable Mode B (Local Docker: http://127.0.0.1:3000).');
     }
 
+    const searchPath = `/api/threats/search?ioc=${encodeURIComponent(ioc)}&analysis_id=${encodeURIComponent(clientAnalysisId)}`;
     const targetUrl = (window.CyberGuardConnection && typeof window.CyberGuardConnection.resolveUrl === 'function')
+      ? window.CyberGuardConnection.resolveUrl(searchPath)
+      : `${currentBase || API_BASE}${searchPath}`;
 
-      ? window.CyberGuardConnection.resolveUrl(`/api/threats/search?ioc=${encodeURIComponent(ioc)}`)
+    let data = null;
+    let fetchError = null;
 
-      : `${currentBase || API_BASE}/api/threats/search?ioc=${encodeURIComponent(ioc)}`;
+    try {
+      const res = await fetch(targetUrl, {
+        headers: { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' },
+        signal: controller.signal
+      });
+      clearTimeout(searchTimeout);
 
-    const res = await fetch(targetUrl, {
+      if (!res.ok && (res.status === 503 || res.status === 401 || res.status === 429)) {
+        autoLinkThreatIntelPipeline(true);
+      }
 
-      headers: { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' },
-
-      signal: controller.signal
-
-    });
-
-    clearTimeout(searchTimeout);
-
-    if (!res.ok && (res.status === 503 || res.status === 401 || res.status === 429)) {
-
-      autoLinkThreatIntelPipeline(true);
-
+      if (res.ok) {
+        data = await parseResponseSafely(res, 'Threat Intelligence Search', { requireJson: true });
+      } else {
+        fetchError = new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+    } catch (reqErr) {
+      clearTimeout(searchTimeout);
+      fetchError = reqErr;
     }
 
-    const data = await parseResponseSafely(res, 'Threat Intelligence Search', { requireJson: true });
+    // ── Resilient Recovery: If initial request timed out or returned gateway error (504/502),
+    // query backend /search/status endpoint to check if core providers completed asynchronously.
+    if (!data && fetchError) {
+      try {
+        const statusEndpoints = [
+          `/api/threats/search/status/${encodeURIComponent(clientAnalysisId)}`,
+          `/api/threats/search/status/${encodeURIComponent(ioc)}`
+        ];
+        for (const sPath of statusEndpoints) {
+          const statusUrl = (window.CyberGuardConnection && typeof window.CyberGuardConnection.resolveUrl === 'function')
+            ? window.CyberGuardConnection.resolveUrl(sPath)
+            : `${currentBase || API_BASE}${sPath}`;
+
+          const statusRes = await fetch(statusUrl, {
+            headers: { ...getAuthHeaders(false), 'X-Threat-Scope': 'phishing_and_url' }
+          });
+          if (statusRes.ok) {
+            data = await parseResponseSafely(statusRes, 'Threat Intelligence Recovery', { requireJson: true });
+            if (data && data.threat_intelligence) {
+              console.info('[CyberGuard] Core threat intelligence successfully recovered via status endpoint:', clientAnalysisId);
+              break;
+            }
+          }
+        }
+      } catch (recoveryErr) {
+        console.debug('Threat search recovery probe notice:', recoveryErr);
+      }
+    }
+
+    if (!data) {
+      throw fetchError || new Error('Search failed to retrieve provider intelligence.');
+    }
 
     window._lastScannedThreat = data;
-  window._lastForensicData = data;
+    window._lastForensicData = data;
 
     const llmBtn = document.getElementById('btn-threat-llm-analyze');
-
     if (llmBtn) llmBtn.style.display = 'inline-flex';
 
     renderThreatIntelligenceReport(data);
 
-    showToast('Intelligence search complete', 'success');
+    const liveIntel = (data.threat_intelligence && data.threat_intelligence.live_intelligence) || {};
+    if (liveIntel.status === 'TIMEOUT_FALLBACK' || liveIntel.status === 'TIMEOUT_BOUNDED') {
+      showToast('Core threat intelligence completed (OSINT enrichment timed out)', 'info');
+    } else {
+      showToast('Intelligence search complete', 'success');
+    }
 
     refreshEnclaveMetrics(false);
-
     updateOverview();
-
     loadOverviewLiveFeed();
 
   } catch (e) {
-
     clearTimeout(searchTimeout);
-
     const isAborted = e.name === 'AbortError' || (e.message && e.message.toLowerCase().includes('abort'));
-
     const errorMsg = isAborted
-
       ? 'Search timed out waiting for threat intelligence providers. Please retry.'
-
       : (e.message || 'Search failed');
 
     showToast(errorMsg, 'error');
-
     if (container) {
-
       container.innerHTML = `<div class="results-empty"><p style="color:#ef4444;">Search failed: ${escapeHtml(errorMsg)}</p></div>`;
-
     }
-
   } finally {
 
     if (searchBtn) {
@@ -8410,11 +8545,11 @@ async function scanQR() {
 
     const currentBase = isLocal ? (getResolvedApiBase() || `http://127.0.0.1:${window.CyberGuardConnection.port || '3000'}`) : getResolvedApiBase();
 
-    const isStaticHost = typeof location !== 'undefined' && (location.hostname.includes('github.io') || location.hostname.includes('vercel.app'));
+    const isStaticHost = typeof location !== 'undefined' && location.hostname.includes('github.io');
 
     if (!isLocal && !currentBase && isStaticHost) {
 
-      throw new Error('No backend API connected. To perform QR forensic scans, enable Mode B (Local Docker) in System Health to connect to http://127.0.0.1:3000, or configure a secure tunnel URL in Backend Settings.');
+      throw new Error('No backend API connected. To perform QR forensic scans, configure a secure backend URL in Backend Settings or enable Mode B (Local Docker: http://127.0.0.1:3000).');
 
     }
 
@@ -9791,9 +9926,9 @@ function buildLiveIntelligenceSection(liveIntel, urlSha256, qwenBriefing) {
 
           <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;">Credential Harvesting</div>
 
-          <div style="font-size:12px;font-weight:700;margin-top:2px;color:${hasCreds ? '#ef4444' : '#10b981'};">
+          <div style="font-size:12px;font-weight:700;margin-top:2px;color:${!page.is_live ? '#94a3b8' : (hasCreds ? '#ef4444' : '#10b981')};">
 
-            ${hasCreds ? 'HARVESTING FORMS' : 'CLEAN / NO FORMS'}
+            ${!page.is_live ? 'UNVERIFIED / OFFLINE' : (hasCreds ? 'HARVESTING FORMS' : 'CLEAN / NO FORMS')}
 
           </div>
 
@@ -9987,6 +10122,45 @@ function buildCrossProviderVerification(correlation, providers, uhData, perf) {
 
 
 
+// ── Hosting & Ephemeral Tunnel Infrastructure Renderer ───────────────────────
+
+function buildHostingIntelligenceSection(hosting) {
+  if (!hosting || (!hosting.hosting_type && !hosting.is_ephemeral_tunnel)) return '';
+  const isTunnel = Boolean(hosting.is_ephemeral_tunnel);
+  return `
+    <div class="vt-section" style="border-left:4px solid ${isTunnel ? '#f59e0b' : '#38bdf8'};">
+      <div class="vt-section-title">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span>Hosting Context & Ephemeral Infrastructure Intelligence</span>
+          ${isTunnel ? '<span class="badge" style="background:rgba(245,158,11,0.18);color:#f59e0b;border:1px solid rgba(245,158,11,0.4);">EPHEMERAL TUNNEL</span>' : ''}
+        </div>
+        <span style="font-size:11px;color:#94a3b8;text-transform:none;font-weight:400;">Infrastructure Classification</span>
+      </div>
+      <div class="vt-tech-grid">
+        <div class="vt-tech-item">
+          <div class="vt-tech-k">Hosting Type</div>
+          <div class="vt-tech-v"><span class="badge" style="background:rgba(255,255,255,0.06);color:#f1f5f9;">${escapeHtml(hosting.hosting_type || 'STANDARD')}</span></div>
+        </div>
+        <div class="vt-tech-item">
+          <div class="vt-tech-k">Hosting Provider</div>
+          <div class="vt-tech-v" style="font-weight:600;color:${isTunnel ? '#f59e0b' : '#f1f5f9'};">${escapeHtml(hosting.provider_name || 'Standard Hosting')}</div>
+        </div>
+        <div class="vt-tech-item">
+          <div class="vt-tech-k">Infrastructure Status</div>
+          <div class="vt-tech-v">${escapeHtml(hosting.infrastructure_status || 'PERSISTENT_INFRASTRUCTURE')}</div>
+        </div>
+        <div class="vt-tech-item">
+          <div class="vt-tech-k">Subdomain Entropy / Slug</div>
+          <div class="vt-tech-v">
+            ${hosting.subdomain_entropy ? escapeHtml(String(hosting.subdomain_entropy)) + ' bits' : 'N/A'}
+            ${hosting.has_random_slug ? '<span class="badge" style="background:rgba(239,68,68,0.15);color:#f87171;border:1px solid rgba(239,68,68,0.3);margin-left:6px;">RANDOM SLUG</span>' : ''}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // ── Structured Threat Intelligence Report Renderer ───────────────────────────
 
 function renderThreatIntelligenceReport(event) {
@@ -10011,6 +10185,9 @@ function renderThreatIntelligenceReport(event) {
 
   const isPending = status === 'PENDING' || event.classification === 'PENDING_EXTERNAL_VERIFICATION' || Boolean(ti.is_pending);
 
+  const verdictDisplay = ti.verdict_display || (ti.url_verdict && ti.url_verdict.verdict_display) || null;
+  const isUnverified = Boolean(ti.is_unverified) || verdictDisplay === 'UNKNOWN / UNVERIFIED' || event.classification === 'UNKNOWN_UNVERIFIED';
+
   let severity = (event.severity || 'SAFE').toUpperCase();
 
   if (isPending) {
@@ -10019,7 +10196,13 @@ function renderThreatIntelligenceReport(event) {
 
   }
 
-  const badgeClass = isPending ? 'badge-warning' : (severity === 'SAFE' ? 'badge-safe' : (severity === 'LOW' ? 'badge-low' : (severity === 'MEDIUM' ? 'badge-medium' : 'badge-critical')));
+  const badgeClass = isPending ? 'badge-warning' : (
+    (verdictDisplay === 'PHISHING DETECTED' || verdictDisplay === 'MALWARE DETECTED' || verdictDisplay === 'PHISHING + MALWARE' || severity === 'CRITICAL' || severity === 'HIGH') ? 'badge-critical' : (
+      (verdictDisplay === 'SUSPICIOUS' || severity === 'MEDIUM') ? 'badge-medium' : (
+        isUnverified ? 'badge-warning' : (severity === 'LOW' ? 'badge-low' : 'badge-safe')
+      )
+    )
+  );
 
 
 
@@ -11101,7 +11284,27 @@ function renderThreatIntelligenceReport(event) {
 
           <span class="badge" style="background:rgba(255,255,255,0.06);color:#94a3b8;border:1px solid rgba(255,255,255,0.1);">${escapeHtml(category)}</span>
 
-          <span class="badge ${badgeClass}" style="${isPending ? 'background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;' : ''}">${escapeHtml(severity)}</span>
+          <span class="badge ${badgeClass}" style="${isPending ? 'background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;' : (isUnverified ? 'background:rgba(245,158,11,0.18);color:#f59e0b;border:1px solid rgba(245,158,11,0.4);' : '')}">${escapeHtml(verdictDisplay || severity)}</span>
+
+          ${(ti.scan_coverage_pct !== undefined && ti.scan_coverage_pct !== null) ? `
+
+            <span class="badge" style="background:rgba(56,189,248,0.14);color:#38bdf8;border:1px solid rgba(56,189,248,0.35);" title="Security inspection layers completed">
+
+              ${escapeHtml(String(Math.round(ti.scan_coverage_pct)))}% COVERAGE
+
+            </span>
+
+          ` : ''}
+
+          ${(ti.hosting_intelligence && ti.hosting_intelligence.is_ephemeral_tunnel) ? `
+
+            <span class="badge" style="background:rgba(249,115,22,0.18);color:#fb923c;border:1px solid rgba(249,115,22,0.4);" title="${escapeHtml(ti.hosting_intelligence.provider_name || 'Ephemeral Tunnel')}">
+
+              EPHEMERAL TUNNEL
+
+            </span>
+
+          ` : ''}
 
           ${(ti.cached || ti.tokens_saved) ? `
 
@@ -11160,6 +11363,8 @@ function renderThreatIntelligenceReport(event) {
       ${buildUrlhausSection(uhData, providers.related_intelligence)}
 
       ${buildLiveIntelligenceSection(ti.live_intelligence, ti.url_sha256, ti.qwen_briefing)}
+
+      ${buildHostingIntelligenceSection(ti.hosting_intelligence)}
 
       ${resolutionHtml}
 
@@ -14297,7 +14502,17 @@ async function saveCustomBackendUrl() {
 
   if (!inputEl) return;
 
-  const url = inputEl.value.trim();
+  const url = inputEl.value.trim().replace(/\/+$/, '');
+
+  if (url && (url.includes('.trycloudflare.com') || url.includes('cloudflare') || url.includes('.ngrok') || url.includes('.loca.lt'))) {
+    localStorage.setItem('cyberguard_custom_tunnel', url);
+    localStorage.setItem('cyberguard_hybrid_active_base', url);
+    localStorage.setItem('cyberguard_connection_mode', 'hybrid');
+    if (window.CyberGuardConnection) {
+      window.CyberGuardConnection.mode = 'hybrid';
+      window.CyberGuardConnection.hybridActiveBase = url;
+    }
+  }
 
   setCyberGuardApiBase(url);
 
@@ -14332,6 +14547,10 @@ function setPresetBackend(url) {
 
 
 function clearCustomBackend() {
+
+  localStorage.removeItem('cyberguard_custom_tunnel');
+
+  localStorage.removeItem('cyberguard_hybrid_active_base');
 
   setCyberGuardApiBase('');
 
@@ -16027,6 +16246,8 @@ async function loadOverviewLiveFeed(showToastMsg = false) {
 
     rawOverviewEvents = evts;
 
+    if (typeof window.renderSovereignAnalytics === 'function') window.renderSovereignAnalytics(evts);
+
     renderOverviewLiveFeed(evts);
 
     renderOverviewActivityChart(evts, currentActivityRange);
@@ -17459,6 +17680,8 @@ async function updateOverview(forceRefresh = false) {
 
       rawOverviewEvents = events;
 
+      if (typeof window.renderSovereignAnalytics === 'function') window.renderSovereignAnalytics(events);
+
     }
 
 
@@ -18115,13 +18338,9 @@ function fillAuthPreset(role) {
 
   if (role === 'admin') {
 
-    if (uInput) uInput.value = 'admin';
-
     if (pInput) pInput.value = '';
 
   } else if (role === 'analyst') {
-
-    if (uInput) uInput.value = 'analyst';
 
     if (pInput) pInput.value = '';
 
@@ -18448,8 +18667,6 @@ function openAuthModal(forcedTab = null) {
     switchAuthTab(forcedTab === 'register' ? 'register' : 'login');
 
     const uInput = document.getElementById('auth-input-username');
-
-    if (uInput && !uInput.value) uInput.value = 'admin';
 
     if (pInput && pInput.value) {
 
@@ -19117,11 +19334,15 @@ function resetAccountScopedState() {
 
 
 
-  const voiceResults = document.getElementById('results-body');
+  const exportBtn = document.getElementById('va-btn-export');
 
-  if (voiceResults) {
+  if (exportBtn) exportBtn.classList.add('hidden');
 
-    voiceResults.innerHTML = '';
+
+
+  if (typeof restoreVoiceForensicPlaceholder === 'function') {
+
+    restoreVoiceForensicPlaceholder();
 
   }
 
@@ -27677,6 +27898,9 @@ function previewForensicMedia(event) {
 
 
 
+  window._lastScannedThreat = null;
+  window._lastForensicData = null;
+
   if (isVideo) {
 
     if (img) img.style.display = 'none';
@@ -28043,7 +28267,7 @@ function renderImageForensicsReport(data) {
 
   const edgeVar = typeof metrics.edge_variance === 'number' ? metrics.edge_variance.toFixed(1) : 'N/A';
 
-  const facialStatus = metrics.facial_status || (metrics.facial_forensics_applicable ? `${metrics.faces_detected || 1} face(s) inspected` : 'No face detected; facial boundary forensics not applicable');
+  const facialStatus = metrics.facial_status || (metrics.facial_forensics_applicable ? `${metrics.faces_detected || 1} face(s) inspected` : (metrics.faces_detected > 0 ? `${metrics.faces_detected} face(s) detected (compact resolution; warping N/A)` : 'No face detected; facial boundary forensics not applicable'));
 
   const manipulationProb = typeof metrics.manipulation_probability === 'number' ? Math.round(metrics.manipulation_probability * 100) : score;
 
@@ -28070,7 +28294,11 @@ function renderImageForensicsReport(data) {
   } else if (groundingStatus === 'BENIGN_UNVERIFIED_ORIGIN') {
     groundingBadge = `<span class="badge" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); font-size:11px;">Benign — Unverified Origin</span>`;
   } else if (classification === 'INCONCLUSIVE' || groundingStatus === 'INCONCLUSIVE_INSUFFICIENT_EVIDENCE' || severity === 'LOW' || (severity === 'MEDIUM' && classification !== 'LIKELY_MANIPULATED')) {
-    groundingBadge = `<span class="badge" style="background:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3); font-size:11px;">Inconclusive — Elevated Risk</span>`;
+    if (severity === 'LOW' || score < 50) {
+      groundingBadge = `<span class="badge" style="background:rgba(56,189,248,0.15); color:#38bdf8; border:1px solid rgba(56,189,248,0.3); font-size:11px;">Inconclusive — Low Risk</span>`;
+    } else {
+      groundingBadge = `<span class="badge" style="background:rgba(245,158,11,0.15); color:#f59e0b; border:1px solid rgba(245,158,11,0.3); font-size:11px;">Inconclusive — Elevated Risk</span>`;
+    }
   } else {
     groundingBadge = `<span class="badge badge-critical" style="font-size:11px;">Synthetic or Manipulated Media</span>`;
   }
@@ -28209,10 +28437,17 @@ function renderImageForensicsReport(data) {
       </div>
     `;
   } else if (classification === 'INCONCLUSIVE' || groundingStatus === 'INCONCLUSIVE_INSUFFICIENT_EVIDENCE' || severity === 'LOW' || (severity === 'MEDIUM' && classification !== 'LIKELY_MANIPULATED')) {
+    const isLowRiskIncon = severity === 'LOW' || score < 50;
+    const bannerColor = isLowRiskIncon ? '#38bdf8' : '#f59e0b';
+    const bannerBg = isLowRiskIncon ? 'rgba(56,189,248,0.12)' : 'rgba(245,158,11,0.12)';
+    const bannerBorder = isLowRiskIncon ? 'rgba(56,189,248,0.3)' : 'rgba(245,158,11,0.3)';
+    const bannerText = isLowRiskIncon
+      ? 'FORENSIC INSPECTION INCONCLUSIVE — LOW ANOMALY PROFILE (UNVERIFIED CONTAINER ORIGIN)'
+      : 'FORENSIC INSPECTION INCONCLUSIVE — MULTIPLE HEURISTIC ANOMALIES OBSERVED (ELEVATED RISK)';
     statusBannerHtml = `
-      <div class="img-status-banner banner-warning" style="background:rgba(245,158,11,0.12); border-color:rgba(245,158,11,0.3); color:#f59e0b;">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-        <span>FORENSIC INSPECTION INCONCLUSIVE — MULTIPLE HEURISTIC ANOMALIES OBSERVED (ELEVATED RISK)</span>
+      <div class="img-status-banner banner-warning" style="background:${bannerBg}; border-color:${bannerBorder}; color:${bannerColor};">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        <span>${bannerText}</span>
       </div>
     `;
   } else {
@@ -28356,7 +28591,7 @@ function renderImageForensicsReport(data) {
 
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
 
-        <span style="font-size:11.5px; font-weight:700; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px;">Calibrated 8-Point Forensic Matrix</span>
+        <span style="font-size:11.5px; font-weight:700; color:#38bdf8; text-transform:uppercase; letter-spacing:0.5px;">8-Point Forensic Multi-Signal Matrix</span>
 
         <span style="font-size:10px; color:#94a3b8; font-family:var(--font-mono);">Calibration: ${escapeHtml(matrix.confidence_calibration || 'Heuristic Multi-Signal Fusion (Uncalibrated)')}</span>
 
@@ -28659,20 +28894,27 @@ function renderImageForensicsReport(data) {
         reconciliationText = `Multi-modal video analysis evaluated ${framesSampled} keyframes. ${dynText} verified with ${tempCons}% temporal stability. ${soundText}; ${faceText}. Primary classification: Inconclusive (${score}/100).`;
       }
     } else {
-      primaryVerdictTitle = 'INCONCLUSIVE — ELEVATED RISK';
-      primaryBadgeClass = 'badge-medium';
-      primaryColor = '#f59e0b';
+      const isLowRiskIncon = severity === 'LOW' || score < 50;
+      if (isLowRiskIncon) {
+        primaryVerdictTitle = 'INCONCLUSIVE — LOW ANOMALY PROFILE';
+        primaryBadgeClass = 'badge-low';
+        primaryColor = '#38bdf8';
+      } else {
+        primaryVerdictTitle = 'INCONCLUSIVE — ELEVATED RISK';
+        primaryBadgeClass = 'badge-medium';
+        primaryColor = '#f59e0b';
+      }
       const anomalousSignals = [];
       if (metrics.fft_status && metrics.fft_status !== 'NOMINAL') anomalousSignals.push(`spatial frequency lattice (${fftSpike} FFT background)`);
       if (metrics.noise_status && metrics.noise_status !== 'NOMINAL') anomalousSignals.push(`noise residual variance (Kurtosis ${noiseKurt})`);
       if (metrics.facial_status_level && metrics.facial_status_level !== 'NOMINAL') anomalousSignals.push('facial boundary seam disparity');
-      const anomalyStr = anomalousSignals.length > 0 ? anomalousSignals.join(' and ') : 'unverified container characteristics';
+      const anomalyStr = anomalousSignals.length > 0 ? `${anomalousSignals.join(' and ')} exceed nominal baseline thresholds` : 'evaluated DSP signals exhibit nominal profile within unverified container';
       const neuralDesc = (hasVisionScore && pSynth !== null)
         ? (pSynth <= 0.20 ? `Neural vision classifier verified organic feature distribution (p_synthetic = ${pSynth.toFixed(2)})` :
            (pSynth >= 0.65 ? `Neural vision detected synthetic generation markers (p_synthetic = ${pSynth.toFixed(2)})` :
             `Neural vision feature profile is ambiguous (p_synthetic = ${pSynth.toFixed(2)})`))
         : 'Neural vision detector standby';
-      reconciliationText = `${neuralDesc}, but ${anomalyStr} exceed nominal baseline thresholds. Primary classification: Inconclusive with Elevated Risk.`;
+      reconciliationText = `${neuralDesc}; ${anomalyStr}. Primary classification: Inconclusive with ${isLowRiskIncon ? 'low anomaly profile' : 'elevated risk'}.`;
     }
   }
 
@@ -28828,7 +29070,7 @@ function renderImageForensicsReport(data) {
 
               <span class="img-dna-pill-key">SENSOR:</span>
 
-              <span class="img-dna-pill-val">${escapeHtml(metadata.camera_make ? `${metadata.camera_make} ${metadata.camera_model || ''}`.trim() : 'Digital Optical Profile')}</span>
+              <span class="img-dna-pill-val">${escapeHtml(metadata.camera_make ? `${metadata.camera_make} ${metadata.camera_model || ''}`.trim() : 'No Hardware Sensor EXIF')}</span>
 
             </span>
 
@@ -29045,9 +29287,9 @@ function renderImageForensicsReport(data) {
 
           <div class="channel-card-action">
 
-            <span class="forensic-status-pill ${metrics.noise_status === 'CRITICAL' ? 'status-anomaly' : (metrics.noise_status === 'MODERATE' ? 'status-warning' : 'status-authentic')}">
+            <span class="forensic-status-pill ${metrics.noise_substatus === 'COMPACT_EDGE_KURTOSIS' ? 'status-neutral' : (metrics.noise_status === 'CRITICAL' ? 'status-anomaly' : (metrics.noise_status === 'MODERATE' ? 'status-warning' : 'status-authentic'))}">
 
-              ${metrics.noise_status === 'CRITICAL' ? (metrics.noise_substatus === 'NOISE_FLATTENED' ? 'NOISE FLATTENED' : 'HEAVY-TAIL') : (metrics.noise_status === 'MODERATE' ? 'ELEVATED KURTOSIS' : (metrics.noise_substatus === 'NOMINAL_SMOOTH' ? 'SMOOTH SENSOR' : 'GAUSSIAN SENSOR'))}
+              ${metrics.noise_substatus === 'COMPACT_EDGE_KURTOSIS' ? 'EDGE RESIDUAL (COMPACT)' : (metrics.noise_status === 'CRITICAL' ? (metrics.noise_substatus === 'NOISE_FLATTENED' ? 'NOISE FLATTENED' : 'HEAVY-TAIL NON-GAUSSIAN') : (metrics.noise_status === 'MODERATE' ? 'ELEVATED KURTOSIS' : (metrics.noise_kurtosis > 6.0 ? 'LEPTOKURTIC RESIDUAL' : (metrics.noise_substatus === 'NOMINAL_SMOOTH' ? 'SMOOTH SENSOR' : 'GAUSSIAN SENSOR'))))}
 
             </span>
 
@@ -29115,15 +29357,15 @@ function renderImageForensicsReport(data) {
 
             </div>
 
-            <div class="channel-card-sub">${metrics.faces_detected > 0 ? `${metrics.faces_detected} face(s) analyzed` : 'No face detected (N/A)'}</div>
+            <div class="channel-card-sub">${metrics.faces_detected > 0 ? `${metrics.faces_detected} face(s) detected (${metrics.facial_forensics_applicable ? 'biometrics verified' : 'compact; warping N/A'})` : 'No face detected (N/A)'}</div>
 
           </div>
 
           <div class="channel-card-action">
 
-            <span class="forensic-status-pill ${metrics.faces_detected === 0 ? 'status-neutral' : (metrics.facial_status_level === 'CRITICAL' ? 'status-anomaly' : (metrics.facial_status_level === 'MODERATE' ? 'status-warning' : 'status-authentic'))}">
+            <span class="forensic-status-pill ${metrics.faces_detected === 0 ? 'status-neutral' : (!metrics.facial_forensics_applicable ? 'status-neutral' : (metrics.facial_status_level === 'CRITICAL' ? 'status-anomaly' : (metrics.facial_status_level === 'MODERATE' ? 'status-warning' : 'status-authentic')))}">
 
-              ${metrics.faces_detected === 0 ? 'NOT APPLICABLE' : (metrics.facial_status_level || 'NOMINAL')}
+              ${metrics.faces_detected === 0 ? 'NO FACE DETECTED' : (!metrics.facial_forensics_applicable ? 'RESOLUTION COMPACT' : (metrics.facial_status_level || 'NOMINAL'))}
 
             </span>
 
@@ -29724,7 +29966,7 @@ function renderForensicMoreDetails(data) {
   const noiseVar = typeof metrics.noise_variance === 'number' ? metrics.noise_variance.toFixed(3) : 'N/A';
   const edgeVar = typeof metrics.edge_variance === 'number' ? metrics.edge_variance.toFixed(1) : 'N/A';
   const facesDetected = metrics.faces_detected || 0;
-  const facialStatus = metrics.facial_status || (facesDetected > 0 ? `${facesDetected} face(s) inspected across boundary seam domains` : 'No face detected; facial boundary forensics not applicable');
+  const facialStatus = metrics.facial_status || (facesDetected > 0 ? (metrics.facial_forensics_applicable ? `${facesDetected} face(s) inspected across boundary seam domains` : `${facesDetected} face(s) detected (compact resolution; warping N/A)`) : 'No face detected; facial boundary forensics not applicable');
 
   const isVideo = Boolean(frameAnalysis || (mediaInfo && mediaInfo.is_video));
 
@@ -33134,7 +33376,21 @@ const QUANTUM_THEMES = {
 
 
 
+// Sovereign light palette is the single supported colour scheme.
+QUANTUM_THEMES.gov = {
+  name: 'SOVEREIGN LIGHT',
+  circuitColor: 'rgba(22, 101, 60, 0.28)',
+  circuitGlow: 'rgba(22, 101, 60, 0.16)',
+  circuitDot: '#2E7D4F',
+  timelineColor: '#C9E265',
+  timelineGlow: 'rgba(201, 226, 101, 0.65)',
+  timelineFill: 'rgba(201, 226, 101, 0.28)',
+  discColor: '#E6812F'
+};
+
 function setQuantumTheme(themeName, playAudio = true) {
+
+  themeName = 'gov';
 
   if (!QUANTUM_THEMES[themeName]) themeName = 'amethyst';
 
@@ -34312,19 +34568,8 @@ function initNavInteractiveAnimations() {
 
 onCyberGuardDomReady(function () {
 
-  // Restore saved theme or default to amethyst (since DEFCON 2 is active by default)
-
-  let savedTheme = 'amethyst';
-
-  try {
-
-    savedTheme = localStorage.getItem('cyberguard_quantum_theme') || 'amethyst';
-
-    if (!QUANTUM_THEMES[savedTheme]) savedTheme = 'amethyst';
-
-  } catch (e) {}
-
-  setQuantumTheme(savedTheme, false);
+  // Single sovereign light theme — no user theme switching.
+  setQuantumTheme('gov', false);
 
 
 
@@ -34351,6 +34596,8 @@ onCyberGuardDomReady(function () {
     }
 
     init3DCardParallax();
+
+    initVoiceInteractiveLogo();
 
   }, 100);
 
@@ -35589,187 +35836,207 @@ function escalateMalwareToIncident() {
 
 
 let activeMalwareScanId = null;
-
 let currentExplanationFetchController = null;
-
-
+let currentExplanationRequestId = 0;
 
 function openMalwareExplanationModal() {
-
   if (!activeMalwareScanId) {
-
     if (lastMalwareReport) {
-
-      activeMalwareScanId = lastMalwareReport.scan_id || lastMalwareReport.correlation_id || lastMalwareReport.sha256;
-
+      activeMalwareScanId = lastMalwareReport.scan_id || lastMalwareReport.correlation_id || (lastMalwareReport.file_metadata && lastMalwareReport.file_metadata.sha256) || lastMalwareReport.sha256;
     }
-
-    if (!activeMalwareScanId) return;
-
   }
 
+  const shaEl = document.getElementById('malware-hash-sha256');
+  if (!activeMalwareScanId && shaEl && shaEl.textContent && shaEl.textContent !== '-') {
+    activeMalwareScanId = shaEl.textContent.trim();
+  }
 
+  if (!activeMalwareScanId && !lastMalwareReport) return;
 
   const modal = document.getElementById('malware-explanation-modal');
-
   const trigger = document.getElementById('btn-malware-explain-verdict');
-
   if (trigger) trigger.setAttribute('aria-expanded', 'true');
 
-  if (modal) {
+  // Immediately populate modal asset line and record ID so user never sees unassociated '-'
+  const fname = (lastMalwareReport && lastMalwareReport.filename) || (selectedMalwareFile && selectedMalwareFile.name) || 'inspected_artifact';
+  const sha = (lastMalwareReport && (lastMalwareReport.sha256 || (lastMalwareReport.file_metadata && lastMalwareReport.file_metadata.sha256))) || (shaEl ? shaEl.textContent.trim() : '-');
+  const verdict = (lastMalwareReport && (lastMalwareReport.status || (lastMalwareReport.verdict && lastMalwareReport.verdict.verdict))) || 'MALICIOUS';
 
-    modal.classList.remove('hidden');
-
-    // Focus close button for keyboard accessibility
-
-    const closeBtn = document.getElementById('btn-close-malware-expl');
-
-    if (closeBtn) closeBtn.focus();
-
+  const assetLine = document.getElementById('malware-expl-asset-line');
+  if (assetLine) {
+    const shaShort = sha && sha !== '-' ? `${sha.substring(0, 16)}...` : '-';
+    assetLine.textContent = `Artifact: ${fname} · SHA-256: ${shaShort} · Verdict: ${verdict}`;
   }
 
+  const scanIdEl = document.getElementById('malware-expl-footer-scanid');
+  if (scanIdEl) {
+    scanIdEl.textContent = `Record: ${activeMalwareScanId || sha || 'SCAN_ACTIVE'}`;
+  }
 
+  if (modal) {
+    modal.classList.remove('hidden');
+    // Focus close button for keyboard accessibility
+    const closeBtn = document.getElementById('btn-close-malware-expl');
+    if (closeBtn) closeBtn.focus();
+  }
 
-  fetchMalwareExplanation(activeMalwareScanId, false);
-
+  fetchMalwareExplanation(activeMalwareScanId || sha, false);
 }
-
-
 
 function closeMalwareExplanationModal() {
-
   const modal = document.getElementById('malware-explanation-modal');
-
   const trigger = document.getElementById('btn-malware-explain-verdict');
-
   if (trigger) {
-
     trigger.setAttribute('aria-expanded', 'false');
-
     trigger.focus();
-
   }
-
   if (modal) modal.classList.add('hidden');
-
+  if (currentExplanationFetchController) {
+    try {
+      currentExplanationFetchController.abort();
+    } catch (_) {}
+    currentExplanationFetchController = null;
+  }
 }
-
-
 
 function retryFetchMalwareExplanation() {
-
   if (activeMalwareScanId) {
-
     fetchMalwareExplanation(activeMalwareScanId, true);
-
+  } else if (lastMalwareReport) {
+    openMalwareExplanationModal();
   }
-
 }
 
-
-
 async function fetchMalwareExplanation(scanId, forceRefresh = false) {
-
   const loadingEl = document.getElementById('malware-expl-loading');
-
   const errorEl = document.getElementById('malware-expl-error');
-
   const contentEl = document.getElementById('malware-expl-content');
-
-
+  const retryBtn = document.getElementById('btn-retry-malware-expl');
 
   if (loadingEl) loadingEl.classList.remove('hidden');
-
   if (errorEl) errorEl.classList.add('hidden');
-
   if (contentEl) contentEl.classList.add('hidden');
+  if (retryBtn) retryBtn.disabled = true;
 
+  // Track unique monotonic request token to guard against race conditions and stale response overwrites
+  const reqId = ++currentExplanationRequestId;
 
-
-  // Cancel any ongoing fetch to prevent stale responses
-
+  // Cancel any prior in-flight fetch
   if (currentExplanationFetchController) {
-
-    currentExplanationFetchController.abort();
-
+    try {
+      currentExplanationFetchController.abort();
+    } catch (_) {}
   }
+  const controller = new AbortController();
+  currentExplanationFetchController = controller;
 
-  currentExplanationFetchController = new AbortController();
-
-
+  let isExplicitTimeout = false;
+  // Bounded request timeout (75s): allows backend 60s for full model load + deep Qwen inference with network buffer
+  const timeoutTimer = setTimeout(() => {
+    if (currentExplanationRequestId === reqId) {
+      isExplicitTimeout = true;
+      try {
+        controller.abort();
+      } catch (_) {}
+    }
+  }, 75000);
 
   try {
-
     const token = typeof getAuthToken === 'function' ? getAuthToken() : null;
-
     const headers = { 'Content-Type': 'application/json' };
-
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
-
-
-    const res = await fetch(`${API_BASE}/api/threats/malware/explain`, {
-
-      method: 'POST',
-
-      headers,
-
-      body: JSON.stringify({
-
-        scan_id: scanId,
-
-        force_refresh: forceRefresh,
-
-      }),
-
-      signal: currentExplanationFetchController.signal,
-
+    const shaVal = (lastMalwareReport && (lastMalwareReport.sha256 || (lastMalwareReport.file_metadata && lastMalwareReport.file_metadata.sha256))) || null;
+    const reqBody = JSON.stringify({
+      scan_id: scanId,
+      sha256: shaVal,
+      force_refresh: forceRefresh,
     });
 
-
-
-    if (!res.ok) {
-
-      const errJson = await res.json().catch(() => ({}));
-
-      throw new Error(errJson.detail || `Server returned HTTP ${res.status}`);
-
+    let res;
+    if (typeof cyberGuardFetch === 'function') {
+      res = await cyberGuardFetch('/api/threats/malware/explain', {
+        method: 'POST',
+        headers,
+        body: reqBody,
+        signal: controller.signal,
+      });
+    } else {
+      res = await fetch(`${API_BASE}/api/threats/malware/explain`, {
+        method: 'POST',
+        headers,
+        body: reqBody,
+        signal: controller.signal,
+      });
     }
 
+    clearTimeout(timeoutTimer);
 
+    // If request was superseded by a newer call, cleanly discard
+    if (currentExplanationRequestId !== reqId) {
+      return;
+    }
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.detail || `Server returned HTTP ${res.status}`);
+    }
 
     const data = await res.json();
 
-    // Guard against race conditions if scan changed while request was in-flight
+    // Verify response matches current active artifact or scan record
+    const matchesScanId = !activeMalwareScanId || activeMalwareScanId === 'scan_active' ||
+      data.scan_id === activeMalwareScanId ||
+      data.correlation_id === activeMalwareScanId ||
+      (lastMalwareReport && (
+        data.scan_id === lastMalwareReport.scan_id ||
+        data.scan_id === lastMalwareReport.correlation_id ||
+        data.correlation_id === lastMalwareReport.scan_id ||
+        data.correlation_id === lastMalwareReport.correlation_id ||
+        (data.sha256 && lastMalwareReport.sha256 && data.sha256.toLowerCase() === lastMalwareReport.sha256.toLowerCase())
+      ));
 
-    if (data.scan_id && data.scan_id !== activeMalwareScanId && activeMalwareScanId !== 'scan_active') {
-
+    if (!matchesScanId) {
+      console.warn('Received explanation for different scan/artifact, ignoring:', data.scan_id, activeMalwareScanId);
+      if (loadingEl) loadingEl.classList.add('hidden');
+      if (retryBtn) retryBtn.disabled = false;
       return;
-
     }
 
+    if (retryBtn) retryBtn.disabled = false;
     renderMalwareExplanation(data);
 
   } catch (err) {
+    clearTimeout(timeoutTimer);
 
-    if (err.name === 'AbortError') return;
-
-    console.warn('Malware explanation error:', err);
-
-    if (loadingEl) loadingEl.classList.add('hidden');
-
-    if (errorEl) {
-
-      errorEl.classList.remove('hidden');
-
-      const msgEl = document.getElementById('malware-expl-error-msg');
-
-      if (msgEl) msgEl.textContent = err.message || 'Unable to retrieve explanation for this artifact.';
-
+    // If superseded by a retry or new request, ignore completely
+    if (currentExplanationRequestId !== reqId) {
+      return;
     }
 
-  }
+    if (retryBtn) retryBtn.disabled = false;
 
+    if (err.name === 'AbortError') {
+      // Only display timeout error if this request actually timed out via its own timer
+      if (isExplicitTimeout) {
+        if (loadingEl) loadingEl.classList.add('hidden');
+        if (errorEl) {
+          errorEl.classList.remove('hidden');
+          const msgEl = document.getElementById('malware-expl-error-msg');
+          if (msgEl) msgEl.textContent = 'Explanation synthesis timed out after 75s. Please click Retry Request.';
+        }
+      }
+      return;
+    }
+
+    console.warn('Malware explanation error:', err);
+    if (loadingEl) loadingEl.classList.add('hidden');
+    if (errorEl) {
+      errorEl.classList.remove('hidden');
+      const msgEl = document.getElementById('malware-expl-error-msg');
+      if (msgEl) msgEl.textContent = err.message || 'Unable to retrieve explanation for this artifact.';
+    }
+  }
 }
 
 
@@ -36042,9 +36309,9 @@ function renderMalwareExplanation(data) {
 
   const scanIdEl = document.getElementById('malware-expl-footer-scanid');
 
-  if (engineEl) engineEl.textContent = data.analyst_engine || 'CyberGuard Security Engine';
+  if (engineEl) engineEl.textContent = data.analyst_engine || 'Qwen3.5-4B-Q4_K_M (CyberGuard Qwen LLM)';
 
-  if (scanIdEl) scanIdEl.textContent = `Record: ${data.scan_id || '-'}`;
+  if (scanIdEl) scanIdEl.textContent = `Record: ${data.correlation_id || data.scan_id || activeMalwareScanId || '-'}`;
 
 }
 
@@ -36185,4 +36452,5 @@ document.addEventListener('keydown', (e) => {
   });
 
 })();
+
 

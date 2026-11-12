@@ -101,8 +101,11 @@ class LLMSecurityAnalyst:
         metadata_details: Dict[str, Any],
         threat_context: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, str]]:
-        if not self._qwen_service.is_ready and not self._qwen_service.load_model():
-            return None
+        if not self._qwen_service.is_ready:
+            from backend.config import get_settings
+            allow_sync_load = getattr(get_settings().cyberguard, "allow_sync_llm_load", False)
+            if not allow_sync_load or not self._qwen_service.load_model():
+                return None
         try:
             ctx = threat_context or {}
             app_name = ctx.get("app_name") or ctx.get("package_name")
@@ -161,7 +164,7 @@ class LLMSecurityAnalyst:
         self,
         threat_data: Dict[str, Any],
         context: Optional[Dict[str, Any]] = None,
-        use_neural: bool = True
+        use_neural: bool = False
     ) -> Dict[str, Any]:
         """
         Analyze threat event, incident, or forensic bundle.

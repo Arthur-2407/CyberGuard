@@ -70,12 +70,17 @@
 
     // 4. Custom Cloudflare Tunnel or explicit connection mode
     try {
-      const custom = localStorage.getItem("cyberguard_custom_tunnel");
-      if (custom && custom.trim()) return normalizeBase(custom);
       const mode = localStorage.getItem("cyberguard_connection_mode");
-      if (mode === "hybrid") {
+      if (mode === "local") {
+        return "http://127.0.0.1:3000";
+      } else if (mode === "deployed") {
+        if (typeof location !== "undefined" && location.hostname.includes("vercel.app")) return "";
+        return "https://cyberguard-backend-8rbz.onrender.com";
+      } else if (mode === "hybrid") {
         const active = localStorage.getItem("cyberguard_hybrid_active_base");
         if (active && active.trim()) return normalizeBase(active);
+        const custom = localStorage.getItem("cyberguard_custom_tunnel");
+        if (custom && custom.trim()) return normalizeBase(custom);
       }
     } catch {}
 
@@ -537,6 +542,7 @@
     if (!state.currentUser) {
       renderLocalHistory();
     }
+    window.dispatchEvent(new CustomEvent("cyberguard:activity"));
   }
 
   function getHistoryIcon(type = "") {
@@ -658,7 +664,7 @@
   // Navigation and deep-linking
   function navigate() {
     const raw = (location.hash || "#home").slice(1);
-    const active = ["home", "link", "file", "media", "activity", "settings"].includes(raw) ? raw : "home";
+    const active = ["home", "link", "file", "media", "monitoring", "incidents", "alerts", "identity", "health", "activity", "settings"].includes(raw) ? raw : "home";
 
     $$(".page").forEach(el => el.classList.toggle("active", el.id === "page-" + active));
     $$(".nav-link[data-page]").forEach(el => el.classList.toggle("active", el.dataset.page === active));
@@ -668,6 +674,11 @@
       link: "Check a link",
       file: "Check a file",
       media: "Image & voice",
+      monitoring: "Live monitoring",
+      incidents: "Incidents",
+      alerts: "Alerts",
+      identity: "Voice identity",
+      health: "System health",
       activity: "My activity",
       settings: "Settings"
     };

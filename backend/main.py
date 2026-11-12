@@ -400,8 +400,9 @@ async def lifespan(app: FastAPI):
             else:
                 logger.info("Cloud database unreachable at startup; operating in local resilient mode.")
 
-            # Always start periodic sync so reconnection automatically triggers cloud sync
-            sync_task = asyncio.create_task(sync_svc.run_periodic_sync(interval_sec=30))
+            # Configurable periodic sync interval (default 180s) to prevent CPU and network starvation
+            sync_interval = app_settings.storage.sync_interval_sec
+            sync_task = asyncio.create_task(sync_svc.run_periodic_sync(interval_sec=sync_interval))
     except Exception as sync_exc:
         logger.warning(f"Database sync service initialization notice: {sync_exc}")
 
@@ -415,6 +416,24 @@ async def lifespan(app: FastAPI):
         logger.info("✓ Model lifecycle manager and lazy eviction worker active.")
     except Exception as reg_exc:
         logger.warning(f"Model registry initialization notice: {reg_exc}")
+
+    # Configurable background pre-warming of authoritative Qwen LLM
+    # Default is lazy on-demand loading to maintain the bounded 8 GB host RAM budget (~2.8 GB saved).
+    if app_settings.cyberguard.prewarm_llm:
+        async def _prewarm_qwen_service():
+            try:
+                from backend.models.qwen_service import get_qwen_service
+                qwen = get_qwen_service()
+                if not qwen.is_ready and qwen.resolve_model_path():
+                    logger.info("Lifespan: Initiating background pre-warming for Qwen LLM...")
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(None, qwen.load_model)
+            except Exception as q_err:
+                logger.debug(f"Lifespan Qwen LLM pre-warming notice: {q_err}")
+
+        asyncio.create_task(_prewarm_qwen_service())
+    else:
+        logger.info("Lifespan: Qwen LLM configured for lazy on-demand loading (preserving ~2.8 GB host RAM).")
 
     logger.info("CyberGuard is ready.")
     logger.info(f"  API:      http://{app_settings.server.host}:{app_settings.server.port}")
@@ -458,10 +477,13 @@ app = FastAPI(
 _default_trusted_origins = [
     "https://arthur-2407.github.io",
     "https://cyber-guard-backend-ashen.vercel.app",
+    "https://cyberguard.desktop",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "http://localhost:8080",
     "http://127.0.0.1:8080",
+    "null",
+    "file://",
 ]
 _cors_origins = list(app_settings.server.cors_origins)
 for o in _default_trusted_origins:
@@ -488,7 +510,7 @@ class PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         origin = request.headers.get("origin", "")
         is_pna = request.headers.get("access-control-request-private-network") == "true"
-        is_allowed = bool(origin and (_cors_pattern.match(origin) or origin in _cors_origins))
+        is_allowed = bool(origin and (_cors_pattern.match(origin) or origin in _cors_origins or origin == "null" or origin.startswith("file://")))
 
         if request.method == "OPTIONS" and is_pna:
             resp = Response(status_code=204)
@@ -577,7 +599,7 @@ _PERSONAL_DIR = _FRONTEND_DIR / "personal"
 if _FRONTEND_DIR.exists():
     app.mount(
         "/static",
-        StaticFiles(directory=str(_FRONTEND_DIR)),
+        StaticFiles(directory=str(_PERSONAL_DIR if _PERSONAL_DIR.exists() else _FRONTEND_DIR)),
         name="static",
     )
 
@@ -624,18 +646,29 @@ if _FRONTEND_DIR.exists():
                 return FileResponse(str(cfg_file), media_type="application/javascript")
             return Response(content="window.__CYBERGUARD_CONFIG__ = window.__CYBERGUARD_CONFIG__ || {};", media_type="application/javascript")
 
+    # The product now ships a single interface: the light personal workspace.
+    # Legacy SOC entry points resolve to it so no dark console can be reached.
+    def _ui_file(name: str) -> Path:
+        if _PERSONAL_DIR.exists() and (_PERSONAL_DIR / name).exists():
+            return _PERSONAL_DIR / name
+        return _FRONTEND_DIR / name
+
     @app.get("/", include_in_schema=False)
     @app.get("/index.html", include_in_schema=False)
     @app.get("/security-center", include_in_schema=False)
     @app.get("/incidents", include_in_schema=False)
     @app.get("/alerts", include_in_schema=False)
     async def serve_frontend():
-        return FileResponse(str(_FRONTEND_DIR / "index.html"))
+        return FileResponse(
+            str(_ui_file("index.html")),
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     @app.get("/styles.css", include_in_schema=False)
     async def serve_styles():
         return FileResponse(
-            str(_FRONTEND_DIR / "styles.css"),
+            str(_ui_file("styles.css")),
             media_type="text/css",
             headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
         )
@@ -643,22 +676,61 @@ if _FRONTEND_DIR.exists():
     @app.get("/app.js", include_in_schema=False)
     async def serve_app():
         return FileResponse(
-            str(_FRONTEND_DIR / "app.js"),
+            str(_ui_file("app.js")),
             media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/workspace.js", include_in_schema=False)
+    async def serve_workspace():
+        return FileResponse(
+            str(_ui_file("workspace.js")),
+            media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/workspace.css", include_in_schema=False)
+    async def serve_workspace_css():
+        return FileResponse(
+            str(_ui_file("workspace.css")),
+            media_type="text/css",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/analytics.js", include_in_schema=False)
+    async def serve_analytics():
+        return FileResponse(
+            str(_ui_file("analytics.js")),
+            media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/analytics.css", include_in_schema=False)
+    async def serve_analytics_css():
+        return FileResponse(
+            str(_ui_file("analytics.css")),
+            media_type="text/css",
             headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
         )
 
     @app.get("/config.js", include_in_schema=False)
     async def serve_config():
-        config_file = _FRONTEND_DIR / "config.js"
+        config_file = _ui_file("config.js")
         if config_file.exists():
             return FileResponse(str(config_file), media_type="application/javascript")
         return Response(content="window.__CYBERGUARD_CONFIG__ = window.__CYBERGUARD_CONFIG__ || {};", media_type="application/javascript")
 
     @app.get("/logo_full.png", include_in_schema=False)
     @app.get("/logo.png", include_in_schema=False)
-    async def serve_logo():
-        return FileResponse(str(_FRONTEND_DIR / "logo_full.png"), media_type="image/png")
+    @app.get("/emblem.png", include_in_schema=False)
+    async def serve_logo(request: Request):
+        name = "emblem.png" if request.url.path.endswith("emblem.png") else (
+            "logo_full.png" if request.url.path.endswith("logo_full.png") else "logo.png"
+        )
+        target = _ui_file(name)
+        if not target.exists():
+            target = _FRONTEND_DIR / "logo_full.png"
+        return FileResponse(str(target), media_type="image/png")
 
     @app.get("/sounds/{filename}", include_in_schema=False)
     async def serve_sounds(filename: str):

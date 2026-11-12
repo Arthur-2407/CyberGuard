@@ -145,15 +145,17 @@ class TestAccountDeletionAuthorizationAndSafeguards:
     def test_protected_system_accounts_safeguarded(self, test_db_session):
         """Test 6b: Protected system accounts (e.g. system, root) cannot be deleted."""
         admin_caller = create_mock_user(test_db_session, "caller_admin_sys", role=ROLE_ADMIN)
-        sys_user = UserModel(
-            username="system",
-            email="system@cyberguard.internal",
-            password_hash=hash_password("Password123!"),
-            role=ROLE_USER,
-            is_active=True,
-        )
-        test_db_session.add(sys_user)
-        test_db_session.commit()
+        sys_user = test_db_session.query(UserModel).filter_by(username="system").first()
+        if not sys_user:
+            sys_user = UserModel(
+                username="system",
+                email="system@cyberguard.internal",
+                password_hash=hash_password("Password123!"),
+                role=ROLE_USER,
+                is_active=True,
+            )
+            test_db_session.add(sys_user)
+            test_db_session.commit()
 
         try:
             with pytest.raises(Exception) as excinfo:

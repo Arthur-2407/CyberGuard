@@ -9757,7 +9757,7 @@ body::after {
   pointer-events: none;
 }
 
-/* 3D Acoustic Radar Spectrum Empty State */
+/* ── Acoustic Radar Spectrum Empty State & Animated Logo ─────────────────── */
 .acoustic-radar-holo {
   display: flex;
   flex-direction: column;
@@ -9765,6 +9765,8 @@ body::after {
   justify-content: center;
   padding: 48px 20px;
   text-align: center;
+  user-select: none;
+  min-height: 240px;
 }
 
 .acoustic-sonar-circle {
@@ -9777,19 +9779,73 @@ body::after {
   align-items: center;
   justify-content: center;
   margin-bottom: 16px;
-  box-shadow: 0 0 28px rgba(0, 212, 255, 0.2), inset 0 0 20px rgba(0, 212, 255, 0.12);
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.18), inset 0 0 18px rgba(0, 212, 255, 0.1);
+  background: radial-gradient(circle, rgba(0, 212, 255, 0.06) 0%, rgba(3, 7, 18, 0.75) 80%);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+.acoustic-sonar-circle:hover {
+  border-color: rgba(0, 212, 255, 0.75);
+  box-shadow: 0 0 32px rgba(0, 212, 255, 0.35), inset 0 0 20px rgba(0, 212, 255, 0.18);
+}
+
+.acoustic-sonar-circle.acoustic-ping-active {
+  animation: acousticPulsePing 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes acousticPulsePing {
+  0% {
+    box-shadow: 0 0 50px rgba(0, 229, 255, 0.8), inset 0 0 30px rgba(0, 229, 255, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 70px rgba(0, 229, 255, 0.95), inset 0 0 40px rgba(0, 229, 255, 0.7);
+  }
+  100% {
+    box-shadow: 0 0 24px rgba(0, 212, 255, 0.18), inset 0 0 18px rgba(0, 212, 255, 0.1);
+  }
 }
 
 .acoustic-sonar-wave {
   position: absolute;
-  inset: -6px;
+  inset: -5px;
   border-radius: 50%;
-  border: 1px solid rgba(0, 212, 255, 0.5);
-  animation: sonarPing 2.4s ease-out infinite;
+  border: 1px solid rgba(0, 212, 255, 0.45);
+  animation: sonarPing 2.6s ease-out infinite;
+  pointer-events: none;
 }
 
 .acoustic-sonar-wave:nth-child(2) {
-  animation-delay: 1.2s;
+  animation-delay: 1.3s;
+}
+
+.acoustic-logo-svg {
+  transition: transform 0.25s ease, filter 0.25s ease;
+}
+
+.acoustic-sonar-circle:hover .acoustic-logo-svg {
+  filter: drop-shadow(0 0 12px rgba(0, 212, 255, 0.85));
+}
+
+.acoustic-logo-title {
+  font-weight: 700;
+  color: #f8fafc;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-shadow: 0 0 10px rgba(0, 212, 255, 0.35);
+}
+
+.acoustic-logo-sub {
+  font-size: 11.5px;
+  color: #64748b;
+  max-width: 380px;
+  line-height: 1.5;
+  margin: 0 auto;
 }
 
 .result-summary {

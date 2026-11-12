@@ -85,8 +85,8 @@ class ConnectionManager(private val context: Context) {
         const val SERVICE_TYPE = "_cyberguard._tcp."
 
         val CLOUD_BACKEND_FALLBACKS = listOf(
-            "https://acc-pasta-charged-aberdeen.trycloudflare.com",
             "https://cyberguard-backend-8rbz.onrender.com",
+            "https://acc-pasta-charged-aberdeen.trycloudflare.com",
             "https://cyber-guard-backend-ashen.vercel.app",
             "https://cyber-guard-backend-j3bo9l8hm-arthur-03fc.vercel.app",
             "https://arthur-2407.github.io/CyberGuard"
@@ -200,7 +200,7 @@ class ConnectionManager(private val context: Context) {
 
     val okHttpClient = OkHttpClient.Builder()
         .addInterceptor(AuthInterceptor(authManager))
-        .connectTimeout(12, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
@@ -445,10 +445,11 @@ class ConnectionManager(private val context: Context) {
         var conn: HttpURLConnection? = null
         return try {
             val url = URL(targetUrl)
+            val effectiveTimeout = if (isCloudUrl(targetUrl) || targetUrl.startsWith("https://")) maxOf(timeoutMs, 10000) else timeoutMs
             conn = url.openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = true
-            conn.connectTimeout = timeoutMs
-            conn.readTimeout = timeoutMs
+            conn.connectTimeout = effectiveTimeout
+            conn.readTimeout = effectiveTimeout
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "CyberGuard-Android/1.0")
             conn.setRequestProperty("Accept", "application/json, */*")
@@ -465,10 +466,11 @@ class ConnectionManager(private val context: Context) {
         var conn: HttpURLConnection? = null
         return try {
             val url = URL(targetUrl)
+            val effectiveTimeout = if (isCloudUrl(targetUrl) || targetUrl.startsWith("https://")) maxOf(timeoutMs, 12000) else timeoutMs
             conn = url.openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = true
-            conn.connectTimeout = timeoutMs
-            conn.readTimeout = timeoutMs
+            conn.connectTimeout = effectiveTimeout
+            conn.readTimeout = effectiveTimeout
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "CyberGuard-Android/1.0")
             conn.setRequestProperty("Accept", "application/json")
@@ -508,10 +510,12 @@ class ConnectionManager(private val context: Context) {
                     details = "Incomplete hostname '$host'. Fully qualified domain name required (e.g. *.trycloudflare.com)."
                 )
             }
+            val isCloud = isCloudUrl(hostOrUrl) || cleanUrl.startsWith("https://")
+            val effectiveTimeout = if (isCloud) maxOf(timeoutMs, 15000) else timeoutMs
             conn = target.openConnection() as HttpURLConnection
             conn.instanceFollowRedirects = true
-            conn.connectTimeout = timeoutMs
-            conn.readTimeout = timeoutMs
+            conn.connectTimeout = effectiveTimeout
+            conn.readTimeout = effectiveTimeout
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "CyberGuard-Android/1.0")
             conn.setRequestProperty("Accept", "application/json, */*")
@@ -731,14 +735,14 @@ class ConnectionManager(private val context: Context) {
     private fun connectModeCloud(config: ConnectionConfig) {
         CoroutineScope(Dispatchers.IO).launch {
             discoveryStatus.value = "PROBING CLOUD DEFENSE NODE..."
-            var activeResult = verifyEndpoint(config.cloudUrl, 443, timeoutMs = 8000)
+            var activeResult = verifyEndpoint(config.cloudUrl, 443, timeoutMs = 15000)
             var activeConfig = config
 
             if (!activeResult.isCyberGuardBackend) {
                 for (fallback in CLOUD_BACKEND_FALLBACKS) {
                     if (fallback.isBlank() || fallback.equals(config.cloudUrl, ignoreCase = true)) continue
                     discoveryStatus.value = "PROBING FALLBACK CLOUD UPLINK..."
-                    val probe = verifyEndpoint(fallback, 443, timeoutMs = 6000)
+                    val probe = verifyEndpoint(fallback, 443, timeoutMs = 12000)
                     if (probe.isCyberGuardBackend && (probe.statusCode in 200..299 || probe.statusCode == 401 || probe.statusCode == 403)) {
                         Log.i("ConnectionManager", "Auto-discovered active cloud fallback at $fallback")
                         activeResult = probe
@@ -768,7 +772,7 @@ class ConnectionManager(private val context: Context) {
                     _failoverNotice.value = "Cloud node reachable. Please authenticate using operator credentials."
                 } else if (result.isStaticFrontend) {
                     _connectionState.value = ConnectionState.BACKEND_UNHEALTHY
-                    discoveryStatus.value = "STATIC FRONTEND DETECTED // NO CLOUD API"
+                    discoveryStatus.value = "STATIC FRONTEND DETECTED • NO CLOUD API"
                     _failoverNotice.value = "The configured cloud URL is a static web portal (no Python backend API). Configure Cloudflare tunnel or switch to Local LAN mode."
                 } else if (result.isReachable) {
                     _connectionState.value = ConnectionState.BACKEND_UNHEALTHY
@@ -791,7 +795,7 @@ class ConnectionManager(private val context: Context) {
     private fun connectModeLocalLan(config: ConnectionConfig) {
         CoroutineScope(Dispatchers.IO).launch {
             discoveryStatus.value = "CHECKING LOCAL WORKSTATION NODE..."
-            var activeResult = verifyEndpoint(config.localHost, config.localPort, timeoutMs = 2500)
+            var activeResult = verifyEndpoint(config.localHost, config.localPort, timeoutMs = 4500)
 
             if (!activeResult.isCyberGuardBackend) {
                 // Auto-probe candidate local host addresses on current subnet
@@ -878,9 +882,9 @@ class ConnectionManager(private val context: Context) {
         CoroutineScope(Dispatchers.IO).launch {
             discoveryStatus.value = "EVALUATING HYBRID NODES..."
 
-            // Independent parallel verification of both endpoints
-            val localDeferred = async { verifyEndpoint(config.localHost, config.localPort, timeoutMs = 2000) }
-            val cloudDeferred = async { verifyEndpoint(config.cloudUrl, 443, timeoutMs = 3500) }
+            // Independent parallel verification of both endpoints (aligned with Windows 15s timeout policy)
+            val localDeferred = async { verifyEndpoint(config.localHost, config.localPort, timeoutMs = 4500) }
+            val cloudDeferred = async { verifyEndpoint(config.cloudUrl, 443, timeoutMs = 15000) }
 
             val localResult = localDeferred.await()
             val cloudResult = cloudDeferred.await()
@@ -895,13 +899,13 @@ class ConnectionManager(private val context: Context) {
                     if (localResult.isCyberGuardBackend && (localResult.statusCode in 200..299)) {
                         bindClientEndpoint(localResult.url, "LOCAL_LAN")
                         _connectionState.value = ConnectionState.CONNECTED
-                        discoveryStatus.value = "HYBRID ACTIVE // LOCAL NODE PRIMARY"
+                        discoveryStatus.value = "HYBRID ACTIVE • LOCAL NODE PRIMARY"
                         _failoverNotice.value = null
                         _isFailoverActive.value = false
                     } else if (cloudResult.isCyberGuardBackend && (cloudResult.statusCode in 200..299)) {
                         bindClientEndpoint(cloudResult.url, "CLOUD_TUNNEL")
                         _connectionState.value = ConnectionState.CONNECTED
-                        discoveryStatus.value = "HYBRID ACTIVE // CLOUD FAILOVER ACTIVE"
+                        discoveryStatus.value = "HYBRID ACTIVE • CLOUD FAILOVER ACTIVE"
                         _failoverNotice.value = "Local workstation offline (${localResult.details}). Seamless failover to Cloud defense node."
                         _isFailoverActive.value = true
                     } else if (localResult.statusCode == 401 || localResult.statusCode == 403) {
@@ -922,13 +926,13 @@ class ConnectionManager(private val context: Context) {
                     if (cloudResult.isCyberGuardBackend && (cloudResult.statusCode in 200..299)) {
                         bindClientEndpoint(cloudResult.url, "CLOUD_TUNNEL")
                         _connectionState.value = ConnectionState.CONNECTED
-                        discoveryStatus.value = "HYBRID ACTIVE // CLOUD NODE PRIMARY"
+                        discoveryStatus.value = "HYBRID ACTIVE • CLOUD NODE PRIMARY"
                         _failoverNotice.value = null
                         _isFailoverActive.value = false
                     } else if (localResult.isCyberGuardBackend && (localResult.statusCode in 200..299)) {
                         bindClientEndpoint(localResult.url, "LOCAL_LAN")
                         _connectionState.value = ConnectionState.CONNECTED
-                        discoveryStatus.value = "HYBRID ACTIVE // LOCAL FAILOVER ACTIVE"
+                        discoveryStatus.value = "HYBRID ACTIVE • LOCAL FAILOVER ACTIVE"
                         _failoverNotice.value = "Cloud node unreachable (${cloudResult.details}). Seamless failover to Local LAN node."
                         _isFailoverActive.value = true
                     } else if (cloudResult.statusCode == 401 || cloudResult.statusCode == 403) {
@@ -967,7 +971,7 @@ class ConnectionManager(private val context: Context) {
             _failoverNotice.value = "No network interfaces active. Activate Wi-Fi or cellular."
         } else if (cloudResult.isStaticFrontend && !localResult.isReachable) {
             _connectionState.value = ConnectionState.BACKEND_UNHEALTHY
-            discoveryStatus.value = "LOCAL OFFLINE // CLOUD IS STATIC FRONTEND"
+            discoveryStatus.value = "LOCAL OFFLINE • CLOUD IS STATIC FRONTEND"
             _failoverNotice.value = "Local server is unreachable (${localResult.details}) and configured Cloud URL serves only static web frontend (no backend API)."
         } else {
             _connectionState.value = ConnectionState.BACKEND_UNREACHABLE
@@ -993,7 +997,7 @@ class ConnectionManager(private val context: Context) {
                         Log.i("ConnectionManager", "Preferred Local Docker node recovered! Initiating safe failback...")
                         withContext(Dispatchers.Main) {
                             bindClientEndpoint(localProbe.url, "LOCAL_LAN")
-                            discoveryStatus.value = "HYBRID ACTIVE // LOCAL NODE PRIMARY (RESTORED)"
+                            discoveryStatus.value = "HYBRID ACTIVE • LOCAL NODE PRIMARY (RESTORED)"
                             _failoverNotice.value = "Preferred Local workstation recovered. Restored to local network."
                             _isFailoverActive.value = false
                         }
@@ -1004,12 +1008,12 @@ class ConnectionManager(private val context: Context) {
                     _localHealth.value = localProbe
                     if (!localProbe.isCyberGuardBackend) {
                         Log.w("ConnectionManager", "Local node dropped! Checking Cloud failover candidate...")
-                        val cloudProbe = verifyEndpoint(config.cloudUrl, 443, timeoutMs = 3000)
+                        val cloudProbe = verifyEndpoint(config.cloudUrl, 443, timeoutMs = 15000)
                         _cloudHealth.value = cloudProbe
                         if (cloudProbe.isCyberGuardBackend) {
                             withContext(Dispatchers.Main) {
                                 bindClientEndpoint(cloudProbe.url, "CLOUD_TUNNEL")
-                                discoveryStatus.value = "HYBRID ACTIVE // CLOUD FAILOVER ACTIVE"
+                                discoveryStatus.value = "HYBRID ACTIVE • CLOUD FAILOVER ACTIVE"
                                 _failoverNotice.value = "Local node dropped. Active failover to Cloud defense node."
                                 _isFailoverActive.value = true
                             }

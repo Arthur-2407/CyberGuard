@@ -109,8 +109,9 @@ class ModelRegistry:
 
         # 1. Qwen3.5-4B LLM
         qwen_candidates = [
+            Path("/app/backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
             project_root / "backend" / "models" / "weights" / "qwen3.5" / "Qwen3.5-4B-Q4_K_M.gguf",
-            Path("D:/BPUT/backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
+            Path("backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
         ]
         self.register(
             model_id="qwen_llm",
@@ -124,8 +125,9 @@ class ModelRegistry:
 
         # 2. Vision Deepfake Detector (MobileNetV3)
         vision_candidates = [
+            Path("/app/backend/models/weights/vision_detector.pt"),
             project_root / "backend" / "models" / "weights" / "vision_detector.pt",
-            Path("D:/BPUT/backend/models/weights/vision_detector.pt"),
+            Path("backend/models/weights/vision_detector.pt"),
         ]
         self.register(
             model_id="vision_detector",
@@ -139,9 +141,10 @@ class ModelRegistry:
 
         # 3. SpeechBrain ECAPA-TDNN Speaker Biometrics
         ecapa_candidates = [
+            Path("/app/backend/models/weights/ecapa_tdnn"),
             project_root / "backend" / "models" / "weights" / "ecapa_tdnn",
             project_root / "backend" / "models" / "weights" / "ecapa_tdnn" / "embedding_model.ckpt",
-            Path("D:/BPUT/backend/models/weights/ecapa_tdnn"),
+            Path("backend/models/weights/ecapa_tdnn"),
         ]
         self.register(
             model_id="ecapa_speaker_embedding",
@@ -155,8 +158,9 @@ class ModelRegistry:
 
         # 4. AASIST Audio Anti-Spoofing
         aasist_candidates = [
+            Path("/app/backend/models/weights/aasist/AASIST.pth"),
             project_root / "backend" / "models" / "weights" / "aasist" / "AASIST.pth",
-            Path("D:/BPUT/backend/models/weights/aasist/AASIST.pth"),
+            Path("backend/models/weights/aasist/AASIST.pth"),
         ]
         self.register(
             model_id="aasist_detector",
@@ -170,8 +174,9 @@ class ModelRegistry:
 
         # 5. Voice Clone Detector (CNN-BiLSTM)
         detector_candidates = [
+            Path("/app/backend/models/weights/detector.pt"),
             project_root / "backend" / "models" / "weights" / "detector.pt",
-            Path("D:/BPUT/backend/models/weights/detector.pt"),
+            Path("backend/models/weights/detector.pt"),
         ]
         self.register(
             model_id="voice_clone_detector",

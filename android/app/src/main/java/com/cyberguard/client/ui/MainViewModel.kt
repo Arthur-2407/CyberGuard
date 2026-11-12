@@ -46,7 +46,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isFailoverActive: StateFlow<Boolean> = connectionManager.isFailoverActive
 
     val showConnectionSettings = MutableStateFlow(false)
-    
+
     val telemetry = repository.telemetry
     
     val authManager = connectionManager.authManager

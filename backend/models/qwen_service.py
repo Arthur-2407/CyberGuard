@@ -23,6 +23,7 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -91,9 +92,11 @@ class QwenService:
             if p.exists() and p.stat().st_size > 1_000_000_000:
                 return p.resolve()
 
+        project_root = Path(__file__).resolve().parent.parent.parent
         candidates = [
+            Path("/app/backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
+            project_root / "backend" / "models" / "weights" / "qwen3.5" / "Qwen3.5-4B-Q4_K_M.gguf",
             Path("backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
-            Path("D:/BPUT/backend/models/weights/qwen3.5/Qwen3.5-4B-Q4_K_M.gguf"),
             Path(os.path.dirname(__file__)) / "weights" / "qwen3.5" / "Qwen3.5-4B-Q4_K_M.gguf",
         ]
         for c in candidates:
@@ -152,7 +155,16 @@ class QwenService:
                 mem_before = 0.0
 
             try:
-                from llama_cpp import Llama
+                try:
+                    from llama_cpp import Llama
+                except ModuleNotFoundError:
+                    # Dynamically add repository virtual environment site-packages if running under a system Python
+                    _proj_root = Path(__file__).resolve().parent.parent.parent
+                    _venv_site = _proj_root / "venv" / "Lib" / "site-packages"
+                    if _venv_site.exists() and str(_venv_site) not in sys.path:
+                        sys.path.insert(0, str(_venv_site))
+                    from llama_cpp import Llama
+
                 logger.info(f"QwenService: Loading {MODEL_NAME} from {target_path} (n_ctx={self._n_ctx}, threads={self._n_threads})...")
                 t0 = time.time()
                 self._llm = Llama(
@@ -209,7 +221,8 @@ class QwenService:
         messages: List[Dict[str, str]],
         max_tokens: int = 180,
         temperature: float = 0.2,
-        timeout_sec: float = 25.0,
+        stop: Optional[List[str]] = None,
+        timeout_sec: float = 60.0,
     ) -> Optional[Dict[str, Any]]:
         """
         Thread-safe, mutex-protected chat completion via Qwen3.5.
@@ -225,11 +238,14 @@ class QwenService:
             self._state = QwenServiceState.BUSY
             start_t = time.time()
             try:
-                res = self._llm.create_chat_completion(
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                )
+                kwargs = {
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                }
+                if stop:
+                    kwargs["stop"] = stop
+                res = self._llm.create_chat_completion(**kwargs)
                 elapsed_ms = (time.time() - start_t) * 1000.0
                 self._inference_count += 1
                 self._total_inference_time_ms += elapsed_ms

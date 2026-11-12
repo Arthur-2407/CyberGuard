@@ -60,6 +60,8 @@ privacy:
 storage:
   # Primary SQLite database path (backward-compatible fallback supported)
   db_path: "data/cyberguard.db"
+  # Periodic database synchronization interval in seconds
+  sync_interval_sec: 180
 
 server:
   host: "0.0.0.0"
@@ -101,6 +103,8 @@ cyberguard:
   mitre_mapping_enabled: true
   incident_management_enabled: true
   simulation_mode_enabled: true
+  # Eager pre-warming of generative Qwen LLM (false for on-demand lazy loading)
+  prewarm_llm: false
 
 virustotal:
   enabled: true

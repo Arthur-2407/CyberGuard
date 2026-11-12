@@ -255,14 +255,6 @@ fun AnimatedCyberBottomBar(
 ) {
     val infiniteTransition = rememberInfiniteTransition(label = "bottom_dock_anim")
     
-    // Glimmer rotation for "More" glint
-    val glintRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(tween(4000, easing = LinearEasing), RepeatMode.Restart),
-        label = "glint_rot"
-    )
-
     // Pulse for danger/amber indicators
     val pulseAlpha by infiniteTransition.animateFloat(
         initialValue = 0.45f,
@@ -362,24 +354,6 @@ fun AnimatedCyberBottomBar(
                                         radius = size.width * 0.7f,
                                         style = Stroke(width = 1.dp.toPx())
                                     )
-                                }
-                            }
-
-                            // More: Holographic Rotating Star Glint
-                            if (screen.route == Screen.More.route) {
-                                Canvas(
-                                    modifier = Modifier
-                                        .size(14.dp)
-                                        .align(Alignment.TopEnd)
-                                        .offset(x = 7.dp, y = (-4).dp)
-                                ) {
-                                    rotate(glintRotation) {
-                                        drawStarGlint(
-                                            center = Offset(size.width / 2, size.height / 2),
-                                            radius = 4.5.dp.toPx(),
-                                            color = LensFlareWhite
-                                        )
-                                    }
                                 }
                             }
                         }

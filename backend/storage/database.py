@@ -599,20 +599,21 @@ if _SQLALCHEMY_AVAILABLE:
             super().commit()
 
             if new_items or dirty_items or deleted_items:
-                try:
-                    from backend.storage.sync_service import get_sync_service
-                    sync_svc = get_sync_service()
-                    is_pg = getattr(self.bind.dialect, "name", "") == "postgresql"
-                    target_is_cloud = not is_pg
-                    if not (target_is_cloud and is_cloud_circuit_broken()):
-                        sync_svc.mirror_session_changes(
-                            new_items=new_items,
-                            dirty_items=dirty_items,
-                            deleted_items=deleted_items,
-                            target_is_cloud=target_is_cloud,
-                        )
-                except Exception as mir_err:
-                    logger.debug(f"Hybrid session mirror notice: {mir_err}")
+                if os.getenv("TESTING", "").lower() not in ("true", "1", "yes"):
+                    try:
+                        from backend.storage.sync_service import get_sync_service
+                        sync_svc = get_sync_service()
+                        is_pg = getattr(self.bind.dialect, "name", "") == "postgresql"
+                        target_is_cloud = not is_pg
+                        if not (target_is_cloud and is_cloud_circuit_broken()):
+                            sync_svc.mirror_session_changes(
+                                new_items=new_items,
+                                dirty_items=dirty_items,
+                                deleted_items=deleted_items,
+                                target_is_cloud=target_is_cloud,
+                            )
+                    except Exception as mir_err:
+                        logger.debug(f"Hybrid session mirror notice: {mir_err}")
 
     def _attach_sqlite_pragmas(eng) -> None:
         """Enable WAL mode (or DELETE mode fallback on network/bind-mounted filesystems) and busy timeout."""

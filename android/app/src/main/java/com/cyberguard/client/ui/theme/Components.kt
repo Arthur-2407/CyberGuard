@@ -38,12 +38,12 @@ fun CyberGuardCard(
     modifier: Modifier = Modifier,
     containerColor: Color = ElevatedSurface,
     borderColor: Color = HolographicGlowBorder,
-    showCornerReticles: Boolean = true,
-    cornerReticleColor: Color = CyberNeonCyan.copy(alpha = 0.5f),
+    showCornerReticles: Boolean = false,
+    cornerReticleColor: Color = SignalYellow.copy(alpha = 0.35f),
     onClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = CutCornerShape(10.dp)
+    val shape = RoundedCornerShape(16.dp)
     val border = BorderStroke(1.dp, borderColor)
     
     val reticleModifier = if (showCornerReticles) {
@@ -78,7 +78,7 @@ fun CyberGuardCard(
             border = border,
             onClick = onClick
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 content()
             }
         }
@@ -89,7 +89,7 @@ fun CyberGuardCard(
             color = containerColor,
             border = border
         ) {
-            Column(modifier = Modifier.padding(16.dp)) {
+            Column(modifier = Modifier.padding(18.dp)) {
                 content()
             }
         }
@@ -126,20 +126,20 @@ fun SectionHeader(title: String, modifier: Modifier = Modifier) {
                 .height(13.dp)
                 .background(
                     brush = Brush.verticalGradient(
-                        colors = listOf(CyberNeonCyan, CyberBlue)
+                        colors = listOf(PrimaryRed, SignalYellow)
                     ),
-                    shape = CutCornerShape(1.dp)
+                    shape = RoundedCornerShape(2.dp)
                 )
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = "[ $title ]".uppercase(),
+            text = title.uppercase(),
             style = MaterialTheme.typography.labelMedium.copy(
-                fontFamily = FontFamily.Monospace,
+                fontFamily = FontFamily.SansSerif,
                 fontWeight = FontWeight.Bold
             ),
-            color = CyberBlue,
-            letterSpacing = 1.3.sp
+            color = TextPrimary,
+            letterSpacing = 1.1.sp
         )
     }
 }
@@ -176,9 +176,9 @@ fun StatusBadge(
 
     Surface(
         modifier = modifier,
-        shape = CutCornerShape(4.dp),
-        color = color.copy(alpha = 0.12f),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.5f))
+        shape = RoundedCornerShape(8.dp),
+        color = color.copy(alpha = 0.10f),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.35f))
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
@@ -199,7 +199,7 @@ fun StatusBadge(
                 Box(
                     modifier = Modifier
                         .size(5.dp)
-                        .background(color, CutCornerShape(1.dp))
+                        .background(color, RoundedCornerShape(2.dp))
                 )
             }
             Spacer(modifier = Modifier.width(6.dp))
@@ -290,7 +290,7 @@ fun TacticalEngineChip(
     val accentColor = if (isArmed) StatusOnline else StatusOffline
     Surface(
         modifier = modifier,
-        shape = CutCornerShape(4.dp),
+        shape = RoundedCornerShape(10.dp),
         color = HighlightSurface,
         border = BorderStroke(1.dp, accentColor.copy(alpha = 0.4f))
     ) {
@@ -301,7 +301,7 @@ fun TacticalEngineChip(
             Box(
                 modifier = Modifier
                     .size(5.dp)
-                    .background(accentColor, CutCornerShape(1.dp))
+                    .background(accentColor, RoundedCornerShape(2.dp))
             )
             Spacer(modifier = Modifier.width(6.dp))
             Column {
@@ -352,10 +352,12 @@ fun AnimatedScanningChamber(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
-            .clip(CutCornerShape(12.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(DeepSpaceBackground)
-            .border(1.dp, CyberBlue.copy(alpha = 0.4f), CutCornerShape(12.dp))
+            .border(1.dp, CyberBlue.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
     ) {
+        val scannerLaserColor = if (isScanning) StatusCritical else CyberNeonCyan
+
         // Holographic Grid Background & Corner Reticles
         Canvas(modifier = Modifier.fillMaxSize()) {
             val step = 20.dp.toPx()
@@ -393,7 +395,7 @@ fun AnimatedScanningChamber(
 
             // Sweeping Laser Beam
             val laserY = size.height * laserProgress
-            val laserColor = if (isScanning) StatusCritical else CyberNeonCyan
+            val laserColor = scannerLaserColor
             
             // Laser glow gradient
             drawRect(
@@ -510,7 +512,7 @@ fun CyberTextField(
             keyboardActions = keyboardActions,
             leadingIcon = leadingIcon,
             trailingIcon = trailingIcon,
-            shape = CutCornerShape(6.dp),
+            shape = RoundedCornerShape(10.dp),
             textStyle = MaterialTheme.typography.bodyMedium.copy(
                 color = TextPrimary,
                 fontFamily = FontFamily.Monospace
@@ -561,30 +563,30 @@ fun CyberButton(
     icon: @Composable (() -> Unit)? = null
 ) {
     val containerColor = when (variant) {
-        CyberButtonVariant.PRIMARY -> if (enabled) CyberNeonCyan else HighlightSurface
+        CyberButtonVariant.PRIMARY -> if (enabled) PrimaryRed else HighlightSurface
         CyberButtonVariant.OUTLINED -> HighlightSurface
         CyberButtonVariant.SECONDARY -> HighlightSurface
-        CyberButtonVariant.DESTRUCTIVE -> if (enabled) StatusCritical.copy(alpha = 0.2f) else HighlightSurface
+        CyberButtonVariant.DESTRUCTIVE -> if (enabled) Color(0xFFFBE9E7) else HighlightSurface
     }
 
     val contentColor = when (variant) {
-        CyberButtonVariant.PRIMARY -> if (enabled) DeepSpaceBackground else TextTertiary
-        CyberButtonVariant.OUTLINED -> if (enabled) CyberNeonCyan else TextTertiary
+        CyberButtonVariant.PRIMARY -> if (enabled) PureWhite else TextTertiary
+        CyberButtonVariant.OUTLINED -> if (enabled) SignalYellow else TextTertiary
         CyberButtonVariant.SECONDARY -> if (enabled) TextPrimary else TextTertiary
-        CyberButtonVariant.DESTRUCTIVE -> if (enabled) StatusCritical else TextTertiary
+        CyberButtonVariant.DESTRUCTIVE -> if (enabled) DeepRed else TextTertiary
     }
 
     val border = when (variant) {
-        CyberButtonVariant.OUTLINED -> BorderStroke(1.dp, if (enabled) CyberNeonCyan else DividerColor)
-        CyberButtonVariant.DESTRUCTIVE -> BorderStroke(1.dp, if (enabled) StatusCritical else DividerColor)
-        CyberButtonVariant.SECONDARY -> BorderStroke(1.dp, DividerColor)
+        CyberButtonVariant.OUTLINED -> BorderStroke(1.5.dp, if (enabled) SignalYellow else DividerColor)
+        CyberButtonVariant.DESTRUCTIVE -> BorderStroke(1.5.dp, if (enabled) DeepRed else DividerColor)
+        CyberButtonVariant.SECONDARY -> BorderStroke(1.dp, FieldBorderIdle)
         CyberButtonVariant.PRIMARY -> if (!enabled) BorderStroke(1.dp, DividerColor) else null
     }
 
     Button(
         onClick = onClick,
         enabled = enabled && !isLoading,
-        shape = CutCornerShape(6.dp),
+        shape = RoundedCornerShape(10.dp),
         border = border,
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,

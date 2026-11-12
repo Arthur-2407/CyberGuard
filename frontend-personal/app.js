@@ -70,12 +70,17 @@
 
     // 4. Custom Cloudflare Tunnel or explicit connection mode
     try {
-      const custom = localStorage.getItem("cyberguard_custom_tunnel");
-      if (custom && custom.trim()) return normalizeBase(custom);
       const mode = localStorage.getItem("cyberguard_connection_mode");
-      if (mode === "hybrid") {
+      if (mode === "local") {
+        return "http://127.0.0.1:3000";
+      } else if (mode === "deployed") {
+        if (typeof location !== "undefined" && location.hostname.includes("vercel.app")) return "";
+        return "https://cyberguard-backend-8rbz.onrender.com";
+      } else if (mode === "hybrid") {
         const active = localStorage.getItem("cyberguard_hybrid_active_base");
         if (active && active.trim()) return normalizeBase(active);
+        const custom = localStorage.getItem("cyberguard_custom_tunnel");
+        if (custom && custom.trim()) return normalizeBase(custom);
       }
     } catch {}
 

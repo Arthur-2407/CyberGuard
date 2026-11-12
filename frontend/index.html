@@ -25,7 +25,7 @@
     <div class="nav-brand">
       <div class="nav-logo" role="banner" id="nav-brand-logo" onclick="showTab('overview')" title="CyberGuard SOC AI">
         <div class="brand-logo-wrap" id="brand-logo-interactive">
-          <img src="/logo_full.png" alt="CyberGuard Logo" class="brand-logo-img" id="brand-logo-img" />
+          <img src="./logo_full.png" alt="CyberGuard Logo" class="brand-logo-img" id="brand-logo-img" />
           <div class="brand-logo-scanline" aria-hidden="true"></div>
           <div class="brand-logo-glow" aria-hidden="true"></div>
         </div>
@@ -74,38 +74,6 @@
     </div>
 
     <div class="nav-status">
-      <!-- Quantum Chroma Matrix Controller (Non-destructively hidden from UI per yellow box instruction) -->
-      <div class="quantum-chroma-widget" id="quantum-chroma-widget" style="display:none !important;" aria-hidden="true">
-        <button class="quantum-chroma-btn" id="quantum-chroma-toggle" onclick="toggleChromaMatrixMenu()">
-          <span class="chroma-disc-aura" id="chroma-current-aura"></span>
-          <span class="chroma-matrix-label" id="chroma-matrix-name">AMETHYST VOID</span>
-          <span class="chroma-chevron">▾</span>
-        </button>
-        <div class="quantum-chroma-dropdown" id="quantum-chroma-dropdown">
-          <div class="chroma-dropdown-header">TACTICAL CHROMA SPECTRUM</div>
-          <div class="chroma-option" id="chroma-opt-crimson" onclick="setQuantumTheme('crimson', true)">
-            <span class="chroma-color-dot" style="background:#ef4444;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">CRIMSON PROTOCOL</span></div>
-          </div>
-          <div class="chroma-option" id="chroma-opt-cyan" onclick="setQuantumTheme('cyan', true)">
-            <span class="chroma-color-dot" style="background:#00e5ff;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">CYBERSPACE CYAN</span></div>
-          </div>
-          <div class="chroma-option" id="chroma-opt-emerald" onclick="setQuantumTheme('emerald', true)">
-            <span class="chroma-color-dot" style="background:#10b981;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">EMERALD SOVEREIGN</span></div>
-          </div>
-          <div class="chroma-option active" id="chroma-opt-amethyst" onclick="setQuantumTheme('amethyst', true)">
-            <span class="chroma-color-dot" style="background:#a855f7;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">AMETHYST VOID</span></div>
-          </div>
-          <div class="chroma-option" id="chroma-opt-amber" onclick="setQuantumTheme('amber', true)">
-            <span class="chroma-color-dot" style="background:#f59e0b;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">SOLAR FLARE</span></div>
-          </div>
-        </div>
-      </div>
-
       <!-- Mode selector: navigating loads only one frontend runtime -->
       <a class="frontend-mode-switch" data-cg-mode-switch="personal" href="./personal/" title="Switch to CyberGuard Personal" aria-label="Switch to CyberGuard Personal">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h15l-3-3m3 3-3 3M20 17H5l3 3m-3-3 3-3"/></svg>
@@ -347,6 +315,51 @@
           </div>
           <button class="btn btn-secondary btn-xs" onclick="clearOverviewDrilldown()" title="Reset active drilldown filter">Clear Filter ✕</button>
         </div>
+
+        <!-- SOVEREIGN ANALYTICS: Unified Threat Parameter Matrix -->
+        <section class="card analytics-deck" id="sovereign-analytics" aria-labelledby="sovereign-analytics-title">
+          <div class="analytics-head">
+            <div class="analytics-head-text">
+              <h2 class="card-title" id="sovereign-analytics-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 4 5-7"/></svg>
+                Analysis &amp; Parameters
+              </h2>
+              <p class="analytics-sub">Consolidated view of every detection pipeline, severity band and confidence metric across the defence grid.</p>
+            </div>
+            <div class="analytics-head-actions">
+              <span class="analytics-live-tag"><span class="analytics-live-dot"></span>LIVE TELEMETRY</span>
+              <div class="chart-range-group" id="analytics-range-group">
+                <button class="chart-range-pill" onclick="setAnalyticsRange('24H', this)">24H</button>
+                <button class="chart-range-pill" onclick="setAnalyticsRange('7D', this)">7D</button>
+                <button class="chart-range-pill active" onclick="setAnalyticsRange('ALL', this)">ALL</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="analytics-grid">
+            <div class="analytics-chart-panel">
+              <div class="analytics-chart-legend">
+                <span><i class="legend-dot" style="background:#B3261E;"></i>Critical</span>
+                <span><i class="legend-dot" style="background:#E6812F;"></i>High</span>
+                <span><i class="legend-dot" style="background:#C9E265;"></i>Medium</span>
+                <span><i class="legend-dot" style="background:#4E9A6A;"></i>Low / Safe</span>
+                <span class="legend-line"><i></i>Mean confidence</span>
+              </div>
+              <div class="analytics-canvas-wrap">
+                <canvas id="sovereignAnalyticsChart" aria-label="Severity distribution and mean detection confidence over time"></canvas>
+              </div>
+              <div class="analytics-chart-foot" id="sovereignAnalyticsFoot">Computing parameters…</div>
+            </div>
+
+            <aside class="analytics-params-panel">
+              <h3 class="analytics-params-title">Detection parameters</h3>
+              <div class="analytics-param-rows" id="sovereignParameterRows">
+                <div class="analytics-param-empty">Awaiting telemetry…</div>
+              </div>
+              <div class="analytics-summary-grid" id="sovereignSummaryGrid"></div>
+            </aside>
+          </div>
+        </section>
 
         <!-- ROW 2: Threat Activity Timeline (Left) + Threat Severity Profile (Right) -->
         <div class="overview-grid-row overview-row-2">
@@ -945,21 +958,23 @@
               </div>
             </div>
             <div class="results-body" id="results-body">
-              <div class="acoustic-radar-holo">
-                <div class="acoustic-sonar-circle">
+              <div class="acoustic-radar-holo" id="voice-interactive-logo">
+                <div class="acoustic-sonar-circle" id="acoustic-sonar-circle" title="Acoustic Sonar Sensor">
                   <div class="acoustic-sonar-wave"></div>
                   <div class="acoustic-sonar-wave"></div>
-                  <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.6" style="filter:drop-shadow(0 0 8px rgba(0,212,255,0.6));">
+                  <svg class="acoustic-logo-svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.6" style="filter:drop-shadow(0 0 8px rgba(0,212,255,0.5));">
                     <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/>
                     <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
                     <line x1="12" y1="19" x2="12" y2="22"/>
+                    <line x1="8" y1="22" x2="16" y2="22"/>
                   </svg>
                 </div>
-                <div style="font-weight:700; color:#f8fafc; font-family:var(--font-mono); font-size:12px; letter-spacing:0.06em; margin-bottom:4px;">
+                <div class="acoustic-logo-title" id="acoustic-sensor-title">
+                  <span class="soc-pulse-dot" style="background:#00d4ff; box-shadow:0 0 6px #00d4ff;"></span>
                   ACOUSTIC SENSORS ONLINE
                 </div>
-                <div style="font-size:11px; color:#64748b; max-width:400px; line-height:1.5;">
-                  Drop an audio or video payload on the left to activate the 5-stage neural pipeline: VAD stripping, 1920-dim ECAPA embedding, and forensic deepfake risk assessment.
+                <div class="acoustic-logo-sub" id="acoustic-sensor-sub">
+                  Drop an audio or video file to start forensic evaluation.
                 </div>
               </div>
             </div>
@@ -3295,12 +3310,12 @@
           </div>
           <div class="auth-dossier-credentials">
             <div class="dossier-callsign-row">
-              <span class="dossier-callsign" id="auth-profile-username">admin</span>
-              <span class="auth-role-badge" id="auth-profile-role">ADMIN</span>
+              <span class="dossier-callsign" id="auth-profile-username">User</span>
+              <span class="auth-role-badge" id="auth-profile-role">USER</span>
               <span class="dossier-verif-tag" title="Cryptographically Verified Sovereign Session"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="display:inline;vertical-align:middle;margin-right:2px;"><polyline points="20 6 9 17 4 12"/></svg>VERIFIED</span>
             </div>
-            <div class="dossier-email" id="auth-profile-email">cyberguardadmin@gmail.com</div>
-            <div class="dossier-sub-clearance" id="auth-profile-clearance">CLEARANCE: LEVEL 5 ROOT COMMANDER</div>
+            <div class="dossier-email" id="auth-profile-email">user@cyberguard.local</div>
+            <div class="dossier-sub-clearance" id="auth-profile-clearance">CLEARANCE: DEFENSE OPERATOR</div>
           </div>
         </div>
 

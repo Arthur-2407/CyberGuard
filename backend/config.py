@@ -109,6 +109,7 @@ class PrivacyConfig:
 class StorageConfig:
     db_path: str = "data/cyberguard.db"
     database_url: str = ""
+    sync_interval_sec: int = 180
 
 
 @dataclass
@@ -146,6 +147,7 @@ class CyberGuardConfig:
     mitre_mapping_enabled: bool = True
     incident_management_enabled: bool = True
     simulation_mode_enabled: bool = True
+    prewarm_llm: bool = False
 
 
 @dataclass
@@ -383,6 +385,7 @@ def _build_settings(raw: dict) -> Settings:
                 or os.getenv("SUPABASE_DB_URL")
                 or storage_raw.get("database_url", "")
             ),
+            sync_interval_sec=int(os.getenv("DB_SYNC_INTERVAL_SEC", storage_raw.get("sync_interval_sec", 180))),
         ),
         upload=UploadConfig(
             max_file_size_bytes=upload_raw.get("max_file_size_bytes", 209715200),
@@ -412,6 +415,7 @@ def _build_settings(raw: dict) -> Settings:
             mitre_mapping_enabled=cyberguard_raw.get("mitre_mapping_enabled", True),
             incident_management_enabled=cyberguard_raw.get("incident_management_enabled", True),
             simulation_mode_enabled=cyberguard_raw.get("simulation_mode_enabled", True),
+            prewarm_llm=os.getenv("CYBERGUARD_PREWARM_LLM", str(cyberguard_raw.get("prewarm_llm", False))).lower() in ("true", "1", "yes"),
         ),
         virustotal=VirusTotalConfig(
             enabled=vt_enabled,

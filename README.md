@@ -249,8 +249,9 @@ CyberGuard's architecture operates as an **Edge-to-Core Reactive Defense Grid**.
   - **Mode B (Local Docker 127.0.0.1:3000):** Connects to local Docker container with bounded auto-reconnection (5s to 30s).
   - **Mode C (Hybrid Auto):** Automatically probes local port 3000, gracefully falling back to cloud.
 
-### 2. Personal Security Web HUD (`frontend-personal/`)
-- Purpose-built consumer and employee interface streamlining deepfake audio scanning, phishing URL validation, and suspicious QR payload extraction into a simplified interface.
+### 2. CyberGuard Workspace (`frontend/personal/`, served at `/`)
+- The single product interface: link, file, image, QR and voice checks, an activity history, and the overview analytics panel (severity distribution with mean confidence and engine status).
+- Ships one light theme only — pastel green, lime, deep green and orange on off-white, with the shield-fingerprint mark. No dark mode, no theme toggle.
 
 ### 3. Windows Desktop SOC Console (`desktop/`)
 - Packaged with **Electron 33.2.1** and **electron-builder 25.1.8** into a native 64-bit NSIS installer (`dist/windows/CyberGuard-Setup.exe`, ~79 MB).
@@ -586,8 +587,9 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 3000 --reload
 
 ---
 
-### Step 3: Web SOC Frontend Access
-- **Local Browser:** Navigate to `http://127.0.0.1:3000` to open the full glassmorphic SOC console.
+### Step 3: Web Application Access
+- **Local Browser:** Navigate to `http://127.0.0.1:3000` to open the CyberGuard workspace (single light interface: sovereign green, lime and orange).
+- **Retired routes:** The former SOC console entry points now resolve to the same workspace; there is no dark theme or theme switch anywhere in the product.
 - **Production Cloud Mirror:** Access the 24/7 web console at [https://cyber-guard-backend-ashen.vercel.app](https://cyber-guard-backend-ashen.vercel.app).
 - **Static GitHub Pages Mirror:** Access [https://arthur-2407.github.io/CyberGuard](https://arthur-2407.github.io/CyberGuard).
 

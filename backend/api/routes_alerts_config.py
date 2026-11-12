@@ -45,6 +45,109 @@ async def get_session_alerts(
     return {"session_id": session_id, "alerts": alerts}
 
 
+class ThreatAlertDispatchIn(BaseModel):
+    recipient: Optional[str] = None
+    alert_id: str
+    severity: str = "HIGH"
+    threat_title: str
+    sender: Optional[str] = None
+    domain: Optional[str] = None
+    indicators: List[str] = Field(default_factory=list)
+    llm_summary: Optional[str] = None
+
+
+@alerts_router.post("/dispatch-email")
+async def dispatch_security_alert_email(
+    payload: ThreatAlertDispatchIn,
+    current_user: Optional[UserModel] = Depends(get_optional_user),
+):
+    """
+    Dispatches an authoritative security alert notification from cyberguardadmin@gmail.com
+    to the verified authenticated user's email address upon confirmed HIGH or CRITICAL threats.
+    Enforces rate limits, deduplication, tamper-evident logging, and loop protection.
+    """
+    from backend.alerts.email_notifier import EmailNotifier
+    from backend.threats.models import ThreatEvent, ThreatCategory, RiskLevel
+
+    # 1. Resolve target recipient
+    target_email = payload.recipient
+    if not target_email and current_user and getattr(current_user, "email", None):
+        target_email = current_user.email
+
+    if not target_email or "@" not in target_email:
+        return {"status": "skipped", "reason": "NO_VALID_RECIPIENT"}
+
+    # 2. Strict loop protection: never alert on official system admin notifications
+    if target_email.strip().lower() == "cyberguardadmin@gmail.com":
+        return {"status": "skipped", "reason": "LOOP_PROTECTION_EXCLUDED"}
+
+    # 3. Strict severity gate: only HIGH and CRITICAL trigger transactional email dispatch
+    sev_str = (payload.severity or "HIGH").strip().upper()
+    if sev_str not in ("HIGH", "CRITICAL"):
+        return {"status": "skipped", "reason": f"SEVERITY_BELOW_THRESHOLD ({sev_str})"}
+
+    risk_enum = RiskLevel.CRITICAL if sev_str == "CRITICAL" else RiskLevel.HIGH
+
+    category_enum = ThreatCategory.PHISHING
+    if payload.domain:
+        category_enum = ThreatCategory.MALICIOUS_URL
+    elif "malware" in payload.threat_title.lower():
+        category_enum = ThreatCategory.MALWARE_INDICATOR
+
+    # 4. Construct authoritative ThreatEvent
+    evt = ThreatEvent(
+        event_id=payload.alert_id,
+        source="desktop_endpoint",
+        source_type="client",
+        modality="email" if payload.sender else ("url" if payload.domain else "endpoint"),
+        threat_category=category_enum,
+        severity=risk_enum,
+        confidence=0.92,
+        classification="THREAT_ALERT",
+        user_id=current_user.id if current_user else None,
+        user_email=target_email,
+        details={
+            "indicators": payload.indicators,
+            "llm_summary": payload.llm_summary,
+            "sender": payload.sender,
+            "domain": payload.domain,
+            "official_notifier": "cyberguardadmin@gmail.com",
+            "title": payload.threat_title
+        }
+    )
+
+    notifier = EmailNotifier()
+    result = await notifier.notify_threat_event(evt, user_email=target_email)
+    return {
+        "status": result.get("status", "dispatched"),
+        "alert_id": payload.alert_id,
+        "recipient": target_email,
+        "official_sender": "cyberguardadmin@gmail.com",
+        "result": result
+    }
+
+
+@alerts_router.get("/delivery-history")
+async def get_alert_delivery_history(
+    limit: int = 50,
+    current_user: Optional[UserModel] = Depends(get_optional_user),
+):
+    """
+    Retrieve durable security email alert outbox records and delivery status.
+    Scoped to user's identity unless administrator.
+    """
+    from backend.alerts.notification_dispatcher import get_notification_dispatcher
+    dispatcher = get_notification_dispatcher()
+    is_admin = False
+    u_id = None
+    if current_user:
+        is_admin = getattr(current_user, "role", "").lower() in ("admin", "role_admin")
+        u_id = None if is_admin else current_user.id
+    history = dispatcher.get_audit_history(limit=min(limit, 100), user_id=u_id)
+    return {"delivery_history": history, "count": len(history)}
+
+
+
 # ── Config Router ──────────────────────────────────────────────────────────────
 config_router = APIRouter(prefix="/api/config", tags=["Configuration"])
 

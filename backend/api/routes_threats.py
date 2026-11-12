@@ -3,6 +3,7 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
 import asyncio
+import collections
 import copy
 import json
 import logging
@@ -133,22 +134,21 @@ def _broadcast_threat_event(event: ThreatEvent):
     except Exception as exc:
         logger.debug(f"Threat event broadcast skipped: {exc}")
 
-    # Automated Email Dispatch: Triggered ONLY on HIGH or CRITICAL threats to the verified signed-in user
+    # Automated Centralized Threat Notification Dispatch: HIGH / CRITICAL ONLY with durable outbox
     try:
-        sev = getattr(event, "severity", None)
-        sev_str = sev.value if hasattr(sev, "value") else str(sev)
-        if str(sev_str).upper() in ("HIGH", "CRITICAL") and (event.user_id is not None or event.user_email):
-            from backend.alerts.email_notifier import get_email_notifier
-            notifier = get_email_notifier()
-            u_email = event.user_email
-            try:
-                import asyncio
-                loop = asyncio.get_running_loop()
-                loop.create_task(notifier.notify_threat_event(event, user_email=u_email))
-            except RuntimeError:
-                pass
+        from backend.alerts.notification_dispatcher import get_notification_dispatcher
+        dispatcher = get_notification_dispatcher()
+        loop = asyncio.get_running_loop()
+        loop.create_task(
+            dispatcher.dispatch_threat_event(
+                event=event,
+                user_id=getattr(event, "user_id", None),
+                user_email=getattr(event, "user_email", None),
+                background=True,
+            )
+        )
     except Exception as email_err:
-        logger.debug(f"Automated email dispatch trigger notice: {email_err}")
+        logger.debug(f"Central notification dispatch trigger notice: {email_err}")
 
 
 @router.post("/unified")
@@ -743,10 +743,31 @@ async def _run_urlhaus_lookup(
         }
 
 
+# In-memory thread-safe cache for threat intelligence searches
+_THREAT_SEARCH_CACHE: collections.OrderedDict = collections.OrderedDict()
+_MAX_SEARCH_CACHE_SIZE: int = 200
+
+
+@router.get("/search/status/{analysis_id}", response_model=ThreatEvent)
+async def get_threat_search_status(analysis_id: str):
+    """
+    Retrieve completed or cached threat intelligence analysis by analysis ID or IOC key.
+    Provides asynchronous result delivery resilience if frontend initial request times out.
+    """
+    if analysis_id in _THREAT_SEARCH_CACHE:
+        return _THREAT_SEARCH_CACHE[analysis_id]
+    raise HTTPException(
+        status_code=404,
+        detail=f"Threat intelligence analysis record '{analysis_id}' not found or expired."
+    )
+
+
 @router.get("/search", response_model=ThreatEvent)
 async def threat_intelligence_search(
     ioc: str,
-    correlation_id: Optional[str] = None
+    correlation_id: Optional[str] = None,
+    analysis_id: Optional[str] = None,
+    current_user: Optional[UserModel] = Depends(get_optional_user),
 ):
     """
     Sequential Two-Provider Threat Intelligence Search.
@@ -757,7 +778,7 @@ async def threat_intelligence_search(
     Returns a single combined report with provider provenance preserved.
     URLhaus results are only queried AFTER VirusTotal reaches a terminal state.
     """
-    analysis_id = str(uuid.uuid4())
+    analysis_id = analysis_id or str(uuid.uuid4())
     start_time = time.time()
     settings, incident_manager = _get_dependencies()
     vt_provider = get_virustotal_provider(settings)
@@ -805,6 +826,18 @@ async def threat_intelligence_search(
             ])
             local_risk = local_event.severity
             url_ti = local_event.threat_intelligence
+
+            if not is_local:
+                try:
+                    res_obj = await local_analyzer.resolver.resolve(canonical_ioc)
+                    if url_ti is not None:
+                        url_ti["resolution"] = res_obj.to_dict()
+                        url_ti["redirect_chain"] = [h.to_dict() for h in res_obj.redirect_chain]
+                        url_ti["redirect_count"] = res_obj.redirect_count
+                        url_ti["terminal_url"] = res_obj.terminal_url
+                        url_ti["page_metadata"] = res_obj.page_metadata.to_dict()
+                except Exception as r_err:
+                    logger.debug(f"SafeURLResolver notice: {r_err}")
         except Exception as err:
             logger.warning(f"Local URL heuristic analysis error: {err}")
     elif category == "ip":
@@ -1194,15 +1227,57 @@ async def threat_intelligence_search(
         recommended_actions.append("No defensive action required based on available intelligence.")
 
     # ── STEP 9: Threat Category ────────────────────────────────────────────────
-    if category == "hash":
+    verdict_res = None
+    hosting_intel = None
+    web_inspection = None
+
+    if category == "url":
+        from backend.analysis.url_verdict_engine import URLVerdictEngine
+        from backend.analysis.hosting_intelligence import HostingIntelligenceEngine
+        from backend.analysis.web_inspector import WebInspectionResult
+
+        hosting_intel = HostingIntelligenceEngine.evaluate(canonical_ioc)
+        dom_insp = live_intel.get("live_page_inspection", {})
+        web_insp_raw = live_intel.get("web_inspection")
+        if web_insp_raw and isinstance(web_insp_raw, dict):
+            web_inspection = WebInspectionResult.from_dict(web_insp_raw)
+        elif dom_insp.get("is_live"):
+            web_inspection = WebInspectionResult(is_live=True, status_code=dom_insp.get("status_code", 200))
+        else:
+            web_inspection = WebInspectionResult(is_live=False, status_code=dom_insp.get("status_code", 0))
+
+        resolution_data = url_ti.get("resolution") if url_ti else None
+
+        verdict_res = URLVerdictEngine.aggregate(
+            target_url=canonical_ioc,
+            is_local=is_local,
+            vt_report=vt_report,
+            uh_report=uh_report,
+            resolution=resolution_data,
+            hosting_intel=hosting_intel,
+            web_inspection=web_inspection,
+            local_heuristics={"local_risk_score": local_risk.value if hasattr(local_risk, 'value') else 0.0},
+            existing_evidences=combined_evidences,
+        )
+
+        risk_level = verdict_res.severity
+        threat_cat = verdict_res.threat_category
+        classification = verdict_res.classification
+        summary_text = verdict_res.explanation_summary
+        reasoning_text = verdict_res.explanation_reasoning
+        recommended_actions = verdict_res.recommended_actions
+    elif category == "hash":
         threat_cat = ThreatCategory.MALWARE_INDICATOR if risk_level != RiskLevel.SAFE else ThreatCategory.SAFE
+        classification = (
+            "MALICIOUS" if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+            else ("SUSPICIOUS" if risk_level == RiskLevel.MEDIUM else ("UNKNOWN_UNVERIFIED" if vt_status == "NOT_FOUND" and not is_local else "SAFE"))
+        )
     else:
         threat_cat = ThreatCategory.MALICIOUS_URL if risk_level != RiskLevel.SAFE else ThreatCategory.SAFE
-
-    classification = (
-        "MALICIOUS" if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
-        else ("SUSPICIOUS" if risk_level == RiskLevel.MEDIUM else "SAFE")
-    )
+        classification = (
+            "MALICIOUS" if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+            else ("SUSPICIOUS" if risk_level == RiskLevel.MEDIUM else ("UNKNOWN_UNVERIFIED" if vt_status == "NOT_FOUND" and not is_local else "SAFE"))
+        )
 
     # ── STEP 10: Build Combined Threat Intelligence Payload ───────────────────
     # All existing fields preserved (backward-compatible).
@@ -1355,6 +1430,28 @@ async def threat_intelligence_search(
         },
     }
 
+    if verdict_res:
+        threat_intel_payload["verdict"] = verdict_res.verdict.value
+        threat_intel_payload["verdict_display"] = verdict_res.verdict_display
+        threat_intel_payload["risk_score"] = verdict_res.risk_score
+        threat_intel_payload["confidence"] = verdict_res.confidence
+        threat_intel_payload["scan_coverage_pct"] = verdict_res.scan_coverage_pct
+        threat_intel_payload["evidence_strength"] = verdict_res.evidence_strength.value
+        threat_intel_payload["provider_states"] = verdict_res.provider_states
+        threat_intel_payload["hosting_intelligence"] = hosting_intel.to_dict() if hosting_intel else None
+        threat_intel_payload["web_inspection"] = web_inspection.to_dict() if web_inspection else None
+        threat_intel_payload["is_phishing"] = verdict_res.is_phishing
+        threat_intel_payload["is_malware"] = verdict_res.is_malware
+        threat_intel_payload["is_unverified"] = verdict_res.is_unverified
+        threat_intel_payload["url_verdict"] = verdict_res.to_dict()
+    else:
+        verdict_str = "SAFE" if risk_level == RiskLevel.SAFE else risk_level.value
+        if vt_status == "NOT_FOUND" and not is_local:
+            verdict_str = "UNKNOWN / UNVERIFIED"
+        threat_intel_payload["verdict"] = verdict_str
+        threat_intel_payload["verdict_display"] = verdict_str
+        threat_intel_payload["is_unverified"] = (verdict_str == "UNKNOWN / UNVERIFIED")
+
     total_duration_ms = (time.time() - start_time) * 1000
     logger.info(
         f"analysis_id={analysis_id} ioc_type={category} stage=COMPLETED "
@@ -1368,7 +1465,7 @@ async def threat_intelligence_search(
         modality="text",
         threat_category=threat_cat,
         severity=risk_level,
-        confidence=0.95 if (vt_status == "COMPLETED" and total_engines > 20) else (0.9 if is_local else 0.7),
+        confidence=verdict_res.confidence if verdict_res else (0.95 if (vt_status == "COMPLETED" and total_engines > 20) else (0.9 if is_local else 0.7)),
         classification=classification,
         evidence=combined_evidences,
         explanation=Explanation(
@@ -1384,8 +1481,16 @@ async def threat_intelligence_search(
         detector="CyberGuard + VirusTotalProvider + URLhausProvider",
         processing_time_ms=total_duration_ms,
         correlation_id=correlation_id,
+        user_id=getattr(current_user, "id", None) if hasattr(current_user, "id") and not hasattr(current_user, "dependency") else None,
+        user_email=getattr(current_user, "email", None) if hasattr(current_user, "email") and not hasattr(current_user, "dependency") else None,
         threat_intelligence=threat_intel_payload
     )
+
+    # Persist in fast search cache for frontend recovery and asynchronous status delivery
+    _THREAT_SEARCH_CACHE[analysis_id] = event
+    _THREAT_SEARCH_CACHE[canonical_ioc] = event
+    if len(_THREAT_SEARCH_CACHE) > _MAX_SEARCH_CACHE_SIZE:
+        _THREAT_SEARCH_CACHE.popitem(last=False)
 
     if incident_manager and risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL):
         try:
@@ -2093,14 +2198,17 @@ async def scan_malware_artifact(
             user=curr_user,
         )
 
-        # 3. If malicious, integrate with SOC IncidentManager
+        # 3. If malicious, integrate with SOC IncidentManager and dispatch authoritative security alert
+        threat_evt = report.get("event")
+        if threat_evt and isinstance(threat_evt, ThreatEvent):
+            _broadcast_threat_event(threat_evt)
+
         if report.get("status") == "MALICIOUS" or report.get("severity") in ("CRITICAL", "HIGH"):
             try:
                 from backend.incidents.incident_manager import get_incident_manager_for_user
                 incident_manager = get_incident_manager_for_user(curr_user)
-                if incident_manager:
-                    # Incident creation is handled by coordinator or incident_manager
-                    pass
+                if incident_manager and threat_evt and isinstance(threat_evt, ThreatEvent):
+                    incident_manager.process_event(threat_evt)
             except Exception as inc_err:
                 logger.warning(f"Malware SOC incident notice: {inc_err}")
 
@@ -2143,6 +2251,10 @@ async def explain_malware_verdict(
 
     # 1. Authoritative scan record retrieval with ownership validation
     rec = scan_store.get_raw_record(payload.scan_id)
+    if not rec and payload.sha256:
+        # Resolve via SHA-256 fallback if canonical scan_id not found directly
+        rec = scan_store.get_raw_record(payload.sha256)
+
     if not rec:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -2169,10 +2281,25 @@ async def explain_malware_verdict(
             return cached
 
     # 4. Generate evidence-grounded explanation
-    explanation = await generate_malware_explanation(rec.report, use_llm=True, timeout_sec=25.0)
+    explanation = await generate_malware_explanation(
+        rec.report,
+        use_llm=True,
+        timeout_sec=60.0,
+        force_refresh=payload.force_refresh,
+    )
 
-    # 5. Cache validated explanation
+    # Reconcile authoritative record identifiers in returned payload
+    explanation["scan_id"] = payload.scan_id
+    explanation["correlation_id"] = rec.correlation_id or payload.scan_id
+    if not explanation.get("sha256") and rec.sha256:
+        explanation["sha256"] = rec.sha256
+
+    # 5. Cache validated explanation across all authoritative keys
     scan_store.cache_explanation(payload.scan_id, explanation)
+    if rec.correlation_id and rec.correlation_id != payload.scan_id:
+        scan_store.cache_explanation(rec.correlation_id, explanation)
+    if rec.scan_id and rec.scan_id != payload.scan_id:
+        scan_store.cache_explanation(rec.scan_id, explanation)
     return explanation
 
 

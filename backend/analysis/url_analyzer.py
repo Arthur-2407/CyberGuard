@@ -17,6 +17,15 @@ from backend.threats.live_intel_scraper import get_live_intel_scraper
 from backend.analysis.url_resolver import (
     SafeURLResolver, ResolutionResult, ResolutionStatus, AssociatedIOC, PageMetadata, RedirectHop
 )
+from backend.analysis.hosting_intelligence import (
+    HostingIntelligenceEngine, HostingIntelligenceResult, HostingType, InfrastructureStatus
+)
+from backend.analysis.web_inspector import (
+    WebInspector, WebInspectionResult, InspectionState
+)
+from backend.analysis.url_verdict_engine import (
+    URLVerdictEngine, UnifiedVerdict, EvidenceStrength, ProviderAnalysisState, AggregatedVerdictResult, get_url_verdict_engine
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +90,30 @@ class URLAnalyzer:
 
         is_local = self._is_local_or_private(hostname)
         logger.info(f"analysis_id={analysis_id} stage=URL_NORMALIZATION status=COMPLETED canonical_url={canonical_url} is_local={is_local}")
+
+        # Hosting & Ephemeral Tunnel Intelligence
+        hosting_intel: Optional[HostingIntelligenceResult] = None
+        try:
+            hosting_intel = HostingIntelligenceEngine.evaluate(canonical_url)
+            if hosting_intel.is_ephemeral_tunnel:
+                local_risk_score = max(local_risk_score, hosting_intel.risk_contribution)
+            for h_ev in hosting_intel.indicators:
+                evidences.append(Evidence(
+                    evidence_type="hosting_intelligence",
+                    description=h_ev,
+                    value=canonical_url,
+                    severity_contribution=hosting_intel.risk_contribution,
+                    confidence=hosting_intel.confidence,
+                    source="CyberGuard",
+                ))
+            logger.info(
+                f"analysis_id={analysis_id} stage=HOSTING_INTEL "
+                f"type={hosting_intel.hosting_type.value} "
+                f"tunnel={hosting_intel.is_ephemeral_tunnel} "
+                f"provider={hosting_intel.provider_name}"
+            )
+        except Exception as h_err:
+            logger.warning(f"analysis_id={analysis_id} stage=HOSTING_INTEL error={h_err}")
 
         # ── STAGE 2: Safe Step-by-Step URL Resolution & Redirect Chain ────────
         res_start = time.time()
@@ -292,11 +325,21 @@ class URLAnalyzer:
                 "limitations": ["LOCAL / PRIVATE TARGET: URLhaus public threat intelligence does not apply to private addresses."],
             }
             correlation = self.correlation_engine.correlate(vt_report, uh_report, {"indicator": canonical_url, "category": "url"})
+            verdict_res = URLVerdictEngine.aggregate(
+                target_url=canonical_url,
+                is_local=is_local,
+                vt_report=vt_report,
+                uh_report=uh_report,
+                resolution=resolution,
+                hosting_intel=hosting_intel,
+                local_heuristics={"local_risk_score": local_risk_score},
+                existing_evidences=evidences,
+            )
             return self._build_event(
                 url=canonical_url,
                 source=source,
                 correlation_id=analysis_id,
-                severity=local_risk,
+                severity=local_risk if is_local else verdict_res.severity,
                 local_risk_score=local_risk_score,
                 is_pending=False,
                 evidences=evidences,
@@ -306,7 +349,11 @@ class URLAnalyzer:
                 is_local=is_local,
                 start_time=start_time,
                 timings={"local_ms": local_heuristics_ms, "vt_ms": 0.0, "uh_ms": 0.0, "corr_ms": 0.0, "resolution_ms": res_duration_ms},
+                threat_cat=ThreatCategory.SAFE if is_local else verdict_res.threat_category,
+                classification="SAFE" if is_local else verdict_res.classification,
                 resolution=resolution,
+                verdict_res=verdict_res,
+                hosting_intel=hosting_intel,
             )
 
         # ── STAGE 4: VirusTotal Intelligence (Provider 1) ──────────────────────
@@ -607,6 +654,9 @@ class URLAnalyzer:
         is_pending = (vt_status == "PENDING") or (uh_status == "WAITING_FOR_VIRUSTOTAL")
         custom_summary: Optional[str] = None
         custom_reasoning: Optional[str] = None
+        # Pending analyses short-circuit before aggregate() runs, so the baseline
+        # verdict must exist for the final event builder (it tolerates None).
+        verdict_res: Optional[AggregatedVerdictResult] = None
 
         if is_pending:
             final_severity = local_risk
@@ -736,14 +786,50 @@ class URLAnalyzer:
                 custom_summary = "Outbound resolution blocked: URL redirected to an internal, private, or loopback destination (SSRF attack blocked)."
                 custom_reasoning = resolution.error_message or "A redirect in the resolution chain targeted an RFC 1918 private address or loopback interface."
 
-            final_severity = risk_level
-            threat_cat = ThreatCategory.MALICIOUS_URL if final_severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) else (
-                ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY if final_severity == RiskLevel.MEDIUM else ThreatCategory.SAFE
+            # Construct WebInspectionResult from live_intel
+            web_inspection: Optional[WebInspectionResult] = None
+            dom_insp = live_intel.get("live_page_inspection", {})
+            web_insp_raw = live_intel.get("web_inspection")
+            if web_insp_raw and isinstance(web_insp_raw, dict):
+                web_inspection = WebInspectionResult.from_dict(web_insp_raw)
+            elif dom_insp.get("is_live"):
+                web_inspection = WebInspectionResult(
+                    is_live=True,
+                    status_code=dom_insp.get("status_code", 200),
+                    inspection_state=InspectionState.CLEAN,
+                    title=dom_insp.get("title", ""),
+                )
+            else:
+                web_inspection = WebInspectionResult(
+                    is_live=False,
+                    status_code=dom_insp.get("status_code", 0),
+                    inspection_state=InspectionState.UNREACHABLE,
+                )
+
+            verdict_res = URLVerdictEngine.aggregate(
+                target_url=canonical_url,
+                is_local=is_local,
+                vt_report=vt_report,
+                uh_report=uh_report,
+                resolution=resolution,
+                hosting_intel=hosting_intel,
+                web_inspection=web_inspection,
+                local_heuristics={"local_risk_score": local_risk_score},
+                existing_evidences=evidences,
             )
-            classification = (
-                "MALICIOUS" if final_severity in (RiskLevel.HIGH, RiskLevel.CRITICAL)
-                else ("SUSPICIOUS" if final_severity == RiskLevel.MEDIUM else "SAFE")
-            )
+
+            if is_pending:
+                final_severity = local_risk
+                classification = "PENDING_EXTERNAL_VERIFICATION"
+                threat_cat = ThreatCategory.UNKNOWN
+            else:
+                final_severity = verdict_res.severity
+                classification = verdict_res.classification
+                threat_cat = verdict_res.threat_category
+                if not custom_summary:
+                    custom_summary = verdict_res.explanation_summary
+                if not custom_reasoning:
+                    custom_reasoning = verdict_res.explanation_reasoning
 
         # Append external evidence items
         if vt_status == "COMPLETED":
@@ -805,6 +891,9 @@ class URLAnalyzer:
             custom_summary=custom_summary,
             custom_reasoning=custom_reasoning,
             live_intel=live_intel,
+            verdict_res=verdict_res,
+            hosting_intel=hosting_intel,
+            web_inspection=web_inspection,
         )
 
     def _build_event(
@@ -834,6 +923,9 @@ class URLAnalyzer:
         custom_summary: Optional[str] = None,
         custom_reasoning: Optional[str] = None,
         live_intel: Optional[Dict[str, Any]] = None,
+        verdict_res: Optional[AggregatedVerdictResult] = None,
+        hosting_intel: Optional[HostingIntelligenceResult] = None,
+        web_inspection: Optional[WebInspectionResult] = None,
     ) -> ThreatEvent:
         total_duration_ms = (time.time() - start_time) * 1000.0
         timings["total_ms"] = round(total_duration_ms, 1)
@@ -1090,13 +1182,38 @@ class URLAnalyzer:
             "can_finalize": not is_pending,
         }
 
+        if verdict_res:
+            threat_intel_payload["verdict"] = verdict_res.verdict.value
+            threat_intel_payload["verdict_display"] = verdict_res.verdict_display
+            threat_intel_payload["risk_score"] = verdict_res.risk_score
+            threat_intel_payload["confidence"] = verdict_res.confidence
+            threat_intel_payload["scan_coverage_pct"] = verdict_res.scan_coverage_pct
+            threat_intel_payload["evidence_strength"] = verdict_res.evidence_strength.value
+            threat_intel_payload["provider_states"] = verdict_res.provider_states
+            threat_intel_payload["is_phishing"] = verdict_res.is_phishing
+            threat_intel_payload["is_malware"] = verdict_res.is_malware
+            threat_intel_payload["is_unverified"] = verdict_res.is_unverified
+            threat_intel_payload["url_verdict"] = verdict_res.to_dict()
+        else:
+            threat_intel_payload["verdict"] = "SAFE" if severity == RiskLevel.SAFE else severity.value
+            threat_intel_payload["verdict_display"] = "SAFE" if severity == RiskLevel.SAFE else severity.value
+
+        threat_intel_payload["hosting_intelligence"] = hosting_intel.to_dict() if hosting_intel else None
+        threat_intel_payload["web_inspection"] = web_inspection.to_dict() if web_inspection else None
+
+        if verdict_res and not (custom_summary and custom_reasoning):
+            summary = verdict_res.explanation_summary
+            reasoning = verdict_res.explanation_reasoning
+            limitations = verdict_res.explanation_limitations
+            recommended_actions = verdict_res.recommended_actions
+
         return ThreatEvent(
             source=source,
             source_type="url",
             modality="text",
             threat_category=threat_cat,
             severity=severity,
-            confidence=0.95 if evidences else 1.0,
+            confidence=verdict_res.confidence if verdict_res else (0.95 if evidences else 1.0),
             classification=classification,
             evidence=evidences,
             explanation=Explanation(
