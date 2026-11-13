@@ -318,7 +318,8 @@ async def analyze_deepfake(
 async def analyze_image_forensics(
     file: UploadFile = File(...),
     source: str = Form("image_upload"),
-    correlation_id: Optional[str] = Form(None)
+    correlation_id: Optional[str] = Form(None),
+    reference_file: Optional[UploadFile] = File(None),
 ):
     """
     Dedicated General Image & Deepfake Forensic Analysis Endpoint.
@@ -331,12 +332,27 @@ async def analyze_image_forensics(
 
     coordinator = DeepfakeCoordinator(settings, voice_detector)
     content = await file.read()
+    reference_content = None
+    reference_filename = None
+    if reference_file is not None:
+        max_reference_bytes = int(settings.upload.max_file_size_bytes)
+        reference_content = await reference_file.read(max_reference_bytes + 1)
+        if len(reference_content) > max_reference_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Reference image exceeds the maximum allowed size of {max_reference_bytes // (1024 * 1024)} MB.",
+            )
+        if not reference_content:
+            raise HTTPException(status_code=422, detail="The supplied reference image is empty.")
+        reference_filename = reference_file.filename
 
     event = coordinator.analyze(
         media_bytes=content,
         filename=file.filename or "uploaded_image.png",
         source=source,
-        correlation_id=correlation_id
+        correlation_id=correlation_id,
+        reference_bytes=reference_content,
+        reference_filename=reference_filename,
     )
 
     if incident_manager:
