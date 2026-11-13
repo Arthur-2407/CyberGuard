@@ -53,6 +53,251 @@ class ImageForensicsEngine:
 
         return ImageAnalysisResult(metrics, evidences, prob)
 
+    def compare_with_reference(self, image: Image.Image, reference: Image.Image) -> Dict[str, Any]:
+        """
+        Align an analyst-supplied reference image and localize material visual differences.
+
+        A difference is not automatically an edit: motion, lighting, viewpoint changes,
+        resampling, and other capture differences can also produce changed regions.
+        """
+        import cv2
+        from PIL import ImageOps
+
+        cfg = self.config
+        target_rgb = ImageOps.exif_transpose(image).convert("RGB")
+        reference_rgb = ImageOps.exif_transpose(reference).convert("RGB")
+        target_size = target_rgb.size
+        reference_size = reference_rgb.size
+
+        def _resize_for_analysis(pil_image: Image.Image):
+            width, height = pil_image.size
+            limit = max(64, int(cfg.reference_max_dimension))
+            scale = min(1.0, limit / float(max(width, height)))
+            if scale < 1.0:
+                size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+                pil_image = pil_image.resize(size, Image.Resampling.LANCZOS)
+            return np.asarray(pil_image, dtype=np.uint8), scale
+
+        target_array, _target_scale = _resize_for_analysis(target_rgb)
+        reference_array, reference_scale = _resize_for_analysis(reference_rgb)
+        target_gray = cv2.cvtColor(target_array, cv2.COLOR_RGB2GRAY)
+        reference_gray = cv2.cvtColor(reference_array, cv2.COLOR_RGB2GRAY)
+
+        def _not_comparable(reason: str, **details: Any) -> Dict[str, Any]:
+            return {
+                "status": "NOT_COMPARABLE",
+                "difference_detected": False,
+                "reason": reason,
+                "target_dimensions": [int(target_size[0]), int(target_size[1])],
+                "reference_dimensions": [int(reference_size[0]), int(reference_size[1])],
+                "alignment": details,
+                "interpretation": "A failed comparison is not evidence that the image is unmodified.",
+            }
+
+        orb = cv2.ORB_create(
+            nfeatures=max(500, int(cfg.reference_max_features)),
+            scaleFactor=1.2,
+            nlevels=8,
+            edgeThreshold=15,
+            fastThreshold=10,
+        )
+        target_keypoints, target_descriptors = orb.detectAndCompute(target_gray, None)
+        reference_keypoints, reference_descriptors = orb.detectAndCompute(reference_gray, None)
+        if target_descriptors is None or reference_descriptors is None:
+            return _not_comparable("Insufficient visual features for reliable registration.")
+
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+        try:
+            candidate_matches = matcher.knnMatch(target_descriptors, reference_descriptors, k=2)
+        except cv2.error as exc:
+            return _not_comparable(f"Feature matching failed: {exc}")
+
+        good_matches = [
+            first
+            for pair in candidate_matches if len(pair) == 2
+            for first, second in [pair]
+            if first.distance < float(cfg.reference_match_ratio) * second.distance
+        ]
+        if len(good_matches) < int(cfg.reference_min_inliers):
+            return _not_comparable(
+                "Too few reliable feature matches to establish that the images show the same scene.",
+                feature_matches=len(good_matches),
+            )
+
+        source_points = np.float32(
+            [target_keypoints[match.queryIdx].pt for match in good_matches]
+        ).reshape(-1, 1, 2)
+        destination_points = np.float32(
+            [reference_keypoints[match.trainIdx].pt for match in good_matches]
+        ).reshape(-1, 1, 2)
+        try:
+            homography, inlier_mask = cv2.findHomography(
+                source_points,
+                destination_points,
+                cv2.RANSAC,
+                float(cfg.reference_ransac_reprojection_px),
+                maxIters=2000,
+                confidence=0.995,
+            )
+        except cv2.error as exc:
+            return _not_comparable(f"Geometric registration failed: {exc}", feature_matches=len(good_matches))
+
+        if homography is None or inlier_mask is None or not np.isfinite(homography).all():
+            return _not_comparable("The images could not be geometrically registered.", feature_matches=len(good_matches))
+
+        inliers = int(inlier_mask.sum())
+        inlier_ratio = float(inliers / max(1, len(good_matches)))
+        if inliers < int(cfg.reference_min_inliers) or inlier_ratio < float(cfg.reference_min_inlier_ratio):
+            return _not_comparable(
+                "Reference alignment did not meet the configured inlier requirements.",
+                feature_matches=len(good_matches),
+                inliers=inliers,
+                inlier_ratio=round(inlier_ratio, 4),
+            )
+
+        target_height, target_width = target_gray.shape
+        reference_height, reference_width = reference_gray.shape
+        target_corners = np.float32([
+            [0, 0], [target_width - 1, 0],
+            [target_width - 1, target_height - 1], [0, target_height - 1],
+        ]).reshape(-1, 1, 2)
+        projected_corners = cv2.perspectiveTransform(target_corners, homography).reshape(-1, 2)
+        if not np.isfinite(projected_corners).all():
+            return _not_comparable("The estimated alignment transform is numerically unstable.")
+        projected_area = abs(float(cv2.contourArea(projected_corners.astype(np.float32))))
+        reference_area = float(reference_width * reference_height)
+        coverage_ratio = projected_area / max(reference_area, 1.0)
+        if coverage_ratio < 0.30 or coverage_ratio > 3.0:
+            return _not_comparable(
+                "The estimated transform implies an implausible scale or overlap.",
+                feature_matches=len(good_matches),
+                inliers=inliers,
+                inlier_ratio=round(inlier_ratio, 4),
+                projected_coverage_ratio=round(coverage_ratio, 4),
+            )
+
+        warped_target = cv2.warpPerspective(
+            target_array,
+            homography,
+            (reference_width, reference_height),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(0, 0, 0),
+        )
+        source_validity = np.full((target_height, target_width), 255, dtype=np.uint8)
+        valid_mask = cv2.warpPerspective(
+            source_validity,
+            homography,
+            (reference_width, reference_height),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+        valid_mask = cv2.erode(valid_mask, np.ones((3, 3), dtype=np.uint8))
+        valid_pixels = valid_mask > 0
+        if int(valid_pixels.sum()) < max(1024, int(reference_area * 0.10)):
+            return _not_comparable("The registered images have insufficient common visible area.")
+
+        reference_lab = cv2.cvtColor(reference_array, cv2.COLOR_RGB2LAB).astype(np.float32)
+        target_lab = cv2.cvtColor(warped_target, cv2.COLOR_RGB2LAB).astype(np.float32)
+        lab_distance = np.sqrt(np.mean(np.square(reference_lab - target_lab), axis=2))
+        lab_distance = cv2.GaussianBlur(lab_distance, (0, 0), sigmaX=1.0, sigmaY=1.0)
+
+        baseline = lab_distance[valid_pixels]
+        baseline_median = float(np.median(baseline))
+        baseline_mad = float(np.median(np.abs(baseline - baseline_median)))
+        adaptive_floor = baseline_median + (
+            float(cfg.reference_diff_mad_multiplier) * 1.4826 * baseline_mad
+        )
+        decision_threshold = max(float(cfg.reference_diff_min_lab_distance), adaptive_floor)
+        difference_mask = ((lab_distance > decision_threshold) & valid_pixels).astype(np.uint8)
+
+        kernel_size = max(3, int(cfg.reference_morphology_kernel))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        difference_mask = cv2.morphologyEx(difference_mask, cv2.MORPH_CLOSE, kernel)
+        difference_mask = cv2.morphologyEx(
+            difference_mask,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        )
+        difference_mask = (difference_mask > 0).astype(np.uint8)
+
+        component_count, component_labels, component_stats, _ = cv2.connectedComponentsWithStats(
+            difference_mask, connectivity=8
+        )
+        valid_area = max(1, int(valid_pixels.sum()))
+        regions = []
+        for component_index in range(1, component_count):
+            x, y, width, height, area = [int(value) for value in component_stats[component_index]]
+            area_ratio = float(area / valid_area)
+            if area < int(cfg.reference_min_component_area) or area_ratio < float(cfg.reference_min_changed_area_ratio):
+                continue
+            region_mask = component_labels == component_index
+            mean_distance = float(np.mean(lab_distance[region_mask]))
+            regions.append({
+                "bbox": [
+                    int(round(x / reference_scale)),
+                    int(round(y / reference_scale)),
+                    int(round(width / reference_scale)),
+                    int(round(height / reference_scale)),
+                ],
+                "area_pixels": int(round(area / (reference_scale ** 2))),
+                "area_ratio": round(area_ratio, 6),
+                "mean_lab_distance": round(mean_distance, 3),
+            })
+        regions.sort(key=lambda region: region["area_pixels"], reverse=True)
+        regions = regions[:25]
+
+        changed_pixels = int(difference_mask.sum())
+        changed_ratio = float(changed_pixels / valid_area)
+        difference_detected = bool(regions)
+        heatmap_scale = max(float(np.percentile(baseline, 99.5)) - decision_threshold, 1.0)
+        heatmap = cv2.applyColorMap(
+            np.clip((lab_distance - decision_threshold) * (255.0 / heatmap_scale), 0, 255).astype(np.uint8),
+            cv2.COLORMAP_TURBO,
+        )
+        reference_bgr = cv2.cvtColor(reference_array, cv2.COLOR_RGB2BGR)
+        overlay = cv2.addWeighted(reference_bgr, 0.58, heatmap, 0.42, 0.0)
+        overlay[~valid_pixels] = reference_bgr[~valid_pixels]
+        encoded_ok, encoded_heatmap = cv2.imencode(
+            ".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 82]
+        )
+        heatmap_base64 = (
+            base64.b64encode(encoded_heatmap.tobytes()).decode("ascii")
+            if encoded_ok else None
+        )
+
+        return {
+            "status": "COMPARABLE",
+            "difference_detected": difference_detected,
+            "difference_type": "MATERIAL_REFERENCE_DIFFERENCES" if difference_detected else "NO_SIGNIFICANT_DIFFERENCE_DETECTED",
+            "changed_pixel_ratio": round(changed_ratio, 6),
+            "changed_pixel_percent": round(changed_ratio * 100.0, 3),
+            "component_count": len(regions),
+            "largest_region": regions[0] if regions else None,
+            "regions": regions,
+            "difference_threshold_lab_distance": round(decision_threshold, 3),
+            "baseline_lab_distance_median": round(baseline_median, 3),
+            "baseline_lab_distance_mad": round(baseline_mad, 3),
+            "difference_heatmap_base64": heatmap_base64,
+            "target_dimensions": [int(target_size[0]), int(target_size[1])],
+            "reference_dimensions": [int(reference_size[0]), int(reference_size[1])],
+            "alignment": {
+                "method": "ORB_FEATURES_RANSAC_HOMOGRAPHY",
+                "feature_matches": len(good_matches),
+                "inliers": inliers,
+                "inlier_ratio": round(inlier_ratio, 4),
+                "projected_coverage_ratio": round(coverage_ratio, 4),
+            },
+            "interpretation": (
+                "Material pixel differences are localized relative to the supplied reference. "
+                "They may result from object movement, lighting, capture changes, retouching, or removal; "
+                "this comparison does not by itself establish AI generation or the cause of the changes."
+            ),
+        }
+
     def analyze(self, img: Image.Image) -> Tuple[Dict[str, Any], List[Evidence], float]:
         """
         Execute full multi-domain forensic inspection.
