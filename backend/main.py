@@ -599,7 +599,7 @@ _PERSONAL_DIR = _FRONTEND_DIR / "personal"
 if _FRONTEND_DIR.exists():
     app.mount(
         "/static",
-        StaticFiles(directory=str(_PERSONAL_DIR if _PERSONAL_DIR.exists() else _FRONTEND_DIR)),
+        StaticFiles(directory=str(_FRONTEND_DIR)),
         name="static",
     )
 
@@ -654,9 +654,9 @@ if _FRONTEND_DIR.exists():
             name="personal_assets",
         )
 
-    # The product now ships a single interface: the light personal workspace.
-    # Legacy SOC entry points resolve to it so no dark console can be reached.
     def _ui_file(name: str) -> Path:
+        if (_FRONTEND_DIR / name).exists():
+            return _FRONTEND_DIR / name
         if _PERSONAL_DIR.exists() and (_PERSONAL_DIR / name).exists():
             return _PERSONAL_DIR / name
         return _FRONTEND_DIR / name
@@ -668,7 +668,7 @@ if _FRONTEND_DIR.exists():
     @app.get("/alerts", include_in_schema=False)
     async def serve_frontend():
         return FileResponse(
-            str(_ui_file("index.html")),
+            str(_FRONTEND_DIR / "index.html"),
             media_type="text/html",
             headers={"Cache-Control": "no-cache, must-revalidate"},
         )
@@ -676,7 +676,7 @@ if _FRONTEND_DIR.exists():
     @app.get("/styles.css", include_in_schema=False)
     async def serve_styles():
         return FileResponse(
-            str(_ui_file("styles.css")),
+            str(_FRONTEND_DIR / "styles.css"),
             media_type="text/css",
             headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
         )
@@ -684,7 +684,7 @@ if _FRONTEND_DIR.exists():
     @app.get("/app.js", include_in_schema=False)
     async def serve_app():
         return FileResponse(
-            str(_ui_file("app.js")),
+            str(_FRONTEND_DIR / "app.js"),
             media_type="application/javascript",
             headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
         )

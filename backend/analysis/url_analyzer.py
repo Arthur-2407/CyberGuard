@@ -17,6 +17,15 @@ from backend.threats.live_intel_scraper import get_live_intel_scraper
 from backend.analysis.url_resolver import (
     SafeURLResolver, ResolutionResult, ResolutionStatus, AssociatedIOC, PageMetadata, RedirectHop
 )
+from backend.threats.hosting_intelligence import HostingIntelligenceAnalyzer, HostingContext
+from backend.analysis.phishing_engine import PhishingDetectionEngine, PhishingEvaluation
+from backend.analysis.malware_url_engine import MalwareURLEngine, MalwareEvaluation
+from backend.analysis.url_verdict_engine import (
+    URLVerdictEngine, URLVerdictResult,
+    VERDICT_PHISHING, VERDICT_MALWARE, VERDICT_PHISHING_AND_MALWARE,
+    VERDICT_SUSPICIOUS, VERDICT_UNKNOWN_UNVERIFIED, VERDICT_NO_KNOWN_THREATS,
+    DISPLAY_LABELS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +275,9 @@ class URLAnalyzer:
 
         logger.info(f"analysis_id={analysis_id} stage=LOCAL_HEURISTICS status=COMPLETED risk_score={local_risk_score:.2f} local_risk={local_risk.value} duration_ms={local_heuristics_ms:.1f}")
 
+        # Hosting context analysis
+        hosting_ctx = HostingIntelligenceAnalyzer.analyze_url(canonical_url)
+
         # If local-only mode requested or indicator is local private target
         if local_only or is_local:
             vt_report = {
@@ -292,11 +304,28 @@ class URLAnalyzer:
                 "limitations": ["LOCAL / PRIVATE TARGET: URLhaus public threat intelligence does not apply to private addresses."],
             }
             correlation = self.correlation_engine.correlate(vt_report, uh_report, {"indicator": canonical_url, "category": "url"})
+            phishing_eval = PhishingDetectionEngine.evaluate(
+                url=canonical_url,
+                hostname=hostname,
+                hosting_ctx=hosting_ctx,
+            )
+            malware_eval = MalwareURLEngine.evaluate(url=canonical_url)
+            verdict_result = URLVerdictEngine.synthesize_verdict(
+                url=canonical_url,
+                phishing_eval=phishing_eval,
+                malware_eval=malware_eval,
+                hosting_ctx=hosting_ctx,
+                vt_report=vt_report,
+                uh_report=uh_report,
+                live_intel=None,
+                resolution_result=resolution,
+                is_local=is_local,
+            )
             return self._build_event(
                 url=canonical_url,
                 source=source,
                 correlation_id=analysis_id,
-                severity=local_risk,
+                severity=verdict_result.severity if not is_local else local_risk,
                 local_risk_score=local_risk_score,
                 is_pending=False,
                 evidences=evidences,
@@ -307,6 +336,10 @@ class URLAnalyzer:
                 start_time=start_time,
                 timings={"local_ms": local_heuristics_ms, "vt_ms": 0.0, "uh_ms": 0.0, "corr_ms": 0.0, "resolution_ms": res_duration_ms},
                 resolution=resolution,
+                verdict_result=verdict_result,
+                phishing_eval=phishing_eval,
+                malware_eval=malware_eval,
+                hosting_ctx=hosting_ctx,
             )
 
         # ── STAGE 4: VirusTotal Intelligence (Provider 1) ──────────────────────
@@ -608,142 +641,147 @@ class URLAnalyzer:
         custom_summary: Optional[str] = None
         custom_reasoning: Optional[str] = None
 
-        if is_pending:
-            final_severity = local_risk
-            classification = "PENDING_EXTERNAL_VERIFICATION"
-            threat_cat = ThreatCategory.UNKNOWN
-        else:
-            risk_level = local_risk
-
-            # VirusTotal contribution for scanned URL
-            if vt_status == "COMPLETED":
-                summary_dict = vt_report.get("summary", {})
-                malicious = summary_dict.get("malicious", 0) or vt_report.get("malicious_count", 0)
-                suspicious = summary_dict.get("suspicious", 0) or vt_report.get("suspicious_count", 0)
-
-                if malicious >= 5:
-                    risk_level = RiskLevel.CRITICAL
-                elif malicious >= 1:
-                    risk_level = self._max_risk(risk_level, RiskLevel.HIGH)
-                elif suspicious >= 2:
-                    risk_level = self._max_risk(risk_level, RiskLevel.MEDIUM)
-                elif suspicious >= 1:
-                    risk_level = self._max_risk(risk_level, RiskLevel.LOW)
-
-            # URLhaus direct contribution for scanned URL
-            if uh_report.get("matched", False):
-                if risk_level in (RiskLevel.SAFE, RiskLevel.LOW):
-                    risk_level = RiskLevel.MEDIUM
-                if uh_report.get("classification") == "malware_distribution_url":
-                    risk_level = self._max_risk(risk_level, RiskLevel.HIGH)
-
-            # Forensics: Associated Threat IOC evaluation (URLhaus recorded malware URL)
-            has_associated_malware = False
-            for ioc in associated_iocs:
-                if ioc.scope == "URLHAUS_RECORDED_MALWARE_URL":
-                    ioc_uh = ioc.intelligence.get("urlhaus", {})
-                    ioc_vt = ioc.intelligence.get("virustotal", {})
-                    vt_mal = ioc_vt.get("malicious", 0)
-                    if ioc_uh.get("matched") or vt_mal > 0 or ioc.threat or ioc.urlhaus_record_id:
-                        has_associated_malware = True
-                        evidences.append(Evidence(
-                            evidence_type="urlhaus_recorded_malware_url",
-                            description=(
-                                f"Landing resource/report references URLhaus-tracked malware URL: '{ioc.value}'. "
-                                f"Threat: {ioc.threat or 'malware_download'}. URL status: {ioc.url_status or 'tracked'}."
-                            ),
-                            value=ioc.value,
-                            severity_contribution=0.85,
-                            confidence=0.95,
-                            source="URLhaus"
-                        ))
-
-            # Live DOM Inspection & OSINT Evidence Contribution
-            dom_insp = live_intel.get("live_page_inspection", {})
-            if dom_insp.get("has_credential_forms"):
-                evidences.append(Evidence(
-                    evidence_type="credential_harvesting_form",
-                    description="Live DOM Inspection: Password/credential input field detected on live destination page (Active Phishing Probe).",
-                    value=canonical_url,
-                    severity_contribution=0.8,
-                    confidence=0.95,
-                    source="Playwright+BS4"
-                ))
-                risk_level = self._max_risk(risk_level, RiskLevel.HIGH)
-
-            for susp_ind in dom_insp.get("suspicious_indicators", []):
-                if "password input" not in susp_ind.lower():
+        # Forensics: Associated Threat IOC evaluation (URLhaus recorded malware URL)
+        has_associated_malware = False
+        for ioc in associated_iocs:
+            if ioc.scope == "URLHAUS_RECORDED_MALWARE_URL":
+                ioc_uh = ioc.intelligence.get("urlhaus", {})
+                ioc_vt = ioc.intelligence.get("virustotal", {})
+                vt_mal = ioc_vt.get("malicious", 0)
+                if ioc_uh.get("matched") or vt_mal > 0 or ioc.threat or ioc.urlhaus_record_id:
+                    has_associated_malware = True
                     evidences.append(Evidence(
-                        evidence_type="live_dom_indicator",
-                        description=f"Live DOM Analysis: {susp_ind}",
-                        value=canonical_url,
-                        severity_contribution=0.35,
-                        confidence=0.88,
-                        source="BeautifulSoup4"
+                        evidence_type="urlhaus_recorded_malware_url",
+                        description=(
+                            f"Landing resource/report references URLhaus-tracked malware URL: '{ioc.value}'. "
+                            f"Threat: {ioc.threat or 'malware_download'}. URL status: {ioc.url_status or 'tracked'}."
+                        ),
+                        value=ioc.value,
+                        severity_contribution=0.85,
+                        confidence=0.95,
+                        source="URLhaus"
                     ))
 
-            osint_hits = live_intel.get("osint", {}).get("hits_count", 0)
-            if osint_hits > 0:
+        if has_associated_malware:
+            ioc_threat_str = (ioc.threat if 'ioc' in locals() and ioc else None) or "malware_download"
+            is_direct_report_resolution = bool(
+                terminal_url and provider_report_url and terminal_url.rstrip("/").lower() == provider_report_url.rstrip("/").lower()
+            )
+            if is_direct_report_resolution:
+                custom_summary = (
+                    f"The submitted URL resolved via redirect to a URLhaus database report ({provider_report_url}). "
+                    f"The report documents an active malware-distribution target ({recorded_malware_url}). "
+                    "CyberGuard distinguishes the terminal report page from the recorded malware URL, "
+                    "and flags the submitted link due to its direct resolution to malware tracking intelligence."
+                )
+                custom_reasoning = (
+                    f"Resolution followed {resolution.redirect_count if resolution else 0} redirect hop(s) terminating at URLhaus database record #{uh_id}. "
+                    f"The URLhaus database tracks active malware URL '{recorded_malware_url}' (threat: {ioc_threat_str}). "
+                    "A successful HTTP 200 response from the URLhaus report page indicates successful retrieval of the research page, "
+                    "NOT that the referenced malware URL is harmless."
+                )
+            else:
+                custom_summary = (
+                    f"The submitted URL resolved via redirect to landing page ({terminal_url}), "
+                    f"which references a URLhaus database report ({provider_report_url}). "
+                    f"The report documents an active malware-distribution target ({recorded_malware_url}). "
+                    "CyberGuard distinguishes the primary URL and landing page from the referenced threat IOC, "
+                    "and evaluates elevated risk based on association with tracked malware intelligence."
+                )
+                custom_reasoning = (
+                    f"Network resolution reached landing page '{terminal_url}' (HTTP {terminal_status_code or 200}), "
+                    f"which contained a reference to URLhaus database record #{uh_id}. "
+                    f"The URLhaus database tracks active malware URL '{recorded_malware_url}' (threat: {ioc_threat_str}). "
+                    f"Primary IOC '{canonical_url}' has no direct provider detections, but risk is elevated "
+                    f"due to association with tracked malware distribution."
+                )
+
+        # SSRF blocked redirect target check
+        if resolution and resolution.status == ResolutionStatus.BLOCKED_REDIRECT_TARGET:
+            custom_summary = "Outbound resolution blocked: URL redirected to an internal, private, or loopback destination (SSRF attack blocked)."
+            custom_reasoning = resolution.error_message or "A redirect in the resolution chain targeted an RFC 1918 private address or loopback interface."
+
+        # 1. Ephemeral tunnel & hosting context analysis
+        resolution_hops = [h.to_url for h in resolution.redirect_chain] if resolution else []
+        hosting_ctx = HostingIntelligenceAnalyzer.analyze(canonical_url, resolution_hops=resolution_hops)
+
+        # 2. Live DOM & Page Content inspection
+        dom_insp = live_intel.get("live_page_inspection", {})
+        page_content = dom_insp.get("raw_html") or dom_insp.get("body_text", "")
+        if dom_insp.get("has_credential_forms"):
+            evidences.append(Evidence(
+                evidence_type="credential_harvesting_form",
+                description="Live DOM Inspection: Password/credential input field detected on live destination page (Active Phishing Probe).",
+                value=canonical_url,
+                severity_contribution=0.8,
+                confidence=0.95,
+                source="Playwright+BS4"
+            ))
+
+        for susp_ind in dom_insp.get("suspicious_indicators", []):
+            if "password input" not in susp_ind.lower():
                 evidences.append(Evidence(
-                    evidence_type="live_osint_warning",
-                    description=f"DuckDuckGo OSINT: Found {osint_hits} real-time intelligence record(s) identifying security warnings or threat discussions for target domain.",
+                    evidence_type="live_dom_indicator",
+                    description=f"Live DOM Analysis: {susp_ind}",
                     value=canonical_url,
-                    severity_contribution=0.3,
-                    confidence=0.85,
-                    source="DuckDuckGoOSINT"
+                    severity_contribution=0.35,
+                    confidence=0.88,
+                    source="BeautifulSoup4"
                 ))
 
-            if has_associated_malware:
-                # Elevate risk: URL resolves or references intelligence documenting active malware target
-                risk_level = self._max_risk(risk_level, RiskLevel.HIGH)
-                ioc_threat_str = (ioc.threat if 'ioc' in locals() and ioc else None) or "malware_download"
-                is_direct_report_resolution = bool(
-                    terminal_url and provider_report_url and terminal_url.rstrip("/").lower() == provider_report_url.rstrip("/").lower()
-                )
-                if is_direct_report_resolution:
-                    custom_summary = (
-                        f"The submitted URL resolved via redirect to a URLhaus database report ({provider_report_url}). "
-                        f"The report documents an active malware-distribution target ({recorded_malware_url}). "
-                        "CyberGuard distinguishes the terminal report page from the recorded malware URL, "
-                        "and flags the submitted link due to its direct resolution to malware tracking intelligence."
-                    )
-                    custom_reasoning = (
-                        f"Resolution followed {resolution.redirect_count if resolution else 0} redirect hop(s) terminating at URLhaus database record #{uh_id}. "
-                        f"The URLhaus database tracks active malware URL '{recorded_malware_url}' (threat: {ioc_threat_str}). "
-                        "A successful HTTP 200 response from the URLhaus report page indicates successful retrieval of the research page, "
-                        "NOT that the referenced malware URL is harmless."
-                    )
-                else:
-                    custom_summary = (
-                        f"The submitted URL resolved via redirect to landing page ({terminal_url}), "
-                        f"which references a URLhaus database report ({provider_report_url}). "
-                        f"The report documents an active malware-distribution target ({recorded_malware_url}). "
-                        "CyberGuard distinguishes the primary URL and landing page from the referenced threat IOC, "
-                        "and evaluates elevated risk based on association with tracked malware intelligence."
-                    )
-                    custom_reasoning = (
-                        f"Network resolution reached landing page '{terminal_url}' (HTTP {terminal_status_code or 200}), "
-                        f"which contained a reference to URLhaus database record #{uh_id}. "
-                        f"The URLhaus database tracks active malware URL '{recorded_malware_url}' (threat: {ioc_threat_str}). "
-                        f"Primary IOC '{canonical_url}' has no direct provider detections, but risk is elevated "
-                        f"due to association with tracked malware distribution."
-                    )
+        osint_hits = live_intel.get("osint", {}).get("hits_count", 0)
+        if osint_hits > 0:
+            evidences.append(Evidence(
+                evidence_type="live_osint_warning",
+                description=f"DuckDuckGo OSINT: Found {osint_hits} real-time intelligence record(s) identifying security warnings or threat discussions for target domain.",
+                value=canonical_url,
+                severity_contribution=0.3,
+                confidence=0.85,
+                source="DuckDuckGoOSINT"
+            ))
 
+        # 3. Phishing Evaluation
+        phishing_eval = PhishingDetectionEngine.evaluate(
+            url=canonical_url,
+            hostname=hostname,
+            page_content=page_content,
+            dom_inspection=dom_insp,
+            hosting_ctx=hosting_ctx,
+            page_title=page_title,
+            network_traffic=dom_insp.get("network_traffic"),
+        )
 
-            # SSRF blocked redirect target check
-            if resolution and resolution.status == ResolutionStatus.BLOCKED_REDIRECT_TARGET:
-                risk_level = RiskLevel.CRITICAL
-                custom_summary = "Outbound resolution blocked: URL redirected to an internal, private, or loopback destination (SSRF attack blocked)."
-                custom_reasoning = resolution.error_message or "A redirect in the resolution chain targeted an RFC 1918 private address or loopback interface."
+        # 4. Malware Evaluation
+        malware_eval = MalwareURLEngine.evaluate(
+            url=canonical_url,
+            vt_report=vt_report,
+            uh_report=uh_report,
+            redirect_chain=resolution.redirect_chain if resolution else [],
+            associated_iocs=associated_iocs,
+            page_metadata=resolution.page_metadata.to_dict() if (resolution and resolution.page_metadata) else {},
+        )
 
-            final_severity = risk_level
-            threat_cat = ThreatCategory.MALICIOUS_URL if final_severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) else (
-                ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY if final_severity == RiskLevel.MEDIUM else ThreatCategory.SAFE
-            )
-            classification = (
-                "MALICIOUS" if final_severity in (RiskLevel.HIGH, RiskLevel.CRITICAL)
-                else ("SUSPICIOUS" if final_severity == RiskLevel.MEDIUM else "SAFE")
-            )
+        # 5. Authoritative Verdict Synthesis
+        verdict_result = URLVerdictEngine.synthesize_verdict(
+            url=canonical_url,
+            phishing_eval=phishing_eval,
+            malware_eval=malware_eval,
+            hosting_ctx=hosting_ctx,
+            vt_report=vt_report,
+            uh_report=uh_report,
+            live_intel=live_intel,
+            resolution_result=resolution,
+            is_local=False,
+        )
+
+        # Merge evidence items
+        for ev in verdict_result.evidence:
+            if not any(e.evidence_type == ev.evidence_type and e.value == ev.value for e in evidences):
+                evidences.append(ev)
+
+        final_severity = verdict_result.severity
+        threat_cat = verdict_result.threat_category
+        classification = verdict_result.classification
 
         # Append external evidence items
         if vt_status == "COMPLETED":
@@ -805,6 +843,10 @@ class URLAnalyzer:
             custom_summary=custom_summary,
             custom_reasoning=custom_reasoning,
             live_intel=live_intel,
+            verdict_result=verdict_result,
+            phishing_eval=phishing_eval,
+            malware_eval=malware_eval,
+            hosting_ctx=hosting_ctx,
         )
 
     def _build_event(
@@ -834,6 +876,10 @@ class URLAnalyzer:
         custom_summary: Optional[str] = None,
         custom_reasoning: Optional[str] = None,
         live_intel: Optional[Dict[str, Any]] = None,
+        verdict_result: Optional[Any] = None,
+        phishing_eval: Optional[Any] = None,
+        malware_eval: Optional[Any] = None,
+        hosting_ctx: Optional[Any] = None,
     ) -> ThreatEvent:
         total_duration_ms = (time.time() - start_time) * 1000.0
         timings["total_ms"] = round(total_duration_ms, 1)
@@ -842,9 +888,15 @@ class URLAnalyzer:
         uh_status = uh_report.get("status", "UNKNOWN")
         corr_status = correlation.get("status", "UNKNOWN")
 
-        if threat_cat is None:
+        if verdict_result and not is_local:
+            severity = verdict_result.severity
+            threat_cat = verdict_result.threat_category
+            classification = verdict_result.classification
+        elif threat_cat is None:
             threat_cat = ThreatCategory.MALICIOUS_URL if severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) else ThreatCategory.SAFE
-        if classification is None:
+            if classification is None:
+                classification = "MALICIOUS" if severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) else ("SUSPICIOUS" if severity == RiskLevel.MEDIUM else "SAFE")
+        elif classification is None:
             classification = "MALICIOUS" if severity in (RiskLevel.HIGH, RiskLevel.CRITICAL) else ("SUSPICIOUS" if severity == RiskLevel.MEDIUM else "SAFE")
 
         # Dynamic Explanation
@@ -860,6 +912,10 @@ class URLAnalyzer:
             summary = f"Local development indicator '{url}' analyzed."
             reasoning = "Target address points to the local CyberGuard development environment or a private RFC 1918 network. External threat intelligence reputation is not applicable. Local heuristic analysis completed."
             limitations = "External intelligence providers not applicable for private networks."
+        elif verdict_result and not is_local:
+            summary = verdict_result.summary
+            reasoning = verdict_result.reasoning
+            limitations = verdict_result.limitations
         elif corr_status == CorrelationStatus.CORROBORATED.value:
             summary = "URL security analysis complete. VirusTotal and URLhaus both returned corroborating threat intelligence."
             reasoning = correlation.get("summary", "Threat corroborated by multiple independent security providers.")
@@ -959,6 +1015,24 @@ class URLAnalyzer:
             "terminal_url": resolved_term_url,
             "final_url": resolved_term_url,
             "resolved_terminal_url": resolved_term_url,
+            "verdict": verdict_result.verdict if verdict_result else ("SAFE" if severity == RiskLevel.SAFE else classification),
+            "verdict_display": verdict_result.verdict_display if verdict_result else ("SAFE" if severity == RiskLevel.SAFE else classification),
+            "severity": severity.value,
+            "classification": classification,
+            "risk_score": verdict_result.risk_score if verdict_result else local_risk_score,
+            "confidence": verdict_result.confidence if verdict_result else (0.95 if evidences else 1.0),
+            "scan_coverage_pct": verdict_result.scan_coverage_pct if verdict_result else 100.0,
+            "is_unverified": verdict_result.is_unverified if verdict_result else False,
+            "observed_risk_score": verdict_result.observed_risk_score if verdict_result else local_risk_score,
+            "observed_risk_level": verdict_result.observed_risk_level if verdict_result else ("LOW" if severity == RiskLevel.LOW else "NONE"),
+            "confidence_level": verdict_result.confidence_level if verdict_result else "MODERATE",
+            "assessment_confidence": verdict_result.assessment_confidence if verdict_result else ("INSUFFICIENT" if (verdict_result and verdict_result.is_unverified) else "MODERATE"),
+            "provider_states": verdict_result.provider_states if verdict_result else {},
+            "network_traffic": verdict_result.network_traffic if verdict_result else (live_intel.get("live_page_inspection", {}).get("network_traffic") or {}),
+            "url_verdict": verdict_result.to_dict() if verdict_result else None,
+            "hosting_intelligence": hosting_ctx.to_dict() if hasattr(hosting_ctx, "to_dict") else (hosting_ctx or {}),
+            "phishing_evaluation": phishing_eval.to_dict() if hasattr(phishing_eval, "to_dict") else (phishing_eval or {}),
+            "malware_evaluation": malware_eval.to_dict() if hasattr(malware_eval, "to_dict") else (malware_eval or {}),
             "provider_report_url": provider_report_url,
             "recorded_malware_url": recorded_malware_url,
             "urlhaus_recorded_malware_url": recorded_malware_url,
@@ -1052,6 +1126,11 @@ class URLAnalyzer:
                     "is_live": (live_intel or {}).get("live_page_inspection", {}).get("is_live", False),
                     "osint_hits": (live_intel or {}).get("osint", {}).get("hits_count", 0),
                     "has_credential_forms": (live_intel or {}).get("live_page_inspection", {}).get("has_credential_forms", False),
+                    "credential_inspection_state": (live_intel or {}).get("live_page_inspection", {}).get("credential_inspection_state", "UNVERIFIED_OFFLINE"),
+                    "has_sensor_probes": (live_intel or {}).get("live_page_inspection", {}).get("has_sensor_probes", False),
+                    "sensor_permission_state": (live_intel or {}).get("live_page_inspection", {}).get("sensor_permission_state", "UNVERIFIED_OFFLINE"),
+                    "detected_sensor_types": (live_intel or {}).get("live_page_inspection", {}).get("detected_sensor_types", []),
+                    "social_engineering_lures": (live_intel or {}).get("live_page_inspection", {}).get("social_engineering_lures", []),
                 },
                 "qwen_llm": {
                     "status": "COMPLETED" if (live_intel or {}).get("qwen_llm_synthesis", {}).get("executive_briefing") else "STANDBY",
@@ -1096,7 +1175,7 @@ class URLAnalyzer:
             modality="text",
             threat_category=threat_cat,
             severity=severity,
-            confidence=0.95 if evidences else 1.0,
+            confidence=verdict_result.confidence if verdict_result else (0.95 if evidences else 1.0),
             classification=classification,
             evidence=evidences,
             explanation=Explanation(

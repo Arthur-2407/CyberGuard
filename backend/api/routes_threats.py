@@ -26,6 +26,10 @@ from backend.threats.virustotal import get_virustotal_provider
 from backend.threats.urlhaus import get_urlhaus_provider
 from backend.threats.correlation import ThreatIntelCorrelationEngine, CorrelationStatus
 from backend.threats.live_intel_scraper import get_live_intel_scraper
+from backend.threats.hosting_intelligence import HostingIntelligenceAnalyzer
+from backend.analysis.phishing_engine import PhishingDetectionEngine
+from backend.analysis.malware_url_engine import MalwareURLEngine
+from backend.analysis.url_verdict_engine import URLVerdictEngine
 
 # We use the main app's singletons
 from backend.analysis.unified_pipeline import UnifiedThreatPipeline
@@ -318,25 +322,47 @@ async def analyze_deepfake(
 async def analyze_image_forensics(
     file: UploadFile = File(...),
     source: str = Form("image_upload"),
-    correlation_id: Optional[str] = Form(None)
+    correlation_id: Optional[str] = Form(None),
+    reference_file: Optional[UploadFile] = File(None),
 ):
     """
     Dedicated General Image & Deepfake Forensic Analysis Endpoint.
     Evaluates 2D FFT spectral distributions, high-frequency anomalies,
     Laplacian edge variance, and generative AI metadata signatures.
+    Supports optional reference image comparison for localized change detection.
     """
     settings, incident_manager = _get_dependencies()
     from backend.main import get_app_detector
     voice_detector = get_app_detector()
 
     coordinator = DeepfakeCoordinator(settings, voice_detector)
-    content = await file.read()
+    max_upload_bytes = int(getattr(settings.image_forensics, "reference_max_file_size_bytes", 52428800))
+    content = await file.read(max_upload_bytes + 1)
+    if len(content) > max_upload_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Uploaded image exceeds the maximum allowed size of {max_upload_bytes // (1024 * 1024)} MB.",
+        )
+    reference_content = None
+    reference_filename = None
+    if reference_file is not None:
+        reference_content = await reference_file.read(max_upload_bytes + 1)
+        if len(reference_content) > max_upload_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Reference image exceeds the maximum allowed size of {max_upload_bytes // (1024 * 1024)} MB.",
+            )
+        if not reference_content:
+            raise HTTPException(status_code=422, detail="The supplied reference image is empty.")
+        reference_filename = reference_file.filename
 
     event = coordinator.analyze(
         media_bytes=content,
         filename=file.filename or "uploaded_image.png",
         source=source,
-        correlation_id=correlation_id
+        correlation_id=correlation_id,
+        reference_bytes=reference_content,
+        reference_filename=reference_filename,
     )
 
     if incident_manager:
@@ -1038,7 +1064,7 @@ async def threat_intelligence_search(
     live_duration_ms = (time.time() - live_start) * 1000.0
     logger.info(f"analysis_id={analysis_id} stage=LIVE_WEB_INTEL status=COMPLETED duration_ms={live_duration_ms:.1f}")
 
-    # ── STEP 6: Assessment & Risk Engine (existing logic, extended with URLhaus evidence) ─
+    # ── STEP 6: CyberGuard Authoritative Risk Engine & Verdict Synthesis ───────
     vt_status = vt_report.get("status")
     malicious = vt_report.get("malicious_count", 0) if vt_status == "COMPLETED" else 0
     suspicious = vt_report.get("suspicious_count", 0) if vt_status == "COMPLETED" else 0
@@ -1051,45 +1077,9 @@ async def threat_intelligence_search(
         suspicious = summary_dict.get("suspicious", 0)
         total_engines = summary_dict.get("total_engines", 0)
 
-    # Risk determination — existing CyberGuard risk engine logic (unchanged)
-    risk_level = RiskLevel.SAFE
-    if is_local:
-        risk_level = local_risk
-    elif vt_status == "COMPLETED":
-        if malicious >= 5:
-            risk_level = RiskLevel.CRITICAL
-        elif malicious >= 1:
-            risk_level = RiskLevel.HIGH
-        elif suspicious >= 2:
-            risk_level = RiskLevel.MEDIUM
-        elif suspicious >= 1:
-            risk_level = RiskLevel.LOW
-        else:
-            risk_level = local_risk
-    else:
-        risk_level = local_risk
-
-    # URLhaus evidence can escalate risk if VT has no match but URLhaus confirms malware
     uh_matched = uh_report.get("matched", False)
-    if (
-        uh_matched
-        and risk_level in (RiskLevel.SAFE, RiskLevel.LOW)
-        and correlation["status"] in (
-            CorrelationStatus.CORROBORATED.value,
-            CorrelationStatus.CONFLICTING.value,
-            CorrelationStatus.SINGLE_PROVIDER.value,
-            CorrelationStatus.PROVIDER_UNAVAILABLE.value,
-        )
-    ):
-        # URLhaus confirms malware activity — escalate to at least MEDIUM
-        # (risk engine contribution, not hardcoded detection)
-        if risk_level == RiskLevel.SAFE:
-            risk_level = RiskLevel.MEDIUM
-        # Note: we do NOT blindly set CRITICAL; URLhaus alone doesn't override VT clean verdict
-
-    # URL forensics: If URL resolution identified an associated malware URL, elevate risk
-    if url_ti and url_ti.get("recorded_malware_url"):
-        risk_level = RiskLevel.HIGH if risk_level != RiskLevel.CRITICAL else risk_level
+    dom_insp = live_intel.get("live_page_inspection", {})
+    osint_hits = live_intel.get("osint", {}).get("hits_count", 0)
 
     # Combined evidence list (local + VT + URLhaus)
     combined_evidences: List[Evidence] = list(local_evidences)
@@ -1120,7 +1110,6 @@ async def threat_intelligence_search(
 
     # Correlation evidence items
     for corr_ev in correlation.get("corroborating_evidence", []):
-        # Avoid duplicate evidence (corr engine may include VT/URLhaus evidence already added)
         if isinstance(corr_ev, dict) and corr_ev.get("source") not in ("VirusTotal", "URLhaus"):
             combined_evidences.append(Evidence(
                 evidence_type=corr_ev.get("evidence_type", "correlation_evidence"),
@@ -1131,109 +1120,215 @@ async def threat_intelligence_search(
                 source=corr_ev.get("source", "CyberGuard Correlation")
             ))
 
-    # ── STEP 7: Provenance + Explanation ──────────────────────────────────────
+    # URL-Specific Multi-Modal Evaluation vs. Host/IP/Hash Evaluation
+    hosting_ctx = None
+    phishing_eval = None
+    malware_eval = None
+    verdict_res = None
+    verdict_display = "SAFE"
+    is_unverified = False
+    scan_coverage_pct = 100.0
+
     corr_status = correlation["status"]
 
-    if is_local:
-        provenance = "Source: CyberGuard (Local Analysis)"
-        summary_text = f"Local development indicator '{canonical_ioc}' analyzed."
-        reasoning_text = (
-            "Target address points to the local CyberGuard development environment or a private RFC 1918 network. "
-            "External threat intelligence reputation is not applicable. Local heuristic analysis completed."
-        )
-    elif corr_status == CorrelationStatus.CORROBORATED.value:
-        provenance = "Source: CyberGuard + VirusTotal + URLhaus"
-        summary_text = (
-            f"Threat intelligence search completed for {category}. "
-            f"VirusTotal and URLhaus both returned corroborating intelligence."
-        )
-        reasoning_text = correlation.get("summary", "Corroborated by both providers.")
-    elif corr_status == CorrelationStatus.PARTIALLY_CORROBORATED.value:
-        provenance = "Source: CyberGuard + VirusTotal + URLhaus"
-        summary_text = f"Partial corroboration: providers returned intelligence at different scopes."
-        reasoning_text = correlation.get("summary", "Partially corroborated.")
-    elif corr_status == CorrelationStatus.CONFLICTING.value:
-        provenance = "Source: CyberGuard + VirusTotal + URLhaus (CONFLICTING)"
-        summary_text = f"Provider findings conflict. Review both results carefully."
-        reasoning_text = correlation.get("summary", "Providers returned conflicting findings.")
-    elif corr_status == CorrelationStatus.SINGLE_PROVIDER.value:
-        active_provider = "VirusTotal" if vt_report.get("matched") or vt_status == "COMPLETED" else "URLhaus"
-        provenance = f"Source: CyberGuard + {active_provider}"
-        summary_text = f"Single-provider intelligence: only {active_provider} returned matching data."
-        reasoning_text = correlation.get("summary", f"Only {active_provider} provided intelligence.")
-    elif vt_status == "COMPLETED":
-        provenance = "Source: CyberGuard + VirusTotal" if local_evidences else "Source: VirusTotal"
-        summary_text = (
-            f"Threat intelligence search completed for {category}. "
-            f"VirusTotal reported {malicious} malicious and {suspicious} suspicious engine detections out of {total_engines} engines."
-        )
-        reasoning_text = (
-            f"External threat intelligence correlated across {total_engines} security vendors. "
-            + (f"{malicious} vendors flagged this indicator as malicious. " if malicious > 0 else "No vendors flagged malicious. ")
-            + (f"Local CyberGuard heuristics identified {len(local_evidences)} indicators." if local_evidences else "")
-        )
-    elif vt_status == "NOT_FOUND":
-        provenance = "Source: CyberGuard"
-        summary_text = f"No external intelligence report found for {canonical_ioc}."
-        reasoning_text = (
-            "The indicator is not present in the current VirusTotal or URLhaus dataset. "
-            "Absence of external threat records does not guarantee safety. CyberGuard local heuristics applied."
-        )
-    else:
-        provenance = "Source: CyberGuard"
-        summary_text = f"External intelligence providers unavailable or not configured."
-        reasoning_text = vt_report.get("message", "External provider lookup could not be completed.")
+    if category == "url":
+        url_ti_safe = url_ti or {}
+        resolution_hops = [h.get("to_url") for h in url_ti_safe.get("redirect_chain", []) if isinstance(h, dict)]
+        hosting_ctx = HostingIntelligenceAnalyzer.analyze(canonical_ioc, resolution_hops=resolution_hops)
 
-    # ── STEP 8: Recommended Actions ───────────────────────────────────────────
-    recommended_actions: List[str] = []
-    if is_local:
-        recommended_actions.append("Local development target - no defensive blocking required.")
-    elif risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL):
-        recommended_actions.extend([
-            f"Block access to {category} '{canonical_ioc}' across network and endpoints.",
-            "Inspect associated access logs and active sessions for signs of compromise.",
-            "Report indicator to internal incident response and escalate priority.",
-        ])
-        if corr_status == CorrelationStatus.CORROBORATED.value:
-            recommended_actions.append(
-                "Intelligence is CORROBORATED by multiple providers — high confidence in threat assessment."
+        page_content = dom_insp.get("raw_html") or dom_insp.get("body_text", "")
+        page_title = (url_ti_safe.get("page_metadata") or {}).get("title") or dom_insp.get("page_title", "")
+        phishing_eval = PhishingDetectionEngine.evaluate(
+            url=canonical_ioc,
+            hostname=ioc_info.get("host") or "",
+            page_content=page_content,
+            dom_inspection=dom_insp,
+            hosting_ctx=hosting_ctx,
+            page_title=page_title,
+            network_traffic=dom_insp.get("network_traffic"),
+        )
+
+        malware_eval = MalwareURLEngine.evaluate(
+            url=canonical_ioc,
+            vt_report=vt_report,
+            uh_report=uh_report,
+            redirect_chain=url_ti_safe.get("redirect_chain", []),
+            associated_iocs=url_ti_safe.get("associated_iocs", []),
+            page_metadata=url_ti_safe.get("page_metadata") or {},
+        )
+
+        verdict_res = URLVerdictEngine.synthesize_verdict(
+            url=canonical_ioc,
+            phishing_eval=phishing_eval,
+            malware_eval=malware_eval,
+            hosting_ctx=hosting_ctx,
+            vt_report=vt_report,
+            uh_report=uh_report,
+            live_intel=live_intel,
+            resolution_result=None,
+            is_local=is_local,
+        )
+
+        if is_local:
+            risk_level = RiskLevel.SAFE
+            threat_cat = ThreatCategory.SAFE
+            classification = "SAFE"
+            verdict_display = "SAFE"
+            is_unverified = False
+            scan_coverage_pct = 100.0
+            summary_text = f"Local development indicator '{canonical_ioc}' analyzed."
+            reasoning_text = (
+                "Target address points to the local CyberGuard development environment or a private RFC 1918 network. "
+                "External threat intelligence reputation is not applicable. Local heuristic analysis completed."
             )
-    elif risk_level == RiskLevel.MEDIUM:
-        recommended_actions.extend([
-            f"Flag {category} '{canonical_ioc}' for enhanced monitoring.",
-            "Verify traffic origins and prompt user confirmation before interaction.",
-        ])
-    elif corr_status == CorrelationStatus.NO_MATCH.value:
-        recommended_actions.append(
-            "Exercise standard vigilance; indicator has not been indexed by external threat intelligence providers."
-        )
-    elif corr_status == CorrelationStatus.CONFLICTING.value:
-        recommended_actions.append(
-            "Provider findings conflict. Manual review recommended before taking defensive action."
-        )
-    else:
-        recommended_actions.append("No defensive action required based on available intelligence.")
+            recommended_actions = ["Local development target - no defensive blocking required."]
+            provenance = "Source: CyberGuard (Local Analysis)"
+        else:
+            risk_level = verdict_res.severity
+            threat_cat = verdict_res.threat_category
+            classification = verdict_res.classification
+            verdict_display = verdict_res.verdict_display
+            is_unverified = verdict_res.is_unverified
+            scan_coverage_pct = verdict_res.scan_coverage_pct
+            summary_text = verdict_res.summary
+            reasoning_text = verdict_res.reasoning
+            recommended_actions = verdict_res.recommended_actions
+            provenance = "Source: CyberGuard Resolver + VirusTotal + URLhaus + LiveScraper"
 
-    # ── STEP 9: Threat Category ────────────────────────────────────────────────
-    if category == "hash":
-        threat_cat = ThreatCategory.MALWARE_INDICATOR if risk_level != RiskLevel.SAFE else ThreatCategory.SAFE
-    else:
-        threat_cat = ThreatCategory.MALICIOUS_URL if risk_level != RiskLevel.SAFE else ThreatCategory.SAFE
+        for ev in verdict_res.evidence:
+            if not any(e.evidence_type == ev.evidence_type and e.value == ev.value for e in combined_evidences):
+                combined_evidences.append(ev)
 
-    classification = (
-        "MALICIOUS" if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL)
-        else ("SUSPICIOUS" if risk_level == RiskLevel.MEDIUM else "SAFE")
-    )
+    else:
+        # Non-URL Indicators: Domain, IP, Hash
+        if is_local:
+            risk_level = RiskLevel.SAFE
+            threat_cat = ThreatCategory.SAFE
+            classification = "SAFE"
+            verdict_display = "SAFE"
+            is_unverified = False
+            scan_coverage_pct = 100.0
+            provenance = "Source: CyberGuard (Local Analysis)"
+            summary_text = f"Local development indicator '{canonical_ioc}' analyzed."
+            reasoning_text = (
+                "Target address points to the local CyberGuard development environment or a private RFC 1918 network. "
+                "External threat intelligence reputation is not applicable. Local heuristic analysis completed."
+            )
+            recommended_actions = ["Local development target - no defensive blocking required."]
+
+        elif uh_matched:
+            risk_level = RiskLevel.CRITICAL if malicious >= 5 else RiskLevel.HIGH
+            threat_cat = ThreatCategory.MALWARE_INDICATOR
+            classification = "MALICIOUS"
+            verdict_display = "MALWARE DETECTED"
+            is_unverified = False
+            scan_coverage_pct = 100.0
+            provenance = "Source: CyberGuard + URLhaus"
+            summary_text = f"Malware activity corroborated: URLhaus matched indicator '{canonical_ioc}'."
+            reasoning_text = correlation.get("summary", f"URLhaus tracks '{canonical_ioc}' as active malware.")
+            recommended_actions = [
+                f"Block access to {category} '{canonical_ioc}' across network and endpoints.",
+                "Inspect associated access logs and active sessions for signs of compromise.",
+                "Report indicator to internal incident response and escalate priority.",
+            ]
+
+        elif vt_status == "COMPLETED":
+            if malicious >= 5:
+                risk_level = RiskLevel.CRITICAL
+                threat_cat = ThreatCategory.MALWARE_INDICATOR if category == "hash" else ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY
+                classification = "MALICIOUS"
+                verdict_display = "MALWARE DETECTED" if category == "hash" else "MALICIOUS"
+                is_unverified = False
+                scan_coverage_pct = 100.0
+            elif malicious >= 1:
+                risk_level = RiskLevel.HIGH
+                threat_cat = ThreatCategory.MALWARE_INDICATOR if category == "hash" else ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY
+                classification = "MALICIOUS"
+                verdict_display = "MALWARE DETECTED" if category == "hash" else "MALICIOUS"
+                is_unverified = False
+                scan_coverage_pct = 100.0
+            elif suspicious >= 2:
+                risk_level = RiskLevel.MEDIUM
+                threat_cat = ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY
+                classification = "SUSPICIOUS"
+                verdict_display = "SUSPICIOUS"
+                is_unverified = False
+                scan_coverage_pct = 100.0
+            elif suspicious >= 1:
+                risk_level = RiskLevel.LOW
+                threat_cat = ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY
+                classification = "SUSPICIOUS"
+                verdict_display = "SUSPICIOUS"
+                is_unverified = False
+                scan_coverage_pct = 100.0
+            else:
+                risk_level = RiskLevel.SAFE
+                threat_cat = ThreatCategory.SAFE
+                classification = "SAFE"
+                verdict_display = "NO KNOWN THREATS DETECTED"
+                is_unverified = False
+                scan_coverage_pct = 100.0
+
+            provenance = "Source: CyberGuard + VirusTotal" if local_evidences else "Source: VirusTotal"
+            summary_text = (
+                f"Threat intelligence search completed for {category}. "
+                f"VirusTotal reported {malicious} malicious and {suspicious} suspicious engine detections out of {total_engines} engines."
+            )
+            reasoning_text = (
+                f"External threat intelligence correlated across {total_engines} security vendors. "
+                + (f"{malicious} vendors flagged this indicator as malicious. " if malicious > 0 else "No vendors flagged malicious. ")
+                + (f"Local CyberGuard heuristics identified {len(local_evidences)} indicators." if local_evidences else "")
+            )
+            if risk_level in (RiskLevel.HIGH, RiskLevel.CRITICAL):
+                recommended_actions = [
+                    f"Block access to {category} '{canonical_ioc}' across network and endpoints.",
+                    "Inspect associated access logs and active sessions for signs of compromise.",
+                    "Report indicator to internal incident response and escalate priority.",
+                ]
+            elif risk_level == RiskLevel.MEDIUM:
+                recommended_actions = [
+                    f"Flag {category} '{canonical_ioc}' for enhanced monitoring.",
+                    "Verify traffic origins and prompt user confirmation before interaction.",
+                ]
+            else:
+                recommended_actions = ["No defensive action required based on available intelligence."]
+
+        elif vt_status in ("NOT_FOUND", "UNAVAILABLE", "NOT_CONFIGURED", "TIMEOUT"):
+            # CRITICAL DEFENSE: Never collapse NOT_FOUND / NO_MATCH into SAFE!
+            risk_level = RiskLevel.LOW
+            threat_cat = ThreatCategory.INSUFFICIENT_EVIDENCE
+            classification = "UNKNOWN_UNVERIFIED"
+            verdict_display = "UNKNOWN / UNVERIFIED"
+            is_unverified = True
+            scan_coverage_pct = 35.0 if vt_status == "NOT_FOUND" else 10.0
+            provenance = "Source: CyberGuard"
+            summary_text = f"No external threat intelligence found for {category} '{canonical_ioc}'."
+            reasoning_text = (
+                f"Indicator is not indexed in VirusTotal (status: {vt_status}) and not found in URLhaus (NO_MATCH). "
+                "Absence of external threat records does NOT establish that the indicator is safe."
+            )
+            recommended_actions = [
+                "Target reputation is unverified. Treat with caution and avoid trusting sensitive operations.",
+                "Monitor for abnormal outbound connections or endpoint telemetry."
+            ]
+
+        else:
+            risk_level = local_risk
+            threat_cat = ThreatCategory.INSUFFICIENT_EVIDENCE if local_risk == RiskLevel.SAFE else ThreatCategory.SUSPICIOUS_NETWORK_ACTIVITY
+            classification = "UNKNOWN_UNVERIFIED" if local_risk == RiskLevel.SAFE else "SUSPICIOUS"
+            verdict_display = "UNKNOWN / UNVERIFIED" if local_risk == RiskLevel.SAFE else "SUSPICIOUS"
+            is_unverified = (local_risk == RiskLevel.SAFE)
+            scan_coverage_pct = 20.0
+            provenance = "Source: CyberGuard"
+            summary_text = f"External intelligence providers unavailable for {canonical_ioc}."
+            reasoning_text = vt_report.get("message", "External provider lookup could not be completed.")
+            recommended_actions = ["Exercise caution; external verification could not be completed."]
 
     # ── STEP 10: Build Combined Threat Intelligence Payload ───────────────────
     # All existing fields preserved (backward-compatible).
-    dom_insp = live_intel.get("live_page_inspection", {})
-    osint_hits = live_intel.get("osint", {}).get("hits_count", 0)
-
-    # Evidence contribution from Live Web Inspection & OSINT (skipped for local/private indicators)
-    if not is_local:
+    if not is_local and category != "url":
         if dom_insp.get("has_credential_forms"):
-            local_evidences.append(Evidence(
+            combined_evidences.append(Evidence(
                 evidence_type="credential_harvesting_form",
                 description="Live DOM Inspection: Password/credential input fields detected on destination page (Active Phishing Probe).",
                 value=canonical_ioc,
@@ -1245,7 +1340,7 @@ async def threat_intelligence_search(
                 risk_level = RiskLevel.HIGH
 
         if osint_hits > 0:
-            local_evidences.append(Evidence(
+            combined_evidences.append(Evidence(
                 evidence_type="live_osint_warning",
                 description=f"DuckDuckGo OSINT: Found {osint_hits} real-time threat record(s) referencing security warnings or phishing indicators.",
                 value=canonical_ioc,
@@ -1256,7 +1351,6 @@ async def threat_intelligence_search(
 
     url_sha256 = hashlib.sha256(canonical_ioc.encode("utf-8")).hexdigest() if category == "url" else None
 
-    # New fields: providers, correlation, urlhaus, live_intelligence.
     threat_intel_payload: Dict[str, Any] = {
         # ── Existing fields (preserved unchanged) ──
         "provider": "VirusTotal",  # Legacy: primary provider label
@@ -1278,6 +1372,20 @@ async def threat_intelligence_search(
         "ioc_classification": ioc_info.get("ioc_type"),
         "scope": scope,
         "is_local": is_local,
+        "verdict": verdict_display,
+        "verdict_display": verdict_display,
+        "is_unverified": is_unverified,
+        "scan_coverage_pct": round(scan_coverage_pct, 1),
+        "observed_risk_score": verdict_res.observed_risk_score if verdict_res else 0.0,
+        "observed_risk_level": verdict_res.observed_risk_level if verdict_res else ("LOW" if risk_level == RiskLevel.LOW else "NONE"),
+        "confidence_level": verdict_res.confidence_level if verdict_res else "MODERATE",
+        "assessment_confidence": verdict_res.assessment_confidence if verdict_res else ("INSUFFICIENT" if is_unverified else "MODERATE"),
+        "provider_states": verdict_res.provider_states if verdict_res else {},
+        "network_traffic": verdict_res.network_traffic if verdict_res else (live_intel.get("live_page_inspection", {}).get("network_traffic") or {}),
+        "url_verdict": verdict_res.to_dict() if verdict_res else None,
+        "hosting_intelligence": hosting_ctx.to_dict() if hosting_ctx else {},
+        "phishing_evaluation": phishing_eval.to_dict() if phishing_eval else {},
+        "malware_evaluation": malware_eval.to_dict() if malware_eval else {},
         "message": vt_report.get("message") or (
             "VirusTotal intelligence operational." if vt_status == "COMPLETED"
             else f"Status: {vt_status}"
@@ -1349,6 +1457,11 @@ async def threat_intelligence_search(
                 "is_live": dom_insp.get("is_live", False),
                 "osint_hits": osint_hits,
                 "has_credential_forms": dom_insp.get("has_credential_forms", False),
+                "credential_inspection_state": dom_insp.get("credential_inspection_state", "UNVERIFIED_OFFLINE"),
+                "has_sensor_probes": dom_insp.get("has_sensor_probes", False),
+                "sensor_permission_state": dom_insp.get("sensor_permission_state", "UNVERIFIED_OFFLINE"),
+                "detected_sensor_types": dom_insp.get("detected_sensor_types", []),
+                "social_engineering_lures": dom_insp.get("social_engineering_lures", []),
             },
             "qwen_llm": {
                 "status": "COMPLETED" if live_intel.get("qwen_llm_synthesis", {}).get("executive_briefing") else "STANDBY",
@@ -1389,7 +1502,7 @@ async def threat_intelligence_search(
         modality="text",
         threat_category=threat_cat,
         severity=risk_level,
-        confidence=0.95 if (vt_status == "COMPLETED" and total_engines > 20) else (0.9 if is_local else 0.7),
+        confidence=verdict_res.confidence if (category == "url" and verdict_res) else (0.35 if is_unverified else (0.95 if (vt_status == "COMPLETED" and total_engines > 20) else (0.9 if is_local else 0.7))),
         classification=classification,
         evidence=combined_evidences,
         explanation=Explanation(
