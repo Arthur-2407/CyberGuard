@@ -27994,8 +27994,12 @@ async function scanMediaForensics() {
   const referenceFile = !isVideo && referenceInput && referenceInput.files && referenceInput.files.length
     ? referenceInput.files[0]
     : null;
-  if (referenceFile && !referenceFile.type.startsWith('image/')) {
-    return showToast('The optional reference must be an image file', 'warning');
+  const referenceLooksLikeImage = referenceFile && (
+    (referenceFile.type && referenceFile.type.startsWith('image/')) ||
+    /\\.(jpe?g|png|webp|bmp|gif|tiff?)$/i.test(referenceFile.name)
+  );
+  if (referenceFile && !referenceLooksLikeImage) {
+    return showToast('The optional reference must be a supported image file', 'warning');
   }
 
   const btn = document.getElementById('btn-scan-image');
@@ -28849,7 +28853,7 @@ function renderImageForensicsReport(data) {
   const isVisionReady = Boolean(manifest?.active_model_inventory?.vision_deepfake_model?.status === 'READY' || hasVisionScore);
   const visionBadgeText = hasVisionScore ? 'READY_IN_MEMORY (EVALUATED)' : 'STANDBY / HEURISTIC ONLY';
   const visionVerdictText = hasVisionScore
-    ? (pSynth <= 0.20 ? 'AUTHENTIC VISUAL FEATURE PROFILE' : (pSynth >= 0.65 ? 'SYNTHETIC ARTIFACTS OBSERVED' : 'ANOMALOUS VISUAL PROFILE'))
+    ? (pSynth <= 0.20 ? 'LOW GLOBAL SYNTHETIC-CLASS OUTPUT' : (pSynth >= 0.65 ? 'HIGH GLOBAL SYNTHETIC-CLASS OUTPUT' : 'AMBIGUOUS GLOBAL VISUAL CLASS'))
     : 'NOT EVALUATED (HEURISTIC ONLY)';
   const visionProbText = hasVisionScore ? `${pSynth.toFixed(4)} (${(pSynth * 100).toFixed(1)}% Synthetic)` : 'N/A (Heuristic Mode)';
 
@@ -28859,8 +28863,8 @@ function renderImageForensicsReport(data) {
     const authPct = ((1.0 - pSynth) * 100).toFixed(1);
     const synthPct = (pSynth * 100).toFixed(1);
     visionPillText = pSynth <= 0.20
-      ? `${authPct}% Authentic Profile (${synthPct}% Synthetic)`
-      : `${synthPct}% Synthetic Profile (${authPct}% Authentic)`;
+      ? `${authPct}% global authentic-class output (${synthPct}% Synthetic)`
+      : `${synthPct}% global synthetic-class output (${authPct}% Authentic)`;
     visionPillColor = pSynth <= 0.20 ? '#10b981' : (pSynth >= 0.65 ? '#ef4444' : '#f59e0b');
   }
 
@@ -28891,10 +28895,21 @@ function renderImageForensicsReport(data) {
       primaryColor = '#10b981';
       reconciliationText = 'Cryptographically signed C2PA Content Credentials and nominal optical sensor parameters verify authentic camera origin.';
     } else {
-      primaryVerdictTitle = 'NO STRONG MANIPULATION EVIDENCE DETECTED';
+      primaryVerdictTitle = 'LOW GLOBAL SYNTHETIC SIGNAL — LOCAL EDITS NOT EXCLUDED';
       primaryBadgeClass = 'badge-safe';
       primaryColor = '#10b981';
-      reconciliationText = 'Neural visual artifact detector and traditional DSP frequency/noise residual algorithms align within authentic baseline thresholds. Note: Container metadata is unverified; absence of detected anomalies does not independently prove original camera provenance.';
+      const referenceDifferencesPresent = Boolean(
+        referenceComparison &&
+        referenceComparison.status === 'COMPARABLE' &&
+        referenceComparison.difference_detected
+      );
+      if (referenceDifferencesPresent) {
+        primaryVerdictTitle = 'LOW GLOBAL SYNTHETIC SIGNAL — REFERENCE DIFFERENCES OBSERVED';
+      }
+      reconciliationText = 'The global synthetic/deepfake classifier and evaluated DSP signals are within their nominal ranges. This classifier does not localize object removal, inpainting, or retouching; a low synthetic-class score is not proof that the image is unedited. ' +
+        (referenceDifferencesPresent
+          ? 'The supplied reference comparison found localized visual differences; their cause is not determined by pixel comparison.'
+          : 'No original/reference image was supplied for direct comparison.');
     }
   } else if (severity === 'CRITICAL' || severity === 'HIGH' || classification === 'LIKELY_MANIPULATED') {
     primaryVerdictTitle = isVideoMedia ? 'LIKELY MANIPULATED / DEEPFAKE VIDEO' : 'LIKELY MANIPULATED / SYNTHETIC';
@@ -28950,11 +28965,14 @@ function renderImageForensicsReport(data) {
       if (metrics.facial_status_level && metrics.facial_status_level !== 'NOMINAL') anomalousSignals.push('facial boundary seam disparity');
       const anomalyStr = anomalousSignals.length > 0 ? `${anomalousSignals.join(' and ')} exceed nominal baseline thresholds` : 'evaluated DSP signals exhibit nominal profile within unverified container';
       const neuralDesc = (hasVisionScore && pSynth !== null)
-        ? (pSynth <= 0.20 ? `Neural vision classifier verified organic feature distribution (p_synthetic = ${pSynth.toFixed(2)})` :
-           (pSynth >= 0.65 ? `Neural vision detected synthetic generation markers (p_synthetic = ${pSynth.toFixed(2)})` :
-            `Neural vision feature profile is ambiguous (p_synthetic = ${pSynth.toFixed(2)})`))
-        : 'Neural vision detector standby';
-      reconciliationText = `${neuralDesc}; ${anomalyStr}. Primary classification: Inconclusive with ${isLowRiskIncon ? 'low anomaly profile' : 'elevated risk'}.`;
+        ? (pSynth <= 0.20 ? `Global synthetic classifier returned a low synthetic-class score (p_synthetic = ${pSynth.toFixed(2)})` :
+           (pSynth >= 0.65 ? `Global synthetic classifier returned an elevated synthetic-class score (p_synthetic = ${pSynth.toFixed(2)})` :
+            `Global synthetic classifier output is ambiguous (p_synthetic = ${pSynth.toFixed(2)})`))
+        : 'Global synthetic classifier not evaluated';
+      const localEditCaveat = referenceComparison
+        ? (referenceComparison.status === 'COMPARABLE' ? ' Reference comparison was evaluated separately; inspect its localized findings and alignment quality.' : ' Reference comparison did not produce a reliable alignment.')
+        : ' No original/reference image was supplied; localized object removal or retouching is not ruled out by the global classifier.';
+      reconciliationText = `${neuralDesc}; ${anomalyStr}. ${localEditCaveat} Primary classification: Inconclusive with ${isLowRiskIncon ? 'low anomaly profile' : 'elevated risk'}.`;
     }
   }
 
@@ -28979,7 +28997,7 @@ function renderImageForensicsReport(data) {
 
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
             <div style="background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:5px 10px; font-family:var(--font-mono); font-size:11px;">
-              <span style="color:#94a3b8;">Neural Vision:</span>
+              <span style="color:#94a3b8;">Neural Vision (global classifier):</span>
               <span style="color:${visionPillColor}; font-weight:700; margin-left:4px;">${escapeHtml(visionPillText)}</span>
             </div>
             <div style="background:rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:5px 10px; font-family:var(--font-mono); font-size:11px;">
@@ -30011,7 +30029,7 @@ function renderForensicMoreDetails(data) {
   const isVisionReady = Boolean(manifest?.active_model_inventory?.vision_deepfake_model?.status === 'READY' || hasVisionScore);
   const visionBadgeText = hasVisionScore ? 'READY_IN_MEMORY (LAZY-LOADED)' : 'STANDBY / HEURISTIC ONLY';
   const visionVerdictText = hasVisionScore
-    ? (pSynth <= 0.20 ? 'AUTHENTIC VISUAL FEATURE PROFILE' : (pSynth >= 0.65 ? 'SYNTHETIC ARTIFACTS OBSERVED' : 'ANOMALOUS VISUAL PROFILE'))
+    ? (pSynth <= 0.20 ? 'LOW GLOBAL SYNTHETIC-CLASS OUTPUT' : (pSynth >= 0.65 ? 'HIGH GLOBAL SYNTHETIC-CLASS OUTPUT' : 'AMBIGUOUS GLOBAL VISUAL CLASS'))
     : 'NOT EVALUATED (HEURISTIC ONLY)';
   const visionProbText = hasVisionScore ? `${pSynth.toFixed(4)} (${(pSynth * 100).toFixed(1)}%)` : 'N/A (Heuristic Mode)';
   const visionColor = hasVisionScore ? (pSynth <= 0.20 ? '#10b981' : (pSynth >= 0.65 ? '#ef4444' : '#f59e0b')) : '#94a3b8';
