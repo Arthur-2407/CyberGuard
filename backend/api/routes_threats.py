@@ -335,7 +335,7 @@ async def analyze_image_forensics(
     reference_content = None
     reference_filename = None
     if reference_file is not None:
-        max_reference_bytes = int(settings.upload.max_file_size_bytes)
+        max_reference_bytes = int(settings.image_forensics.reference_max_file_size_bytes)
         reference_content = await reference_file.read(max_reference_bytes + 1)
         if len(reference_content) > max_reference_bytes:
             raise HTTPException(
