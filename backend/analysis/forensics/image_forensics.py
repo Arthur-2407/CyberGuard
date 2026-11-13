@@ -64,10 +64,10 @@ class ImageForensicsEngine:
         from PIL import ImageOps
 
         cfg = self.config
-        target_rgb = ImageOps.exif_transpose(image).convert("RGB")
-        reference_rgb = ImageOps.exif_transpose(reference).convert("RGB")
-        target_size = target_rgb.size
-        reference_size = reference_rgb.size
+        target_oriented = ImageOps.exif_transpose(image)
+        reference_oriented = ImageOps.exif_transpose(reference)
+        target_size = target_oriented.size
+        reference_size = reference_oriented.size
 
         def _resize_for_analysis(pil_image: Image.Image):
             width, height = pil_image.size
@@ -76,10 +76,11 @@ class ImageForensicsEngine:
             if scale < 1.0:
                 size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
                 pil_image = pil_image.resize(size, Image.Resampling.LANCZOS)
-            return np.asarray(pil_image, dtype=np.uint8), scale
+            # Convert to RGB only after resizing to avoid a second full-resolution color array.
+            return np.asarray(pil_image.convert("RGB"), dtype=np.uint8), scale
 
-        target_array, _target_scale = _resize_for_analysis(target_rgb)
-        reference_array, reference_scale = _resize_for_analysis(reference_rgb)
+        target_array, _target_scale = _resize_for_analysis(target_oriented)
+        reference_array, reference_scale = _resize_for_analysis(reference_oriented)
         target_gray = cv2.cvtColor(target_array, cv2.COLOR_RGB2GRAY)
         reference_gray = cv2.cvtColor(reference_array, cv2.COLOR_RGB2GRAY)
 
