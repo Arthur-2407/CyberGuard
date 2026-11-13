@@ -646,6 +646,14 @@ if _FRONTEND_DIR.exists():
                 return FileResponse(str(cfg_file), media_type="application/javascript")
             return Response(content="window.__CYBERGUARD_CONFIG__ = window.__CYBERGUARD_CONFIG__ || {};", media_type="application/javascript")
 
+        # Remaining workspace assets (workspace.css/js, analytics.css/js, images)
+        # are addressed relatively from /personal/, so serve the whole directory.
+        app.mount(
+            "/personal",
+            StaticFiles(directory=str(_PERSONAL_DIR)),
+            name="personal_assets",
+        )
+
     # The product now ships a single interface: the light personal workspace.
     # Legacy SOC entry points resolve to it so no dark console can be reached.
     def _ui_file(name: str) -> Path:
