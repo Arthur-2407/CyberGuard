@@ -1035,10 +1035,19 @@ class DeepfakeCoordinator:
             if reference_bytes:
                 try:
                     with Image.open(io.BytesIO(reference_bytes)) as reference_img:
-                        reference_img.load()
-                        reference_comparison = get_image_forensics_engine().compare_with_reference(
-                            img, reference_img
-                        )
+                        reference_pixel_count = int(reference_img.width) * int(reference_img.height)
+                        if reference_pixel_count > int(self.image_config.reference_max_pixels):
+                            reference_comparison = {
+                                "status": "NOT_COMPARABLE",
+                                "difference_detected": False,
+                                "reason": "Reference image exceeds the configured pixel limit for bounded comparison.",
+                                "interpretation": "The primary image analysis completed independently; a skipped reference comparison is not evidence of an unmodified image.",
+                            }
+                        else:
+                            reference_img.load()
+                            reference_comparison = get_image_forensics_engine().compare_with_reference(
+                                img, reference_img
+                            )
                     reference_comparison["reference_filename"] = reference_filename or "supplied_reference"
                     reference_comparison["reference_sha256"] = hashlib.sha256(reference_bytes).hexdigest()
                     forensic_metrics["reference_comparison"] = reference_comparison
