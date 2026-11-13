@@ -1,6 +1,6 @@
 /**
  * CyberGuard Desktop — Hardened Preload Security Bridge
- *
+ * 
  * Strict Isolation Model:
  *  - Runs in an isolated execution context (contextIsolation: true)
  *  - Exposes narrow, typed asynchronous IPC invocations to the renderer

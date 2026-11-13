@@ -798,7 +798,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                 // Online Status Pill with Settings Trigger
                 Surface(
                     shape = CutCornerShape(4.dp),
-                    color = if (CyberGuardTheme.isDark) Color(0xFF032617).copy(alpha = 0.9f) else Color(0xFFE8F5E9),
+                    color = Color(0xFFE8F5E9),
                     border = BorderStroke(1.dp, StatusOnline.copy(alpha = 0.75f)),
                     modifier = Modifier.clickable { viewModel.openConnectionSettings() }
                 ) {
@@ -1479,7 +1479,7 @@ fun DashboardScreen(navController: NavController, viewModel: MainViewModel) {
                 // Active Telemetry Status Chip with Pulsing Green Dot
                 Surface(
                     shape = CutCornerShape(4.dp),
-                    color = Color(0xFF032617).copy(alpha = 0.8f),
+                    color = HighlightSurface,
                     border = BorderStroke(0.8.dp, StatusOnline.copy(alpha = 0.7f))
                 ) {
                     Row(

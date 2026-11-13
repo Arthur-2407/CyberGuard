@@ -53,6 +53,247 @@ class ImageForensicsEngine:
 
         return ImageAnalysisResult(metrics, evidences, prob)
 
+    def compare_with_reference(self, image: Image.Image, reference: Image.Image) -> Dict[str, Any]:
+        """
+        Align an analyst-supplied reference image and localize material visual differences.
+
+        A difference is not automatically an edit: motion, lighting, viewpoint changes,
+        resampling, and other capture differences can also produce changed regions.
+        """
+        import cv2
+        from PIL import ImageOps
+
+        cfg = self.config
+        target_oriented = ImageOps.exif_transpose(image)
+        reference_oriented = ImageOps.exif_transpose(reference)
+        target_size = target_oriented.size
+        reference_size = reference_oriented.size
+
+        def _resize_for_analysis(pil_image: Image.Image):
+            width, height = pil_image.size
+            limit = max(64, int(getattr(cfg, "reference_max_dimension", 1600)))
+            scale = min(1.0, limit / float(max(width, height)))
+            if scale < 1.0:
+                size = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
+                pil_image = pil_image.resize(size, Image.Resampling.LANCZOS)
+            # Convert to RGB only after resizing to avoid a second full-resolution color array.
+            return np.asarray(pil_image.convert("RGB"), dtype=np.uint8), scale
+
+        target_array, _target_scale = _resize_for_analysis(target_oriented)
+        reference_array, reference_scale = _resize_for_analysis(reference_oriented)
+        target_gray = cv2.cvtColor(target_array, cv2.COLOR_RGB2GRAY)
+        reference_gray = cv2.cvtColor(reference_array, cv2.COLOR_RGB2GRAY)
+
+        def _not_comparable(reason: str, **details: Any) -> Dict[str, Any]:
+            return {
+                "status": "NOT_COMPARABLE",
+                "difference_detected": False,
+                "reason": reason,
+                "target_dimensions": [int(target_size[0]), int(target_size[1])],
+                "reference_dimensions": [int(reference_size[0]), int(reference_size[1])],
+                "alignment": details,
+                "interpretation": "A failed comparison is not evidence that the image is unmodified.",
+            }
+
+        orb = cv2.ORB_create(
+            nfeatures=max(500, int(getattr(cfg, "reference_max_features", 4000))),
+            scaleFactor=1.2,
+            nlevels=8,
+            edgeThreshold=15,
+            fastThreshold=10,
+        )
+        target_keypoints, target_descriptors = orb.detectAndCompute(target_gray, None)
+        reference_keypoints, reference_descriptors = orb.detectAndCompute(reference_gray, None)
+        if target_descriptors is None or reference_descriptors is None:
+            return _not_comparable("Insufficient visual features for reliable registration.")
+
+        matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+        try:
+            candidate_matches = matcher.knnMatch(target_descriptors, reference_descriptors, k=2)
+        except cv2.error as exc:
+            return _not_comparable(f"Feature matching failed: {exc}")
+
+        match_ratio = float(getattr(cfg, "reference_match_ratio", 0.75))
+        good_matches = [
+            first
+            for pair in candidate_matches if len(pair) == 2
+            for first, second in [pair]
+            if first.distance < match_ratio * second.distance
+        ]
+        min_inliers = int(getattr(cfg, "reference_min_inliers", 20))
+        if len(good_matches) < min_inliers:
+            return _not_comparable(
+                "Too few reliable feature matches to establish that the images show the same scene.",
+                feature_matches=len(good_matches),
+            )
+
+        source_points = np.float32(
+            [target_keypoints[match.queryIdx].pt for match in good_matches]
+        ).reshape(-1, 1, 2)
+        destination_points = np.float32(
+            [reference_keypoints[match.trainIdx].pt for match in good_matches]
+        ).reshape(-1, 1, 2)
+        try:
+            homography, inlier_mask = cv2.findHomography(
+                source_points,
+                destination_points,
+                cv2.RANSAC,
+                float(getattr(cfg, "reference_ransac_reprojection_px", 3.0)),
+                maxIters=2000,
+                confidence=0.995,
+            )
+        except cv2.error as exc:
+            return _not_comparable(f"Geometric registration failed: {exc}", feature_matches=len(good_matches))
+
+        if homography is None or inlier_mask is None or not np.isfinite(homography).all():
+            return _not_comparable("The images could not be geometrically aligned.", feature_matches=len(good_matches))
+
+        inliers = int(inlier_mask.sum())
+        inlier_ratio = float(inliers / max(1, len(good_matches)))
+        min_inlier_ratio = float(getattr(cfg, "reference_min_inlier_ratio", 0.25))
+        if inliers < min_inliers or inlier_ratio < min_inlier_ratio:
+            return _not_comparable(
+                "Geometric registration quality fell below the reliability threshold.",
+                feature_matches=len(good_matches),
+                inliers=inliers,
+                inlier_ratio=round(inlier_ratio, 4),
+            )
+
+        reference_height, reference_width = reference_array.shape[:2]
+        try:
+            aligned_target = cv2.warpPerspective(
+                target_array,
+                homography,
+                (reference_width, reference_height),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0,
+            )
+        except cv2.error as exc:
+            return _not_comparable(f"Perspective warp failed: {exc}", inliers=inliers, inlier_ratio=round(inlier_ratio, 4))
+
+        target_presence_mask = cv2.warpPerspective(
+            np.ones((target_array.shape[0], target_array.shape[1]), dtype=np.uint8) * 255,
+            homography,
+            (reference_width, reference_height),
+            flags=cv2.INTER_NEAREST,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=0,
+        )
+        valid_pixels = target_presence_mask > 200
+        coverage_ratio = float(valid_pixels.sum() / float(reference_width * reference_height))
+        if coverage_ratio < 0.20:
+            return _not_comparable(
+                "Warped overlap area is too small to establish meaningful scene comparison.",
+                inliers=inliers,
+                inlier_ratio=round(inlier_ratio, 4),
+                projected_coverage_ratio=round(coverage_ratio, 4),
+            )
+
+        target_lab = cv2.cvtColor(aligned_target, cv2.COLOR_RGB2LAB).astype(np.float32)
+        reference_lab = cv2.cvtColor(reference_array, cv2.COLOR_RGB2LAB).astype(np.float32)
+        lab_distance = np.sqrt(np.sum((target_lab - reference_lab) ** 2, axis=2))
+
+        baseline = lab_distance[valid_pixels]
+        if baseline.size == 0:
+            return _not_comparable("No overlapping pixels available for difference calculation.")
+
+        baseline_median = float(np.median(baseline))
+        baseline_mad = float(np.median(np.abs(baseline - baseline_median)))
+        adaptive_floor = baseline_median + (
+            float(getattr(cfg, "reference_diff_mad_multiplier", 3.0)) * 1.4826 * baseline_mad
+        )
+        decision_threshold = max(float(getattr(cfg, "reference_diff_min_lab_distance", 7.0)), adaptive_floor)
+        difference_mask = ((lab_distance > decision_threshold) & valid_pixels).astype(np.uint8)
+
+        kernel_size = max(3, int(getattr(cfg, "reference_morphology_kernel", 7)))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        difference_mask = cv2.morphologyEx(difference_mask, cv2.MORPH_CLOSE, kernel)
+        difference_mask = cv2.morphologyEx(
+            difference_mask,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        )
+        difference_mask = (difference_mask > 0).astype(np.uint8)
+
+        component_count, component_labels, component_stats, _ = cv2.connectedComponentsWithStats(
+            difference_mask, connectivity=8
+        )
+        valid_area = max(1, int(valid_pixels.sum()))
+        regions = []
+        min_comp_area = int(getattr(cfg, "reference_min_component_area", 64))
+        min_area_ratio = float(getattr(cfg, "reference_min_changed_area_ratio", 0.001))
+        for component_index in range(1, component_count):
+            x, y, width, height, area = [int(value) for value in component_stats[component_index]]
+            area_ratio = float(area / valid_area)
+            if area < min_comp_area or area_ratio < min_area_ratio:
+                continue
+            region_mask = component_labels == component_index
+            mean_distance = float(np.mean(lab_distance[region_mask]))
+            regions.append({
+                "bbox": [
+                    int(round(x / reference_scale)),
+                    int(round(y / reference_scale)),
+                    int(round(width / reference_scale)),
+                    int(round(height / reference_scale)),
+                ],
+                "area_pixels": int(round(area / (reference_scale ** 2))),
+                "area_ratio": round(area_ratio, 6),
+                "mean_lab_distance": round(mean_distance, 3),
+            })
+        regions.sort(key=lambda region: region["area_pixels"], reverse=True)
+        regions = regions[:25]
+
+        changed_pixels = int(difference_mask.sum())
+        changed_ratio = float(changed_pixels / valid_area)
+        difference_detected = bool(regions)
+        heatmap_scale = max(float(np.percentile(baseline, 99.5)) - decision_threshold, 1.0)
+        heatmap = cv2.applyColorMap(
+            np.clip((lab_distance - decision_threshold) * (255.0 / heatmap_scale), 0, 255).astype(np.uint8),
+            cv2.COLORMAP_TURBO,
+        )
+        reference_bgr = cv2.cvtColor(reference_array, cv2.COLOR_RGB2BGR)
+        overlay = cv2.addWeighted(reference_bgr, 0.58, heatmap, 0.42, 0.0)
+        overlay[~valid_pixels] = reference_bgr[~valid_pixels]
+        encoded_ok, encoded_heatmap = cv2.imencode(
+            ".jpg", overlay, [cv2.IMWRITE_JPEG_QUALITY, 82]
+        )
+        heatmap_base64 = (
+            base64.b64encode(encoded_heatmap.tobytes()).decode("ascii")
+            if encoded_ok else None
+        )
+
+        return {
+            "status": "COMPARABLE",
+            "difference_detected": difference_detected,
+            "difference_type": "MATERIAL_REFERENCE_DIFFERENCES" if difference_detected else "NO_SIGNIFICANT_DIFFERENCE_DETECTED",
+            "changed_pixel_ratio": round(changed_ratio, 6),
+            "changed_pixel_percent": round(changed_ratio * 100.0, 3),
+            "component_count": len(regions),
+            "largest_region": regions[0] if regions else None,
+            "regions": regions,
+            "difference_threshold_lab_distance": round(decision_threshold, 3),
+            "baseline_lab_distance_median": round(baseline_median, 3),
+            "baseline_lab_distance_mad": round(baseline_mad, 3),
+            "difference_heatmap_base64": heatmap_base64,
+            "target_dimensions": [int(target_size[0]), int(target_size[1])],
+            "reference_dimensions": [int(reference_size[0]), int(reference_size[1])],
+            "alignment": {
+                "method": "ORB_FEATURES_RANSAC_HOMOGRAPHY",
+                "feature_matches": len(good_matches),
+                "inliers": inliers,
+                "inlier_ratio": round(inlier_ratio, 4),
+                "projected_coverage_ratio": round(coverage_ratio, 4),
+            },
+            "interpretation": (
+                "Material pixel differences are localized relative to the supplied reference. "
+                "They may result from object movement, lighting, capture changes, retouching, or removal; "
+                "this comparison does not by itself establish AI generation or the cause of the changes."
+            ),
+        }
+
     def analyze(self, img: Image.Image) -> Tuple[Dict[str, Any], List[Evidence], float]:
         """
         Execute full multi-domain forensic inspection.
@@ -552,6 +793,28 @@ class ImageForensicsEngine:
         except (ImportError, Exception):
             pass
 
+        # ── 8. Multi-Scale Localized Manipulation Subsystem ─────────────────────
+        localized_manipulation = self._detect_localized_manipulation(
+            img=img,
+            diff=diff,
+            native_gray=native_gray,
+            ela_disparity=ela_disparity,
+            noise_disparity=quadrant_noise_disparity,
+        )
+        if localized_manipulation.get("detected"):
+            s_loc = float(localized_manipulation.get("anomaly_score", 0.40))
+            domain_anomalies.append(s_loc)
+            evidences.append(Evidence(
+                evidence_type="localized_manipulation_detected",
+                description=(
+                    f"Multi-scale localized manipulation inspection identified spatial compression and noise disparity "
+                    f"({localized_manipulation.get('component_count', 0)} localized region(s)). Consistent with localized inpainting or splicing."
+                ),
+                value=f"score={s_loc:.2f}",
+                severity_contribution=s_loc,
+                source="LocalizedManipulationSubsystem",
+            ))
+
         # Calculate combined multi-domain anomaly probability using Noisy-OR Bayesian fusion
         prob_product = 1.0
         for a in domain_anomalies:
@@ -565,6 +828,7 @@ class ImageForensicsEngine:
             "ela_status": ela_status,
             "ela_heatmap_base64": heatmap_base64,
             "suspicious_regions": suspicious_blocks,
+            "localized_manipulation": localized_manipulation,
             "fft_high_freq_ratio": round(energy_ratio, 4),
             "fft_grid_peak_ratio": round(peak_to_median, 2),
             "fft_off_axis_spike_ratio": round(off_axis_max_spike, 2),
@@ -601,6 +865,120 @@ class ImageForensicsEngine:
         }
 
         return forensic_metrics, evidences, float(combined_signal_prob)
+
+    def _detect_localized_manipulation(
+        self,
+        img: Image.Image,
+        diff: np.ndarray,
+        native_gray: np.ndarray,
+        ela_disparity: float,
+        noise_disparity: float,
+    ) -> Dict[str, Any]:
+        """
+        Multi-scale localized manipulation inspection for single images.
+        Detects localized inpainting, texture anomalies, and regional noise inconsistencies.
+        """
+        import cv2
+
+        h_diff, w_diff = diff.shape[:2]
+        diff_mag = np.mean(diff, axis=2) if diff.ndim == 3 else diff
+
+        # Multi-scale 8x8 spatial grid
+        gh, gw = 8, 8
+        bh, bw = max(1, h_diff // gh), max(1, w_diff // gw)
+        block_means = []
+        suspicious_regions = []
+
+        diff_med = float(np.median(diff_mag))
+        diff_mad = float(np.median(np.abs(diff_mag - diff_med))) + 1e-5
+        adaptive_thresh = diff_med + 3.0 * 1.4826 * diff_mad
+
+        for r in range(gh):
+            for c in range(gw):
+                block = diff_mag[r * bh : (r + 1) * bh, c * bw : (c + 1) * bw]
+                b_mean = float(np.mean(block))
+                block_means.append(b_mean)
+                if b_mean > adaptive_thresh and b_mean > 5.0:
+                    suspicious_regions.append({
+                        "grid": [r, c],
+                        "bbox": [
+                            int(c * bw),
+                            int(r * bh),
+                            int(bw),
+                            int(bh),
+                        ],
+                        "normalized_box": [
+                            round(r / float(gh), 3),
+                            round(c / float(gw), 3),
+                            round((r + 1) / float(gh), 3),
+                            round((c + 1) / float(gw), 3),
+                        ],
+                        "score": round(min(1.0, (b_mean - diff_med) / (adaptive_thresh + 1e-5)), 2),
+                        "type": "COMPRESSION_DISPARITY",
+                    })
+
+        ela_dense_disp = float(np.std(block_means)) if block_means else 0.0
+
+        # Dense noise residual disparity
+        h_nat, w_nat = native_gray.shape
+        nth, ntw = max(8, h_nat // gh), max(8, w_nat // gw)
+        tile_vars = []
+        for r in range(gh):
+            for c in range(gw):
+                patch = native_gray[r * nth : (r + 1) * nth, c * ntw : (c + 1) * ntw]
+                if patch.size < 64:
+                    continue
+                denoised = cv2.medianBlur(patch.astype(np.uint8), 3).astype(np.float32)
+                res = patch - denoised
+                # Sobel edge exclusion
+                gx = cv2.Sobel(patch, cv2.CV_32F, 1, 0, ksize=3)
+                gy = cv2.Sobel(patch, cv2.CV_32F, 0, 1, ksize=3)
+                gmag = np.hypot(gx, gy)
+                flat_mask = gmag <= np.percentile(gmag, 80)
+                eval_res = res[flat_mask] if np.sum(flat_mask) >= 32 else res
+                tile_vars.append(float(np.var(eval_res)))
+
+        tile_var_arr = np.array(tile_vars, dtype=np.float32) if tile_vars else np.array([1.0], dtype=np.float32)
+        dense_noise_disparity = float(np.std(tile_var_arr) / (np.mean(tile_var_arr) + 1e-5))
+
+        has_critical_ela = ela_disparity >= float(self.config.ela_disparity_critical)
+        has_dense_ela_anomaly = ela_dense_disp >= float(self.config.ela_disparity_critical)
+        has_noise_disparity = noise_disparity > 1.4 or dense_noise_disparity > 2.2
+        regions_detected = len(suspicious_regions) > 0
+
+        if (has_critical_ela or has_dense_ela_anomaly) and has_noise_disparity:
+            status = "EVIDENCE_DETECTED"
+            detected = True
+            anomaly_score = 0.75
+        elif has_critical_ela or (regions_detected and has_noise_disparity):
+            status = "EVIDENCE_DETECTED"
+            detected = True
+            anomaly_score = 0.65
+        elif (ela_disparity >= float(self.config.ela_disparity_moderate)) or regions_detected or (dense_noise_disparity > 1.6):
+            status = "INCONCLUSIVE"
+            detected = False
+            anomaly_score = 0.35
+        else:
+            status = "NO_EVIDENCE_DETECTED"
+            detected = False
+            anomaly_score = 0.0
+
+        return {
+            "status": status,
+            "detected": detected,
+            "anomaly_score": round(anomaly_score, 2),
+            "regions": suspicious_regions[:12],
+            "component_count": len(suspicious_regions),
+            "dense_ela_disparity": round(ela_dense_disp, 3),
+            "dense_noise_disparity": round(dense_noise_disparity, 3),
+            "neural_inpainting_localization": "NOT_CONFIGURED",
+            "scope": "SINGLE_IMAGE_MULTI_SCALE_DSP",
+            "interpretation": (
+                "Evaluates localized compression and noise-residual consistency across dense spatial blocks. "
+                "Single-image analysis cannot prove object removal; optional reference comparison is required "
+                "for authoritative scene-difference localization."
+            ),
+        }
 
     def _generate_ela_heatmap(self, diff: np.ndarray) -> str:
         """

@@ -7,16 +7,16 @@ import androidx.compose.ui.graphics.Color
 // ══════════════════════════════════════════════════════════════════════════════
 // CyberGuard Authoritative Brand Accents & Fixed Constants
 // ══════════════════════════════════════════════════════════════════════════════
-val PrimaryRed = Color(0xFFF04444)          // Cyber Security Red (Primary Brand Accent)
-val DeepRed = Color(0xFFB91C2C)             // Critical Security Breach Laser Crimson
-val SignalYellow = Color(0xFFFFC928)        // Tactical Signal Yellow (Warning & Control Accent)
-val CyberYellow = Color(0xFFFFD166)         // Tactical Spectrum Yellow
-val CyberGold = Color(0xFFFACC15)           // Clearance Gold
+val PrimaryRed = Color(0xFF14532D)          // Sovereign Green (Primary Brand Accent)
+val DeepRed = Color(0xFFB42318)             // Critical Security Breach Crimson
+val SignalYellow = Color(0xFFE6812F)        // Orange Accent (Warning & Control)
+val CyberYellow = Color(0xFFF3A45C)         // Soft Orange
+val CyberGold = Color(0xFFB45309)           // Deep Amber
 val PureWhite = Color(0xFFFFFFFF)           // Primary Pure White
-val OffWhite = Color(0xFFE9EDF2)            // Secondary Off White
-val MutedGrey = Color(0xFF87909F)           // Muted Tactical Grey
-val LightTextPrimary = Color(0xFF262334)     // Light Theme Charcoal Primary Typography
-val LightTextSecondary = Color(0xFF524F60)   // Light Theme Supporting Text
+val OffWhite = Color(0xFF47614F)            // Secondary Text (Mid Forest)
+val MutedGrey = Color(0xFF6B8272)           // Muted Sage Grey
+val LightTextPrimary = Color(0xFF14321F)     // Forest Primary Typography
+val LightTextSecondary = Color(0xFF47614F)   // Supporting Text
 val DarkTextPrimary = PureWhite
 val DarkTextSecondary = OffWhite
 
@@ -30,14 +30,14 @@ val ElectricCyan = SignalYellow
 val QuantumViolet = SignalYellow
 val HologramTeal = SignalYellow
 val MutedSlate = MutedGrey
-val FieldBorderFocused = PrimaryRed
-val StatusOffline = Color(0xFF4A5568)
-val HighAlertOrange = Color(0xFFFF6600)
-val RadarGridCyan = Color(0x40F04444)
+val FieldBorderFocused = Color(0xFF14532D)
+val StatusOffline = Color(0xFF7A8B80)
+val HighAlertOrange = Color(0xFFE6812F)
+val RadarGridCyan = Color(0x2E14532D)
 val LensFlareWhite = PureWhite
-val EmeraldGreen = Color(0xFF10B981)
+val EmeraldGreen = Color(0xFF2E7D4F)
 val DeepNeonMagenta = DeepRed
-val ThreatAlertRed = PrimaryRed
+val ThreatAlertRed = Color(0xFFB42318)
 val LevelVGold = CyberGold
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -148,11 +148,7 @@ val QuantumHeaderGradient = Brush.horizontalGradient(
 
 val HolographicCardGradient: Brush
     @Composable
-    get() = if (CyberGuardTheme.isDark) {
-        Brush.verticalGradient(listOf(Color(0xFF191F29), Color(0xFF11151D)))
-    } else {
-        Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFF8F7FB)))
-    }
+    get() = Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFFF6FAF4)))
 
 val BreachGradient = Brush.horizontalGradient(
     listOf(DeepRed, PrimaryRed)

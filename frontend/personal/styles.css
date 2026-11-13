@@ -1,42 +1,44 @@
 :root {
-  /* ── Primary surfaces ─────────────────────────────────────── */
-  --bg-app: #F8F7FC;
-  --bg-sidebar: #F4F0FC;
+  /* ── Primary surfaces (sovereign light) ──────────────────── */
+  --bg-app: #F6FAF4;
+  --bg-sidebar: #F1F8EE;
   --bg-topbar: #FFFFFF;
   --bg-card: #FFFFFF;
-  --bg-hero: #F8F7FC;
-  --bg-lavender-card: #F1EDFB;
-  --bg-light-purple: #EAE4F8;
-  --bg-soft-mint: #E9F6EF;
+  --bg-hero: #F6FAF4;
+  --bg-lavender-card: #E4F1E3;
+  --bg-light-purple: #EEF7D2;
+  --bg-soft-mint: #E8F5E5;
 
-  /* ── Purple and lavender accents ─────────────────────────── */
-  --purple-primary: #7867C8;
-  --purple-deep: #6552B4;
-  --purple-accent: #DDD3F3;
-  --purple-border: #E5DDF5;
-  --purple-icon-bg: #EEE8FC;
-  --purple-text: #6552B4;
+  /* ── Green accents (legacy purple tokens now map to green) ─ */
+  --purple-primary: #14532D;
+  --purple-deep: #0C3B23;
+  --purple-accent: #C9E265;
+  --purple-border: #D9E6D6;
+  --purple-icon-bg: #E4F1E3;
+  --purple-text: #2E7D4F;
 
   /* ── Emerald and green accents ───────────────────────────── */
-  --emerald-primary: #23835B;
-  --emerald-dark: #176B49;
-  --mint-bg: #E9F6EF;
+  --emerald-primary: #2E7D4F;
+  --emerald-dark: #14532D;
+  --mint-bg: #E8F5E5;
   --green-soft-bg: #DDF3E7;
-  --green-border: #CFEBDD;
+  --green-border: #B7DCB2;
   --green-icon-bg: #D7F4E4;
+  --orange-accent: #E6812F;
+  --orange-soft: #FCEBD9;
 
   /* ── Typography and neutral borders ──────────────────────── */
-  --text-main: #20252B;
-  --text-heading: #211A43;
-  --text-secondary: #747B8B;
-  --text-muted: #8E87A5;
-  --border-light: #E8E5EF;
+  --text-main: #14321F;
+  --text-heading: #0C3B23;
+  --text-secondary: #47614F;
+  --text-muted: #6B8272;
+  --border-light: #DCE8D8;
   --white: #FFFFFF;
 
   /* ── Shadows ─────────────────────────────────────────────── */
-  --shadow-subtle: 0 4px 18px rgba(101, 82, 180, 0.035);
-  --shadow-hover: 0 14px 35px rgba(101, 82, 180, 0.08);
-  --shadow-modal: 0 25px 65px rgba(33, 26, 67, 0.16);
+  --shadow-subtle: 0 4px 18px rgba(20, 50, 31, 0.04);
+  --shadow-hover: 0 14px 35px rgba(20, 50, 31, 0.08);
+  --shadow-modal: 0 25px 65px rgba(12, 59, 35, 0.18);
 
   /* ── Fonts ───────────────────────────────────────────────── */
   --font-body: "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -318,9 +320,9 @@ a {
 
 .experience-switch:hover,
 .topbar .top-actions > a.experience-switch:hover {
-  background: #EAE3F8;
-  border-color: #CCA5EE;
-  color: #513CA5 !important;
+  background: #E4F1E3;
+  border-color: #B7DCB2;
+  color: #14532D !important;
   transform: translateY(-1px);
 }
 
@@ -392,7 +394,7 @@ a {
 .icon-button:hover {
   background: var(--bg-sidebar);
   border-color: #D6C8F2;
-  color: #513CA5;
+  color: #14532D;
   transform: translateY(-1px);
 }
 
@@ -423,9 +425,9 @@ a {
 }
 
 .auth-btn:hover {
-  background: #E4DCF8;
-  border-color: #CCA5EE;
-  color: #513CA5;
+  background: #E4F1E3;
+  border-color: #B7DCB2;
+  color: #14532D;
   transform: translateY(-1px);
 }
 
@@ -754,7 +756,7 @@ h1 {
   align-items: center;
   gap: 13px;
   padding: 13px 0;
-  border-bottom: 1px solid #F1EDF8;
+  border-bottom: 1px solid #EDF4EA;
 }
 
 .history-row:last-child {
@@ -1045,8 +1047,8 @@ h1 {
 }
 
 .secondary-button:hover {
-  background: #E4DCF8;
-  border-color: #CCA5EE;
+  background: #E4F1E3;
+  border-color: #B7DCB2;
 }
 
 .side-explainer .dark-card {
@@ -1059,7 +1061,7 @@ h1 {
 .dark-card-icon {
   width: 38px;
   height: 38px;
-  background: #342B5C;
+  background: #0C3B23;
   color: var(--purple-accent);
   border-radius: 12px;
   display: grid;
@@ -1102,7 +1104,7 @@ h1 {
 .upload-zone {
   border: 1.5px dashed var(--purple-accent);
   border-radius: 16px;
-  background: #FAF9FD;
+  background: #F7FBF4;
   min-height: 245px;
   display: flex;
   flex-direction: column;
@@ -1115,7 +1117,7 @@ h1 {
 
 .upload-zone.dragging {
   border-color: var(--purple-primary);
-  background: #F1EDFB;
+  background: #E8F5E5;
 }
 
 .upload-zone h2 {
@@ -1349,7 +1351,7 @@ h1 {
 
 .result-card.unknown {
   border-color: var(--purple-border);
-  background: #FAF9FD;
+  background: #F7FBF4;
 }
 
 .result-heading-wrap {
@@ -1495,7 +1497,7 @@ h1 {
   color: var(--text-main);
   max-height: 220px;
   overflow: auto;
-  background: #FAF9FD;
+  background: #F7FBF4;
   padding: 10px;
   border-radius: 8px;
 }
@@ -1553,7 +1555,7 @@ h1 {
   height: 32px;
   border-radius: 50%;
   border: 1px solid var(--purple-border);
-  background: #FAF9FD;
+  background: #F7FBF4;
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -1631,7 +1633,7 @@ h1 {
   border: 1px solid var(--purple-border);
   border-radius: 10px;
   font-size: 13px;
-  background: #FAF9FD;
+  background: #F7FBF4;
   transition: .18s;
 }
 
@@ -1695,7 +1697,7 @@ h1 {
   display: flex;
   justify-content: space-between;
   padding: 10px 0;
-  border-bottom: 1px solid #F1EDF8;
+  border-bottom: 1px solid #EDF4EA;
   font-size: 12px;
 }
 
@@ -1889,5 +1891,41 @@ h1 {
   }
   .page-wrap {
     padding-inline: 13px;
+  }
+}
+
+
+/* ── Mobile fit: keep the shell inside the viewport ─────────────────── */
+@media (max-width: 760px) {
+  .main-area {
+    min-width: 0;
+  }
+  .app-shell {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+  .topbar {
+    gap: 8px;
+  }
+  .crumb {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .crumb strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .top-actions {
+    min-width: 0;
+    flex-wrap: nowrap;
+    flex-shrink: 1;
+  }
+  .topbar .top-actions > * {
+    flex-shrink: 0;
+  }
+  .page-wrap {
+    max-width: 100%;
   }
 }

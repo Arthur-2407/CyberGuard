@@ -47,18 +47,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     val showConnectionSettings = MutableStateFlow(false)
 
-    // ══════════════════════════════════════════════════════════════════════
-    // PERSISTENT THEME SYSTEM (Dark Mode default, Light Mode Lavender-Sage)
-    // ══════════════════════════════════════════════════════════════════════
-    private val themePrefs = application.getSharedPreferences("cyberguard_theme_prefs", Context.MODE_PRIVATE)
-    private val _isDarkTheme = MutableStateFlow(themePrefs.getBoolean("is_dark_theme", true))
-    val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
-
-    fun toggleTheme(isDark: Boolean) {
-        themePrefs.edit().putBoolean("is_dark_theme", isDark).apply()
-        _isDarkTheme.value = isDark
-    }
-    
     val telemetry = repository.telemetry
     
     val authManager = connectionManager.authManager

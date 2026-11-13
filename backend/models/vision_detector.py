@@ -85,7 +85,8 @@ if _TORCH_AVAILABLE:
             return norm.squeeze()
 else:
     class ForensicVisionDetector:
-        pass
+        def __init__(self, pretrained: bool = False, *args: Any, **kwargs: Any) -> None:
+            pass
 
 
 class VisionDeepfakeDetector:
@@ -106,6 +107,11 @@ class VisionDeepfakeDetector:
         self._last_inference_time_ms: float = 0.0
         self._target_path: Optional[str] = None
         self._load_lock = threading.Lock()
+        self._labels: Optional[Dict[int, str]] = None
+        self._synthetic_index: int = 1
+        self._authentic_index: int = 0
+        self._class_mapping_verified: bool = False
+        self._calibration_status: str = "UNCALIBRATED_SOFTMAX"
 
         self._initialize()
 
@@ -177,12 +183,33 @@ class VisionDeepfakeDetector:
                 checkpoint = torch.load(self._target_path, map_location=self._device, weights_only=False)
                 if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
                     self._model_family = checkpoint.get("architecture", "MobileNetV3_ForensicVisionDetector")
+                    # Inspect and verify class mapping metadata
+                    raw_labels = checkpoint.get("labels") or checkpoint.get("id2label") or checkpoint.get("class_mapping")
+                    if isinstance(raw_labels, dict):
+                        self._labels = {int(k) if str(k).isdigit() else k: str(v) for k, v in raw_labels.items()}
+                        # Identify synthetic and authentic class indices
+                        for idx, label_name in self._labels.items():
+                            norm_name = str(label_name).upper()
+                            if any(syn in norm_name for syn in ("SYNTHETIC", "DEEPFAKE", "FAKE", "GENERATED", "AI")):
+                                self._synthetic_index = int(idx)
+                            elif any(auth in norm_name for auth in ("AUTHENTIC", "REAL", "ORGANIC", "PRISTINE")):
+                                self._authentic_index = int(idx)
+                        self._class_mapping_verified = True
+                        logger.info(f"VisionDeepfakeDetector: Verified class mapping from metadata: {self._labels} (synth_idx={self._synthetic_index}, auth_idx={self._authentic_index})")
+                    else:
+                        self._labels = {0: "AUTHENTIC", 1: "SYNTHETIC_DEEPFAKE"}
+                        self._synthetic_index = 1
+                        self._authentic_index = 0
+                        self._class_mapping_verified = False
+                        logger.info("VisionDeepfakeDetector: Checkpoint contains no class mapping metadata; using default index 1=synthetic.")
+
                     model_inst = ForensicVisionDetector(pretrained=False)
                     model_inst.load_state_dict(checkpoint["state_dict"])
                     self._model = model_inst.to(self._device)
                 elif hasattr(checkpoint, "eval"):
                     self._model = checkpoint.to(self._device)
                     self._model_family = type(checkpoint).__name__
+                    self._class_mapping_verified = False
                 else:
                     self._state = VisionDetectorState.LOAD_FAILED
                     self._error_details = "Unsupported model checkpoint format."
@@ -256,22 +283,38 @@ class VisionDeepfakeDetector:
                     logits = output
 
                 if logits.shape[-1] == 2:
+                    raw_score = float(logits[0, self._synthetic_index].item())
                     probs = torch.softmax(logits, dim=-1)
-                    synthetic_prob = float(probs[0, 1].item())
+                    synthetic_prob = float(probs[0, self._synthetic_index].item())
+                    auth_prob = float(probs[0, self._authentic_index].item())
                 else:
+                    raw_score = float(logits[0, 0].item())
                     synthetic_prob = float(torch.sigmoid(logits)[0, 0].item())
+                    auth_prob = float(max(0.0, min(1.0, 1.0 - synthetic_prob)))
 
-            auth_prob = float(max(0.0, min(1.0, 1.0 - synthetic_prob)))
             predicted_class = "SYNTHETIC_DEEPFAKE" if synthetic_prob >= 0.50 else "AUTHENTIC"
             self._last_inference_time_ms = (time.time() - start_t) * 1000.0
             return {
                 "status": VisionDetectorState.READY,
                 "is_evaluated": True,
+                "raw_score": round(raw_score, 4),
                 "probability": round(synthetic_prob, 4),
                 "synthetic_probability": round(synthetic_prob, 4),
                 "authentic_probability": round(auth_prob, 4),
                 "predicted_class": predicted_class,
+                "classification_threshold": 0.50,
+                "calibration_status": self._calibration_status,
+                "calibrated_probability": None,
+                "is_calibrated": False,
+                "class_mapping_verified": self._class_mapping_verified,
+                "labels": self._labels,
+                "model_scope": "GLOBAL_FULL_IMAGE_SYNTHESIS",
+                "scope_disclosure": (
+                    "Global image classifier: evaluates whole-image synthetic generation markers (Midjourney/DALL-E/Flux). "
+                    "Does not detect localized object removal, inpainting, or localized splicing."
+                ),
                 "confidence": round(0.70 + 0.25 * abs(synthetic_prob - 0.5) * 2, 2),
+                "confidence_calibration": "Heuristic Margin (Uncalibrated)",
                 "model_family": self._model_family,
                 "device": self._device,
                 "sha256": self._sha256,
@@ -298,7 +341,10 @@ class VisionDeepfakeDetector:
                 "model_family": self._model_family,
                 "device": self._device,
                 "sha256": self._sha256 or "COMPUTED_AT_LOAD",
-                "details": f"Neural vision classifier active on {self._device}. Validated via pre-flight health check."
+                "scope": "GLOBAL_FULL_IMAGE_SYNTHESIS",
+                "class_mapping_verified": self._class_mapping_verified,
+                "calibration_status": self._calibration_status,
+                "details": f"Neural vision classifier active on {self._device}. Validated via pre-flight health check (Global synthesis scope; inpainting localization requires reference comparison or localized spatial analysis)."
             }
         elif self._state == VisionDetectorState.NOT_CONFIGURED:
             return {

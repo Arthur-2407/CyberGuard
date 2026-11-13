@@ -542,6 +542,7 @@
     if (!state.currentUser) {
       renderLocalHistory();
     }
+    window.dispatchEvent(new CustomEvent("cyberguard:activity"));
   }
 
   function getHistoryIcon(type = "") {
@@ -663,7 +664,7 @@
   // Navigation and deep-linking
   function navigate() {
     const raw = (location.hash || "#home").slice(1);
-    const active = ["home", "link", "file", "media", "activity", "settings"].includes(raw) ? raw : "home";
+    const active = ["home", "link", "file", "media", "monitoring", "incidents", "alerts", "identity", "health", "activity", "settings"].includes(raw) ? raw : "home";
 
     $$(".page").forEach(el => el.classList.toggle("active", el.id === "page-" + active));
     $$(".nav-link[data-page]").forEach(el => el.classList.toggle("active", el.dataset.page === active));
@@ -673,6 +674,11 @@
       link: "Check a link",
       file: "Check a file",
       media: "Image & voice",
+      monitoring: "Live monitoring",
+      incidents: "Incidents",
+      alerts: "Alerts",
+      identity: "Voice identity",
+      health: "System health",
       activity: "My activity",
       settings: "Settings"
     };

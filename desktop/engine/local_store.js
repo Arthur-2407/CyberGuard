@@ -1,11 +1,11 @@
 /**
  * CyberGuard Desktop — Local Storage & Persistence Engine
- *
+ * 
  * Manages local database and configuration in user app data:
  *   - Environment Override: process.env.CYBERGUARD_DATA_DIR (for tests & isolated runs)
  *   - Standard Mode: %APPDATA%/CyberGuard/
  *   - Portable Mode: %APPDATA%/CyberGuard-Portable/ or relative ./cyberguard-data/
- *
+ * 
  * Enforces per-user tenant isolation on all stored data.
  * Employs Windows DPAPI via Electron safeStorage for session credentials.
  */

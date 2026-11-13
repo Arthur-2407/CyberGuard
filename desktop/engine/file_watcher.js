@@ -1,6 +1,6 @@
 /**
  * CyberGuard Desktop — Real-Time File Monitoring & Threat Interceptor
- *
+ * 
  * Capabilities:
  *   - Event-driven filesystem observation with bounded sliding debounce queue
  *   - File write stability detection (handles in-progress browser downloads)
@@ -331,3 +331,4 @@ class FileWatcherService {
 }
 
 module.exports = new FileWatcherService();
+
