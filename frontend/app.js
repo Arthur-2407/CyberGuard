@@ -27996,7 +27996,7 @@ async function scanMediaForensics() {
     : null;
   const referenceLooksLikeImage = referenceFile && (
     (referenceFile.type && referenceFile.type.startsWith('image/')) ||
-    /\\.(jpe?g|png|webp|bmp|gif|tiff?)$/i.test(referenceFile.name)
+    /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i.test(referenceFile.name)
   );
   if (referenceFile && !referenceLooksLikeImage) {
     return showToast('The optional reference must be a supported image file', 'warning');
