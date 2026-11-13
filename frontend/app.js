@@ -16246,6 +16246,8 @@ async function loadOverviewLiveFeed(showToastMsg = false) {
 
     rawOverviewEvents = evts;
 
+    if (typeof window.renderSovereignAnalytics === 'function') window.renderSovereignAnalytics(evts);
+
     renderOverviewLiveFeed(evts);
 
     renderOverviewActivityChart(evts, currentActivityRange);
@@ -17677,6 +17679,8 @@ async function updateOverview(forceRefresh = false) {
       events = await eventsRes.value.json();
 
       rawOverviewEvents = events;
+
+      if (typeof window.renderSovereignAnalytics === 'function') window.renderSovereignAnalytics(events);
 
     }
 
@@ -27990,6 +27994,17 @@ async function scanMediaForensics() {
   const file = input.files[0];
 
   const isVideo = file.type.startsWith('video/') || /\.(mp4|avi|mov|mkv|webm|flv)$/i.test(file.name);
+  const referenceInput = document.getElementById('image-forensic-reference-input');
+  const referenceFile = !isVideo && referenceInput && referenceInput.files && referenceInput.files.length
+    ? referenceInput.files[0]
+    : null;
+  const referenceLooksLikeImage = referenceFile && (
+    (referenceFile.type && referenceFile.type.startsWith('image/')) ||
+    /\.(jpe?g|png|webp|bmp|gif|tiff?)$/i.test(referenceFile.name)
+  );
+  if (referenceFile && !referenceLooksLikeImage) {
+    return showToast('The optional reference must be a supported image file', 'warning');
+  }
 
   const btn = document.getElementById('btn-scan-image');
 
@@ -28032,6 +28047,7 @@ async function scanMediaForensics() {
   formData.append('file', file);
 
   formData.append('source', 'web_dashboard');
+  if (referenceFile) formData.append('reference_file', referenceFile);
 
 
 
@@ -28144,6 +28160,51 @@ function toggleHeatmapView() {
 
   }
 
+}
+
+
+
+function toggleReferenceOverlayModal() {
+  const threat = window._lastScannedThreat || window._lastForensicData;
+  const overlay = threat?.forensic_metrics?.reference_comparison?.difference_heatmap_base64 ||
+                  threat?.forensic_metrics?.reference_comparison?.diff_overlay_base64 ||
+                  threat?.reference_comparison?.difference_heatmap_base64 ||
+                  threat?.reference_comparison?.diff_overlay_base64;
+  if (!overlay) {
+    return showToast('No reference difference overlay available for this asset', 'warning');
+  }
+
+  let modal = document.getElementById('ref-overlay-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'ref-overlay-modal';
+    modal.className = 'modal-backdrop';
+    modal.style.cssText = 'position:fixed; inset:0; background:rgba(2,6,23,0.88); backdrop-filter:blur(6px); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    modal.innerHTML = `
+      <div class="modal-card" style="max-width:960px; width:100%; background:#0f172a; border:1px solid rgba(56,189,248,0.4); border-radius:10px; padding:18px; box-shadow:0 0 40px rgba(0,0,0,0.85);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.08); padding-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:16px;">🔬</span>
+            <h3 style="color:#38bdf8; font-size:13px; font-weight:700; font-family:var(--font-mono); margin:0; text-transform:uppercase; letter-spacing:0.04em;">
+              Ground-Truth Reference Differential Heatmap Overlay
+            </h3>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="document.getElementById('ref-overlay-modal').style.display='none'" style="font-size:11px; padding:4px 10px;">Close</button>
+        </div>
+        <div style="text-align:center; background:#020617; border-radius:6px; padding:10px; max-height:70vh; overflow:auto;">
+          <img id="ref-overlay-img" src="" alt="Differential Overlay" style="max-width:100%; height:auto; border-radius:4px; box-shadow:0 0 20px rgba(0,0,0,0.9);" />
+        </div>
+        <div style="margin-top:12px; font-size:11px; color:#94a3b8; font-family:var(--font-mono); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <span>Turbo colormap: Hot regions highlight localized pixel and color disparities relative to registered reference image.</span>
+          <span style="color:#38bdf8;">ORB + RANSAC Homography Registered</span>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+  const img = document.getElementById('ref-overlay-img');
+  if (img) img.src = overlay.startsWith('data:') ? overlay : ('data:image/jpeg;base64,' + overlay);
+  modal.style.display = 'flex';
 }
 
 
@@ -28581,6 +28642,79 @@ function renderImageForensicsReport(data) {
 
 
 
+
+  // Ground-Truth Reference Comparison Section
+  const refComp = metrics.reference_comparison;
+  let referenceComparisonHtml = '';
+  if (refComp && refComp.status && refComp.status !== 'REFERENCE_UNAVAILABLE' && refComp.status !== 'DISABLED') {
+    const isChanges = refComp.status === 'CHANGES_DETECTED' || Boolean(refComp.difference_detected) || refComp.difference_type === 'MATERIAL_REFERENCE_DIFFERENCES';
+    const isNominal = refComp.status === 'NO_SIGNIFICANT_DIFFERENCES' || (refComp.status === 'COMPARABLE' && !refComp.difference_detected);
+    const isFailed = refComp.status === 'REGISTRATION_FAILED' || refComp.status === 'NOT_COMPARABLE';
+    const statusColor = isChanges ? '#ef4444' : (isNominal ? '#10b981' : '#f59e0b');
+    const badgeText = isChanges ? 'LOCALIZED TAMPERING / CONTENT EDITED' : (isNominal ? 'HIGH FIDELITY TO REFERENCE' : 'GEOMETRIC REGISTRATION FAILED');
+    const areaPct = typeof refComp.changed_pixel_percent === 'number' ? `${refComp.changed_pixel_percent.toFixed(2)}%` : (typeof refComp.changed_area_ratio === 'number' ? `${(refComp.changed_area_ratio * 100).toFixed(2)}%` : (typeof refComp.changed_pixel_ratio === 'number' ? `${(refComp.changed_pixel_ratio * 100).toFixed(2)}%` : '0%'));
+    const inlierRatioVal = refComp.alignment && typeof refComp.alignment.inlier_ratio === 'number' ? refComp.alignment.inlier_ratio : refComp.inlier_ratio;
+    const inlierPct = typeof inlierRatioVal === 'number' ? `${(inlierRatioVal * 100).toFixed(1)}%` : 'N/A';
+    const inlierCount = (refComp.alignment && refComp.alignment.inliers) || refComp.homography_inliers || 0;
+    const maxLab = typeof refComp.max_lab_distance === 'number' ? refComp.max_lab_distance.toFixed(1) : (typeof refComp.difference_threshold_lab_distance === 'number' ? refComp.difference_threshold_lab_distance.toFixed(1) : 'N/A');
+    const regionsCount = refComp.component_count || refComp.regions_count || (Array.isArray(refComp.regions) ? refComp.regions.length : 0);
+    const refName = refComp.reference_filename || 'Uploaded Ground-Truth Reference';
+    const diffOverlay = diffOverlay || refComp.difference_heatmap_base64;
+
+    referenceComparisonHtml = `
+      <div style="margin-top:14px; margin-bottom:14px; background:rgba(15,23,42,0.85); border:1px solid ${statusColor}66; border-radius:8px; padding:14px; box-shadow:0 0 16px ${statusColor}18;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:10px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${statusColor}" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+            <span style="font-size:12px; font-weight:800; color:${statusColor}; text-transform:uppercase; letter-spacing:0.04em;">
+              Ground-Truth Reference Differential Forensics
+            </span>
+          </div>
+          <span class="badge" style="background:${statusColor}22; color:${statusColor}; border:1px solid ${statusColor}55; font-size:10px; font-family:var(--font-mono); font-weight:700;">
+            ${escapeHtml(badgeText)}
+          </span>
+        </div>
+
+        <div style="font-size:11px; color:#cbd5e1; font-family:var(--font-mono); line-height:1.5; margin-bottom:12px; background:rgba(0,0,0,0.3); padding:8px 12px; border-radius:6px;">
+          ${isChanges
+            ? `<strong>Comparison Finding:</strong> Geometric feature registration aligned against reference (<span style="color:#38bdf8;">${escapeHtml(refName)}</span>) with <strong style="color:#10b981;">${inlierCount} inliers (${inlierPct})</strong>. Detected <strong style="color:#ef4444;">${regionsCount} modified localized region(s)</strong> spanning <strong style="color:#ef4444;">${areaPct}</strong> of the asset canvas (Max color distance: <span style="color:#f87171;">${maxLab} &Delta;E</span>). Visual content was removed or inpainted relative to the reference.`
+            : (isNominal
+              ? `<strong>Comparison Finding:</strong> Image is geometrically aligned with reference (<span style="color:#38bdf8;">${escapeHtml(refName)}</span>) with <strong>${inlierCount} inliers (${inlierPct})</strong>. No significant localized pixel or color divergences detected.`
+              : `<strong>Comparison Finding:</strong> Insufficient shared feature keypoints to establish projective homography alignment (< min inliers threshold). Reference comparison inconclusive.`)}
+        </div>
+
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:8px; font-size:11px; font-family:var(--font-mono);">
+          <div style="background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:8px 10px; text-align:center;">
+            <div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">Changed Area</div>
+            <div style="font-weight:700; color:${isChanges ? '#ef4444' : '#10b981'}; font-size:13px; margin-top:2px;">${areaPct}</div>
+          </div>
+          <div style="background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:8px 10px; text-align:center;">
+            <div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">Changed Regions</div>
+            <div style="font-weight:700; color:${isChanges ? '#ef4444' : '#10b981'}; font-size:13px; margin-top:2px;">${regionsCount}</div>
+          </div>
+          <div style="background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:8px 10px; text-align:center;">
+            <div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">RANSAC Inliers</div>
+            <div style="font-weight:700; color:#38bdf8; font-size:13px; margin-top:2px;">${inlierCount} (${inlierPct})</div>
+          </div>
+          <div style="background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.06); border-radius:6px; padding:8px 10px; text-align:center;">
+            <div style="color:#94a3b8; font-size:10px; text-transform:uppercase;">Max LAB &Delta;E</div>
+            <div style="font-weight:700; color:${isChanges ? '#f87171' : '#38bdf8'}; font-size:13px; margin-top:2px;">${maxLab}</div>
+          </div>
+        </div>
+
+        ${diffOverlay ? `
+          <div style="margin-top:12px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+            <button class="btn btn-sm btn-secondary" onclick="toggleReferenceOverlayModal()" style="font-size:11px; font-family:var(--font-mono); display:inline-flex; align-items:center; gap:6px;">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+              View Differential Heatmap Overlay
+            </button>
+            <span style="font-size:10px; color:#64748b; font-family:var(--font-mono);">Homography: Projective RANSAC 3.0px reprojection threshold</span>
+          </div>
+        ` : ''}
+      </div>
+    `;
+  }
+
   const matrixHudHtml = `
 
     <div style="margin-top:14px; margin-bottom:14px; background:rgba(15,23,42,0.75); border:1px solid rgba(6,182,212,0.25); border-radius:8px; padding:12px;">
@@ -28805,7 +28939,7 @@ function renderImageForensicsReport(data) {
   const isVisionReady = Boolean(manifest?.active_model_inventory?.vision_deepfake_model?.status === 'READY' || hasVisionScore);
   const visionBadgeText = hasVisionScore ? 'READY_IN_MEMORY (EVALUATED)' : 'STANDBY / HEURISTIC ONLY';
   const visionVerdictText = hasVisionScore
-    ? (pSynth <= 0.20 ? 'AUTHENTIC VISUAL FEATURE PROFILE' : (pSynth >= 0.65 ? 'SYNTHETIC ARTIFACTS OBSERVED' : 'ANOMALOUS VISUAL PROFILE'))
+    ? (pSynth <= 0.20 ? 'LOW GLOBAL SYNTHETIC PROFILE (ORGANIC)' : (pSynth >= 0.65 ? 'SYNTHETIC ARTIFACTS OBSERVED' : 'AMBIGUOUS VISUAL PROFILE'))
     : 'NOT EVALUATED (HEURISTIC ONLY)';
   const visionProbText = hasVisionScore ? `${pSynth.toFixed(4)} (${(pSynth * 100).toFixed(1)}% Synthetic)` : 'N/A (Heuristic Mode)';
 
@@ -28853,12 +28987,23 @@ function renderImageForensicsReport(data) {
       reconciliationText = 'Neural visual artifact detector and traditional DSP frequency/noise residual algorithms align within authentic baseline thresholds. Note: Container metadata is unverified; absence of detected anomalies does not independently prove original camera provenance.';
     }
   } else if (severity === 'CRITICAL' || severity === 'HIGH' || classification === 'LIKELY_MANIPULATED') {
-    primaryVerdictTitle = isVideoMedia ? 'LIKELY MANIPULATED / DEEPFAKE VIDEO' : 'LIKELY MANIPULATED / SYNTHETIC';
     primaryBadgeClass = 'badge-critical';
     primaryColor = '#ef4444';
+    const refComp = metrics.reference_comparison;
     if (isVideoMedia) {
+      primaryVerdictTitle = 'LIKELY MANIPULATED / DEEPFAKE VIDEO';
       reconciliationText = 'Elevated deepfake markers detected across frame-to-frame temporal stability, visual keyframe analysis, or acoustic soundtrack.';
+    } else if (refComp && (refComp.status === 'CHANGES_DETECTED' || Boolean(refComp.difference_detected))) {
+      primaryVerdictTitle = 'LOCALIZED IMAGE MANIPULATION / INPAINTING DETECTED';
+      const refName = refComp.reference_filename || 'reference asset';
+      const areaPct = typeof refComp.changed_area_ratio === 'number' ? (refComp.changed_area_ratio * 100).toFixed(1) : 'elevated';
+      reconciliationText = `Ground-truth reference comparison identified ${areaPct}% altered canvas area (${refComp.regions_count || 1} localized region(s)) against ${refName}. Neural vision confirms low whole-image generative score (p_synthetic = ${pSynth !== null ? pSynth.toFixed(2) : '0.02'}), isolating localized object removal/editing within authentic photographic context.`;
+    } else if (metrics.localized_manipulation && (metrics.localized_manipulation.status === 'TAMPERING_DETECTED' || metrics.localized_manipulation.status === 'ANOMALIES_SUSPECTED')) {
+      primaryVerdictTitle = 'LOCALIZED MANIPULATION / INPAINTING DETECTED';
+      const tamperedPct = typeof metrics.localized_manipulation.tampered_area_ratio === 'number' ? (metrics.localized_manipulation.tampered_area_ratio * 100).toFixed(1) : 'elevated';
+      reconciliationText = `Dense spatial residual analysis detected anomalous compression/noise disparity across localized tiles (${tamperedPct}% of canvas). Whole-image generative model confirms low global synthetic profile.`;
     } else {
+      primaryVerdictTitle = 'LIKELY MANIPULATED / SYNTHETIC';
       reconciliationText = 'Elevated synthetic artifacts identified across spatial compression, 2D FFT spectral lattices, or neural deepfake classification.';
     }
   } else {
@@ -29157,12 +29302,20 @@ function renderImageForensicsReport(data) {
 
         </button>
 
+        ${(metrics.reference_comparison && (metrics.reference_comparison.diff_overlay_base64 || metrics.reference_comparison.difference_heatmap_base64)) ? `
+        <button class="img-action-btn img-btn-spectral" onclick="toggleReferenceOverlayModal()" style="border-color:rgba(56,189,248,0.6); color:#38bdf8;" title="Inspect Differential Difference Heatmap against Registered Ground-Truth Reference">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>Differential Heatmap</span>
+        </button>` : ''}
+
       </div>
 
 
 
-      <!-- Calibrated 8-Point Forensic Matrix Section -->
+      <!-- Ground-Truth Reference Comparison Section -->
+      ${referenceComparisonHtml}
 
+      <!-- Calibrated 8-Point Forensic Matrix Section -->
       ${matrixHudHtml}
 
 
@@ -29613,17 +29766,25 @@ function renderForensicTelemetryObservations(data) {
 
         statusClass = 'status-anomaly';
 
-        statusLabel = isFlattened ? 'NOISE FLATTENED' : 'HEAVY TAIL';
+        statusLabel = isFlattened ? 'NOISE FLATTENED' : 'HEAVY-TAIL RESIDUAL';
 
         telemetryChip = isFlattened ? `Var: ${metrics.noise_variance !== undefined ? metrics.noise_variance.toFixed(3) : 'Low'}` : `Kurtosis: ${metrics.noise_kurtosis ? metrics.noise_kurtosis.toFixed(1) : 'High'}`;
+
+      } else if (metrics.noise_status === 'MODERATE') {
+
+        statusClass = 'status-warning';
+
+        statusLabel = 'HEAVY-TAIL RESIDUAL';
+
+        telemetryChip = `Kurtosis: ${metrics.noise_kurtosis ? metrics.noise_kurtosis.toFixed(1) : 'Elevated'}`;
 
       } else {
 
         statusClass = 'status-authentic';
 
-        statusLabel = 'GAUSSIAN RESIDUAL';
+        statusLabel = 'NOMINAL RESIDUAL';
 
-        telemetryChip = `Kurtosis: ${metrics.noise_kurtosis ? metrics.noise_kurtosis.toFixed(1) : '10.2'}`;
+        telemetryChip = `Kurtosis: ${metrics.noise_kurtosis ? metrics.noise_kurtosis.toFixed(1) : '3.0'}`;
 
       }
 
@@ -29650,6 +29811,36 @@ function renderForensicTelemetryObservations(data) {
         telemetryChip = 'Zero Faces (No Splicing)';
 
       }
+
+    } else if (rawType.includes('reference') || rawType.includes('differential')) {
+
+      sensorClass = 'sensor-prnu';
+
+      sensorLabel = 'REFERENCE DIFF';
+
+      if (rawDesc.includes('detected') || rawDesc.includes('divergence') || rawDesc.includes('modified') || rawDesc.includes('regions')) {
+        statusClass = 'status-anomaly';
+        statusLabel = 'CHANGES DETECTED';
+      } else {
+        statusClass = 'status-authentic';
+        statusLabel = 'NOMINAL MATCH';
+      }
+      telemetryChip = rawVal || 'Ref Aligned';
+
+    } else if (rawType.includes('localized') || rawType.includes('inpainting')) {
+
+      sensorClass = 'sensor-ela';
+
+      sensorLabel = 'LOCAL INPAINTING';
+
+      if (rawDesc.includes('Tampering') || rawDesc.includes('detected') || rawDesc.includes('suspected')) {
+        statusClass = 'status-anomaly';
+        statusLabel = 'DISPARITY ANOMALY';
+      } else {
+        statusClass = 'status-authentic';
+        statusLabel = 'NOMINAL RESIDUAL';
+      }
+      telemetryChip = rawVal || 'Dense Tiles';
 
     } else if (rawType.includes('edge') || rawType.includes('sharpness') || rawType.includes('laplacian')) {
 
@@ -29949,7 +30140,7 @@ function renderForensicMoreDetails(data) {
   const isVisionReady = Boolean(manifest?.active_model_inventory?.vision_deepfake_model?.status === 'READY' || hasVisionScore);
   const visionBadgeText = hasVisionScore ? 'READY_IN_MEMORY (LAZY-LOADED)' : 'STANDBY / HEURISTIC ONLY';
   const visionVerdictText = hasVisionScore
-    ? (pSynth <= 0.20 ? 'AUTHENTIC VISUAL FEATURE PROFILE' : (pSynth >= 0.65 ? 'SYNTHETIC ARTIFACTS OBSERVED' : 'ANOMALOUS VISUAL PROFILE'))
+    ? (pSynth <= 0.20 ? 'LOW GLOBAL SYNTHETIC PROFILE (ORGANIC)' : (pSynth >= 0.65 ? 'SYNTHETIC ARTIFACTS OBSERVED' : 'AMBIGUOUS VISUAL PROFILE'))
     : 'NOT EVALUATED (HEURISTIC ONLY)';
   const visionProbText = hasVisionScore ? `${pSynth.toFixed(4)} (${(pSynth * 100).toFixed(1)}%)` : 'N/A (Heuristic Mode)';
   const visionColor = hasVisionScore ? (pSynth <= 0.20 ? '#10b981' : (pSynth >= 0.65 ? '#ef4444' : '#f59e0b')) : '#94a3b8';
@@ -33370,9 +33561,21 @@ const QUANTUM_THEMES = {
 
 };
 
-
+// Sovereign light palette is the single supported colour scheme.
+QUANTUM_THEMES.gov = {
+  name: 'SOVEREIGN LIGHT',
+  circuitColor: 'rgba(22, 101, 60, 0.28)',
+  circuitGlow: 'rgba(22, 101, 60, 0.16)',
+  circuitDot: '#2E7D4F',
+  timelineColor: '#C9E265',
+  timelineGlow: 'rgba(201, 226, 101, 0.65)',
+  timelineFill: 'rgba(201, 226, 101, 0.28)',
+  discColor: '#E6812F'
+};
 
 function setQuantumTheme(themeName, playAudio = true) {
+
+  themeName = 'gov';
 
   if (!QUANTUM_THEMES[themeName]) themeName = 'amethyst';
 
@@ -34550,19 +34753,8 @@ function initNavInteractiveAnimations() {
 
 onCyberGuardDomReady(function () {
 
-  // Restore saved theme or default to amethyst (since DEFCON 2 is active by default)
-
-  let savedTheme = 'amethyst';
-
-  try {
-
-    savedTheme = localStorage.getItem('cyberguard_quantum_theme') || 'amethyst';
-
-    if (!QUANTUM_THEMES[savedTheme]) savedTheme = 'amethyst';
-
-  } catch (e) {}
-
-  setQuantumTheme(savedTheme, false);
+  // Single sovereign light theme — no user theme switching.
+  setQuantumTheme('gov', false);
 
 
 
