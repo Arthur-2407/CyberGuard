@@ -247,6 +247,8 @@ class ImageForensicsConfig:
 
     # Optional, analyst-supplied reference-image registration and difference localization
     reference_max_dimension: int = 1600
+    reference_max_file_size_bytes: int = 52428800
+    reference_max_pixels: int = 40000000
     reference_max_features: int = 4000
     reference_match_ratio: float = 0.75
     reference_min_inliers: int = 20
@@ -503,6 +505,8 @@ def _build_settings(raw: dict) -> Settings:
             ela_max_diff_threshold=float(image_forensics_raw.get("ela_max_diff_threshold", 60.0)),
             ela_nominal_max=float(image_forensics_raw.get("ela_nominal_max", 8.0)),
             reference_max_dimension=int(image_forensics_raw.get("reference_max_dimension", 1600)),
+            reference_max_file_size_bytes=int(image_forensics_raw.get("reference_max_file_size_bytes", 52428800)),
+            reference_max_pixels=int(image_forensics_raw.get("reference_max_pixels", 40000000)),
             reference_max_features=int(image_forensics_raw.get("reference_max_features", 4000)),
             reference_match_ratio=float(image_forensics_raw.get("reference_match_ratio", 0.75)),
             reference_min_inliers=int(image_forensics_raw.get("reference_min_inliers", 20)),
