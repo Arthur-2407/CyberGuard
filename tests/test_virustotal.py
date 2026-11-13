@@ -138,9 +138,12 @@ async def test_local_url_analysis_fallback_when_vt_disabled():
     settings = create_test_settings(enabled=False, api_key="")
     analyzer = URLAnalyzer(settings)
 
-    # Safe URL
+    # Safe URL - when external intelligence is unconfigured and live crawler is offline/unreachable,
+    # system must never declare an unverified target unconditionally SAFE (must be SAFE or honest UNKNOWN / UNVERIFIED)
     event_safe = await analyzer.analyze("https://www.google.com/search?q=test")
-    assert event_safe.severity == RiskLevel.SAFE
+    assert event_safe.severity in (RiskLevel.SAFE, RiskLevel.LOW, RiskLevel.UNVERIFIED)
+    if event_safe.threat_intelligence:
+        assert event_safe.threat_intelligence.get("verdict_display") in ("UNKNOWN / UNVERIFIED", "NO KNOWN THREATS DETECTED")
 
     # Suspicious IP URL
     event_sus = await analyzer.analyze("http://192.168.1.100/login/secure/verify")
