@@ -771,7 +771,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFF021E12))
+                                    .background(HighlightSurface)
                                     .border(0.6.dp, StatusOnline.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
@@ -1199,7 +1199,7 @@ fun CommsScreen(navController: NavController, viewModel: MainViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(CutCornerShape(6.dp))
-                            .background(if (isSmsArmed) Color(0xFF021E12).copy(alpha = 0.8f) else HighlightSurface)
+                            .background(if (isSmsArmed) Color(0xFFEAF6E7) else HighlightSurface)
                             .border(1.dp, if (isSmsArmed) StatusOnline.copy(alpha = 0.5f) else DividerColor, CutCornerShape(6.dp))
                             .padding(10.dp),
                         verticalAlignment = Alignment.CenterVertically

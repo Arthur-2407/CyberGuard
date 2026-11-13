@@ -646,13 +646,32 @@ if _FRONTEND_DIR.exists():
                 return FileResponse(str(cfg_file), media_type="application/javascript")
             return Response(content="window.__CYBERGUARD_CONFIG__ = window.__CYBERGUARD_CONFIG__ || {};", media_type="application/javascript")
 
+        # Remaining workspace assets (workspace.css/js, analytics.css/js, images)
+        # are addressed relatively from /personal/, so serve the whole directory.
+        app.mount(
+            "/personal",
+            StaticFiles(directory=str(_PERSONAL_DIR)),
+            name="personal_assets",
+        )
+
+    def _ui_file(name: str) -> Path:
+        if (_FRONTEND_DIR / name).exists():
+            return _FRONTEND_DIR / name
+        if _PERSONAL_DIR.exists() and (_PERSONAL_DIR / name).exists():
+            return _PERSONAL_DIR / name
+        return _FRONTEND_DIR / name
+
     @app.get("/", include_in_schema=False)
     @app.get("/index.html", include_in_schema=False)
     @app.get("/security-center", include_in_schema=False)
     @app.get("/incidents", include_in_schema=False)
     @app.get("/alerts", include_in_schema=False)
     async def serve_frontend():
-        return FileResponse(str(_FRONTEND_DIR / "index.html"))
+        return FileResponse(
+            str(_FRONTEND_DIR / "index.html"),
+            media_type="text/html",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
 
     @app.get("/styles.css", include_in_schema=False)
     async def serve_styles():
@@ -670,17 +689,56 @@ if _FRONTEND_DIR.exists():
             headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
         )
 
+    @app.get("/workspace.js", include_in_schema=False)
+    async def serve_workspace():
+        return FileResponse(
+            str(_ui_file("workspace.js")),
+            media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/workspace.css", include_in_schema=False)
+    async def serve_workspace_css():
+        return FileResponse(
+            str(_ui_file("workspace.css")),
+            media_type="text/css",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/analytics.js", include_in_schema=False)
+    async def serve_analytics():
+        return FileResponse(
+            str(_ui_file("analytics.js")),
+            media_type="application/javascript",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
+    @app.get("/analytics.css", include_in_schema=False)
+    async def serve_analytics_css():
+        return FileResponse(
+            str(_ui_file("analytics.css")),
+            media_type="text/css",
+            headers={"Cache-Control": "public, max-age=300, stale-while-revalidate=86400"},
+        )
+
     @app.get("/config.js", include_in_schema=False)
     async def serve_config():
-        config_file = _FRONTEND_DIR / "config.js"
+        config_file = _ui_file("config.js")
         if config_file.exists():
             return FileResponse(str(config_file), media_type="application/javascript")
         return Response(content="window.__CYBERGUARD_CONFIG__ = window.__CYBERGUARD_CONFIG__ || {};", media_type="application/javascript")
 
     @app.get("/logo_full.png", include_in_schema=False)
     @app.get("/logo.png", include_in_schema=False)
-    async def serve_logo():
-        return FileResponse(str(_FRONTEND_DIR / "logo_full.png"), media_type="image/png")
+    @app.get("/emblem.png", include_in_schema=False)
+    async def serve_logo(request: Request):
+        name = "emblem.png" if request.url.path.endswith("emblem.png") else (
+            "logo_full.png" if request.url.path.endswith("logo_full.png") else "logo.png"
+        )
+        target = _ui_file(name)
+        if not target.exists():
+            target = _FRONTEND_DIR / "logo_full.png"
+        return FileResponse(str(target), media_type="image/png")
 
     @app.get("/sounds/{filename}", include_in_schema=False)
     async def serve_sounds(filename: str):

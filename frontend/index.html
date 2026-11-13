@@ -74,38 +74,6 @@
     </div>
 
     <div class="nav-status">
-      <!-- Quantum Chroma Matrix Controller (Non-destructively hidden from UI per yellow box instruction) -->
-      <div class="quantum-chroma-widget" id="quantum-chroma-widget" style="display:none !important;" aria-hidden="true">
-        <button class="quantum-chroma-btn" id="quantum-chroma-toggle" onclick="toggleChromaMatrixMenu()">
-          <span class="chroma-disc-aura" id="chroma-current-aura"></span>
-          <span class="chroma-matrix-label" id="chroma-matrix-name">AMETHYST VOID</span>
-          <span class="chroma-chevron">▾</span>
-        </button>
-        <div class="quantum-chroma-dropdown" id="quantum-chroma-dropdown">
-          <div class="chroma-dropdown-header">TACTICAL CHROMA SPECTRUM</div>
-          <div class="chroma-option" id="chroma-opt-crimson" onclick="setQuantumTheme('crimson', true)">
-            <span class="chroma-color-dot" style="background:#ef4444;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">CRIMSON PROTOCOL</span></div>
-          </div>
-          <div class="chroma-option" id="chroma-opt-cyan" onclick="setQuantumTheme('cyan', true)">
-            <span class="chroma-color-dot" style="background:#00e5ff;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">CYBERSPACE CYAN</span></div>
-          </div>
-          <div class="chroma-option" id="chroma-opt-emerald" onclick="setQuantumTheme('emerald', true)">
-            <span class="chroma-color-dot" style="background:#10b981;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">EMERALD SOVEREIGN</span></div>
-          </div>
-          <div class="chroma-option active" id="chroma-opt-amethyst" onclick="setQuantumTheme('amethyst', true)">
-            <span class="chroma-color-dot" style="background:#a855f7;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">AMETHYST VOID</span></div>
-          </div>
-          <div class="chroma-option" id="chroma-opt-amber" onclick="setQuantumTheme('amber', true)">
-            <span class="chroma-color-dot" style="background:#f59e0b;"></span>
-            <div class="chroma-opt-info"><span class="chroma-opt-name">SOLAR FLARE</span></div>
-          </div>
-        </div>
-      </div>
-
       <!-- Mode selector: navigating loads only one frontend runtime -->
       <a class="frontend-mode-switch" data-cg-mode-switch="personal" href="./personal/" title="Switch to CyberGuard Personal" aria-label="Switch to CyberGuard Personal">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 7h15l-3-3m3 3-3 3M20 17H5l3 3m-3-3 3-3"/></svg>
@@ -347,6 +315,51 @@
           </div>
           <button class="btn btn-secondary btn-xs" onclick="clearOverviewDrilldown()" title="Reset active drilldown filter">Clear Filter ✕</button>
         </div>
+
+        <!-- SOVEREIGN ANALYTICS: Unified Threat Parameter Matrix -->
+        <section class="card analytics-deck" id="sovereign-analytics" aria-labelledby="sovereign-analytics-title">
+          <div class="analytics-head">
+            <div class="analytics-head-text">
+              <h2 class="card-title" id="sovereign-analytics-title">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-6 4 4 5-7"/></svg>
+                Analysis &amp; Parameters
+              </h2>
+              <p class="analytics-sub">Consolidated view of every detection pipeline, severity band and confidence metric across the defence grid.</p>
+            </div>
+            <div class="analytics-head-actions">
+              <span class="analytics-live-tag"><span class="analytics-live-dot"></span>LIVE TELEMETRY</span>
+              <div class="chart-range-group" id="analytics-range-group">
+                <button class="chart-range-pill" onclick="setAnalyticsRange('24H', this)">24H</button>
+                <button class="chart-range-pill" onclick="setAnalyticsRange('7D', this)">7D</button>
+                <button class="chart-range-pill active" onclick="setAnalyticsRange('ALL', this)">ALL</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="analytics-grid">
+            <div class="analytics-chart-panel">
+              <div class="analytics-chart-legend">
+                <span><i class="legend-dot" style="background:#B3261E;"></i>Critical</span>
+                <span><i class="legend-dot" style="background:#E6812F;"></i>High</span>
+                <span><i class="legend-dot" style="background:#C9E265;"></i>Medium</span>
+                <span><i class="legend-dot" style="background:#4E9A6A;"></i>Low / Safe</span>
+                <span class="legend-line"><i></i>Mean confidence</span>
+              </div>
+              <div class="analytics-canvas-wrap">
+                <canvas id="sovereignAnalyticsChart" aria-label="Severity distribution and mean detection confidence over time"></canvas>
+              </div>
+              <div class="analytics-chart-foot" id="sovereignAnalyticsFoot">Computing parameters…</div>
+            </div>
+
+            <aside class="analytics-params-panel">
+              <h3 class="analytics-params-title">Detection parameters</h3>
+              <div class="analytics-param-rows" id="sovereignParameterRows">
+                <div class="analytics-param-empty">Awaiting telemetry…</div>
+              </div>
+              <div class="analytics-summary-grid" id="sovereignSummaryGrid"></div>
+            </aside>
+          </div>
+        </section>
 
         <!-- ROW 2: Threat Activity Timeline (Left) + Threat Severity Profile (Right) -->
         <div class="overview-grid-row overview-row-2">
@@ -1085,6 +1098,9 @@
               <span class="threat-chip" onclick="toggleForensicModeHighlight('ela')">Spatial ELA Heatmap</span>
             </div>
             <input type="file" id="image-forensic-input" accept="image/*,video/*" class="form-input" style="width:100%;" onchange="previewForensicMedia(event)" />
+            <label class="form-label" for="image-forensic-reference-input" style="margin-top:10px;">Optional Original / Reference Image (Image Comparison)</label>
+            <input type="file" id="image-forensic-reference-input" accept="image/*" class="form-input" style="width:100%;" />
+            <div style="font-size:10.5px;color:var(--text-muted);margin-top:4px;line-height:1.4;">Upload the original or a matching-scene reference to align both images and localize visible differences. This comparison is optional and does not independently identify why pixels changed.</div>
             <div id="image-preview-container" class="image-inspection-zone" style="display:none; margin-top:10px; text-align:center; background:rgba(0,0,0,0.4); border-radius:6px; padding:10px; border:1px dashed rgba(0,212,255,0.3);">
               <div class="image-inspection-scanline"></div>
               <img id="image-forensic-preview" style="max-height:130px; border-radius:4px; max-width:100%; object-fit:contain; display:none;" alt="Forensic Image Preview" />

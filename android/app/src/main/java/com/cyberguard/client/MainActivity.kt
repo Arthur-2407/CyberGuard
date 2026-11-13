@@ -64,8 +64,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            val isDark by viewModel.isDarkTheme.collectAsState()
-            CyberGuardClientTheme(isDark = isDark) {
+            CyberGuardClientTheme {
                 val context = LocalContext.current
                 val navController = rememberNavController()
                 val navBackStackEntry by navController.currentBackStackEntryAsState()

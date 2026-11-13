@@ -245,6 +245,29 @@ class ImageForensicsConfig:
     ela_max_diff_threshold: float = 60.0
     ela_nominal_max: float = 8.0
 
+    # Optional, analyst-supplied reference-image registration and difference localization
+    reference_max_dimension: int = 1600
+    reference_max_file_size_bytes: int = 52428800
+    reference_max_pixels: int = 40000000
+    reference_max_features: int = 4000
+    reference_match_ratio: float = 0.75
+    reference_min_inliers: int = 20
+    reference_min_inlier_ratio: float = 0.25
+    reference_ransac_reprojection_px: float = 3.0
+    reference_diff_min_lab_distance: float = 7.0
+    reference_diff_mad_multiplier: float = 3.0
+    reference_min_component_area: int = 64
+    reference_min_changed_area_ratio: float = 0.001
+    reference_morphology_kernel: int = 7
+
+    # Single-image localized manipulation & inpainting detection
+    localized_manipulation_enabled: bool = True
+    localized_tile_size: int = 64
+    localized_tile_stride: int = 32
+    localized_noise_disparity_threshold: float = 1.6
+    localized_gradient_disparity_threshold: float = 2.0
+    localized_tampering_min_area: int = 64
+
     # Facial Forensics
     face_skin_to_edge_ratio: float = 0.16
     face_skin_lap_min: float = 20.0
@@ -489,6 +512,25 @@ def _build_settings(raw: dict) -> Settings:
             ela_disparity_moderate=float(image_forensics_raw.get("ela_disparity_moderate", 6.0)),
             ela_max_diff_threshold=float(image_forensics_raw.get("ela_max_diff_threshold", 60.0)),
             ela_nominal_max=float(image_forensics_raw.get("ela_nominal_max", 8.0)),
+            reference_max_dimension=int(image_forensics_raw.get("reference_max_dimension", 1600)),
+            reference_max_file_size_bytes=int(image_forensics_raw.get("reference_max_file_size_bytes", 52428800)),
+            reference_max_pixels=int(image_forensics_raw.get("reference_max_pixels", 40000000)),
+            reference_max_features=int(image_forensics_raw.get("reference_max_features", 4000)),
+            reference_match_ratio=float(image_forensics_raw.get("reference_match_ratio", 0.75)),
+            reference_min_inliers=int(image_forensics_raw.get("reference_min_inliers", 20)),
+            reference_min_inlier_ratio=float(image_forensics_raw.get("reference_min_inlier_ratio", 0.25)),
+            reference_ransac_reprojection_px=float(image_forensics_raw.get("reference_ransac_reprojection_px", 3.0)),
+            reference_diff_min_lab_distance=float(image_forensics_raw.get("reference_diff_min_lab_distance", 7.0)),
+            reference_diff_mad_multiplier=float(image_forensics_raw.get("reference_diff_mad_multiplier", 3.0)),
+            reference_min_component_area=int(image_forensics_raw.get("reference_min_component_area", 64)),
+            reference_min_changed_area_ratio=float(image_forensics_raw.get("reference_min_changed_area_ratio", 0.001)),
+            reference_morphology_kernel=int(image_forensics_raw.get("reference_morphology_kernel", 7)),
+            localized_manipulation_enabled=bool(image_forensics_raw.get("localized_manipulation_enabled", True)),
+            localized_tile_size=int(image_forensics_raw.get("localized_tile_size", 64)),
+            localized_tile_stride=int(image_forensics_raw.get("localized_tile_stride", 32)),
+            localized_noise_disparity_threshold=float(image_forensics_raw.get("localized_noise_disparity_threshold", 1.6)),
+            localized_gradient_disparity_threshold=float(image_forensics_raw.get("localized_gradient_disparity_threshold", 2.0)),
+            localized_tampering_min_area=int(image_forensics_raw.get("localized_tampering_min_area", 64)),
             face_skin_to_edge_ratio=float(image_forensics_raw.get("face_skin_to_edge_ratio", 0.16)),
             face_skin_lap_min=float(image_forensics_raw.get("face_skin_lap_min", 20.0)),
             face_edge_lap_min=float(image_forensics_raw.get("face_edge_lap_min", 35.0)),

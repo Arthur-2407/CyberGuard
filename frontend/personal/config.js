@@ -1,14 +1,17 @@
 /**
  * CyberGuard Personal frontend configuration.
- * Set api_base to a trusted backend origin when deploying separately.
- * Do not put API keys, tokens, passwords or other secrets in this file.
+ * Configures the target Python FastAPI / WebSocket backend origin for static host deployments
+ * (e.g. GitHub Pages at https://arthur-2407.github.io/CyberGuard/personal/ or Vercel).
  *
- * Runtime override order:
- * 1. ?api_base=https://backend.example (saved in localStorage)
- * 2. localStorage: cyberguard_personal_api_base
- * 3. this api_base value
- * 4. same-origin relative API requests
+ * Precedence Order:
+ * 1. URL query parameter: ?api_base=https://... or ?tunnel=https://... (persists to localStorage)
+ * 2. Saved custom override: localStorage['cyberguard_api_base'] or localStorage['cyberguard_custom_tunnel']
+ * 3. Localhost / loopback origin: http://127.0.0.1:3000 (direct port)
+ * 4. Active Cloudflare Tunnel: bridges deployed HTTPS frontends (GitHub Pages & Vercel) to local Docker
+ * 5. Same-origin relative fallback ("")
  */
 window.__CYBERGUARD_PERSONAL_CONFIG__ = window.__CYBERGUARD_PERSONAL_CONFIG__ || {
-  api_base: ""
+  api_base: "",
+  tunnel_url: "https://fax-heat-harris-sufficient.trycloudflare.com",
+  cloud_backend_url: ""
 };

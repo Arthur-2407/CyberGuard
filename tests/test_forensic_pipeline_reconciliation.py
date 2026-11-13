@@ -175,3 +175,165 @@ class TestForensicPipelineReconciliation:
         # Verify probability sum is 1.0 within floating point precision
         assert pred["synthetic_probability"] + pred["authentic_probability"] == pytest.approx(1.0, abs=1e-3)
         assert pred["predicted_class"] in ("AUTHENTIC", "SYNTHETIC_DEEPFAKE")
+
+    def test_reference_comparison_with_bput_hackathon_pair(self, coordinator):
+        """
+        Verify reference comparison correctly detects localized inpainting / object removal
+        on the BPUT Hackathon image pair (people removed from stairs), while neural vision
+        and FFT recognize the authentic global photographic context.
+        """
+        edited_path = r"C:\Users\SATYAJEET\.gemini\antigravity\brain\1e583638-f616-4ad8-9fa2-d1f91df6d0c4\.user_uploaded\media_1794537216450_400be60d.jpg"
+        original_path = r"C:\Users\SATYAJEET\.gemini\antigravity\brain\1e583638-f616-4ad8-9fa2-d1f91df6d0c4\.user_uploaded\media_1794537230140_c2808717.jpg"
+
+        if os.path.exists(edited_path) and os.path.exists(original_path):
+            with open(edited_path, "rb") as f:
+                edited_bytes = f.read()
+            with open(original_path, "rb") as f:
+                original_bytes = f.read()
+        else:
+            # Fallback synthetic pair: textured photo with a modified central region
+            w, h = 400, 300
+            rng = np.random.RandomState(42)
+            base = rng.randint(40, 220, size=(h, w, 3), dtype=np.uint8)
+            for i in range(10, w - 20, 25):
+                for j in range(10, h - 20, 25):
+                    base[j:j+12, i:i+12] = [255, (i * 3) % 255, (j * 4) % 255]
+            orig_img = Image.fromarray(base)
+            edit_arr = base.copy()
+            # Inpaint / alter a 60x60 patch in the lower center
+            edit_arr[180:240, 170:230] = [60, 60, 60]
+            edit_img = Image.fromarray(edit_arr)
+            b1 = io.BytesIO()
+            orig_img.save(b1, format="JPEG", quality=90)
+            original_bytes = b1.getvalue()
+            b2 = io.BytesIO()
+            edit_img.save(b2, format="JPEG", quality=90)
+            edited_bytes = b2.getvalue()
+
+        event = coordinator.analyze(
+            edited_bytes,
+            filename="bput_hackathon_edited.jpg",
+            reference_bytes=original_bytes,
+            reference_filename="bput_hackathon_original.jpg",
+        )
+
+        metrics = event.forensic_metrics
+        ref_comp = metrics.get("reference_comparison")
+        assert ref_comp is not None, "reference_comparison should be present in forensic_metrics"
+        assert ref_comp["status"] == "COMPARABLE"
+        assert ref_comp["difference_detected"] is True
+        assert ref_comp["difference_type"] == "MATERIAL_REFERENCE_DIFFERENCES"
+        assert ref_comp["changed_pixel_percent"] > 0.5
+        assert ref_comp["alignment"]["inliers"] >= 100
+        assert ref_comp["alignment"]["inlier_ratio"] >= 0.50
+        assert ref_comp["component_count"] >= 1
+        assert "difference_heatmap_base64" in ref_comp
+
+        # Verification of separated forensic outcomes
+        matrix = metrics["matrix"]
+        assert matrix["categorical"]["reference_comparison"] == "CHANGES_DETECTED"
+        assert matrix["categorical"]["image_manipulation"] == "EVIDENCE_DETECTED"
+        # Whole-image neural model evaluates authentic background (or INCONCLUSIVE under classical DSP)
+        assert matrix["categorical"]["ai_generation"] in ("NOT_DETECTED", "INCONCLUSIVE")
+        # No faces on the edited image
+        assert matrix["categorical"]["face_manipulation"] == "NOT_APPLICABLE"
+
+        # Final verdict must flag manipulation (HIGH/CRITICAL) rather than INCONCLUSIVE / LOW RISK
+        assert event.severity in (RiskLevel.HIGH, RiskLevel.CRITICAL)
+        assert event.classification in ("LIKELY_MANIPULATED", "CRITICAL_MANIPULATION")
+        assert event.threat_score >= 0.50
+
+    def test_reference_comparison_identical_images(self, forensics_engine):
+        """Verify comparing an image against itself yields NO_SIGNIFICANT_DIFFERENCES."""
+        np.random.seed(42)
+        arr = np.random.randint(50, 200, (300, 300, 3), dtype=np.uint8)
+        img = Image.fromarray(arr)
+        res = forensics_engine.compare_with_reference(img, img)
+        assert res["status"] == "COMPARABLE"
+        assert res["difference_detected"] is False
+        assert res["difference_type"] == "NO_SIGNIFICANT_DIFFERENCE_DETECTED"
+        assert res["changed_pixel_ratio"] == 0.0
+        assert res["component_count"] == 0
+
+    def test_reference_comparison_unrelated_images(self, forensics_engine):
+        """Verify comparing unrelated images handles feature mismatch gracefully."""
+        img1 = Image.new("RGB", (250, 250), color=(255, 0, 0))
+        img2 = Image.new("RGB", (250, 250), color=(0, 255, 0))
+        res = forensics_engine.compare_with_reference(img1, img2)
+        assert res["status"] in ("NOT_COMPARABLE", "REGISTRATION_FAILED")
+        assert res["difference_detected"] is False
+
+    def test_single_image_localized_manipulation(self, forensics_engine):
+        """Verify single-image localized dense block analysis executes and returns contract fields."""
+        np.random.seed(7)
+        arr = np.random.randint(60, 190, (256, 256, 3), dtype=np.uint8)
+        img = Image.fromarray(arr)
+        metrics, _, _ = forensics_engine.analyze(img)
+        loc = metrics.get("localized_manipulation", {})
+        assert "status" in loc
+        assert "detected" in loc
+        assert "anomaly_score" in loc
+        assert "dense_ela_disparity" in loc
+        assert "dense_noise_disparity" in loc
+        assert "scope" in loc
+        assert loc["scope"] == "SINGLE_IMAGE_MULTI_SCALE_DSP"
+
+    def test_api_threats_image_endpoint_with_reference_file(self):
+        """Verify FastAPI endpoint accepts both single-image and reference-image multipart uploads."""
+        from fastapi.testclient import TestClient
+        from backend.main import app
+
+        with TestClient(app) as client:
+            # 1. Single image upload (backward compatibility)
+            img1 = Image.new("RGB", (100, 100), color=(100, 150, 200))
+            b1 = io.BytesIO()
+            img1.save(b1, format="JPEG")
+            b1.seek(0)
+
+            resp_single = client.post(
+                "/api/threats/image",
+                files={"file": ("test_single.jpg", b1.getvalue(), "image/jpeg")},
+                data={"source": "pytest"},
+            )
+            assert resp_single.status_code == 200
+            data_single = resp_single.json()
+            assert "classification" in data_single
+            assert "forensic_metrics" in data_single
+
+            # 2. Dual image upload with reference_file
+            img2 = Image.new("RGB", (100, 100), color=(100, 150, 200))
+            b2 = io.BytesIO()
+            img2.save(b2, format="JPEG")
+            b2.seek(0)
+
+            resp_dual = client.post(
+                "/api/threats/image",
+                files={
+                    "file": ("test_edited.jpg", b1.getvalue(), "image/jpeg"),
+                    "reference_file": ("test_ref.jpg", b2.getvalue(), "image/jpeg"),
+                },
+                data={"source": "pytest"},
+            )
+            assert resp_dual.status_code == 200
+            data_dual = resp_dual.json()
+            assert "forensic_metrics" in data_dual
+            assert "reference_comparison" in data_dual["forensic_metrics"]
+
+            # 3. Empty reference file raises 422
+            resp_empty_ref = client.post(
+                "/api/threats/image",
+                files={
+                    "file": ("test_edited.jpg", b1.getvalue(), "image/jpeg"),
+                    "reference_file": ("empty_ref.jpg", b"", "image/jpeg"),
+                },
+            )
+            assert resp_empty_ref.status_code == 422
+
+            # 4. Oversized upload check (bytes > 50MB raises 413)
+            # Create a mock oversized stream
+            oversized_bytes = b"0" * (52428800 + 100)
+            resp_oversized = client.post(
+                "/api/threats/image",
+                files={"file": ("oversized.jpg", oversized_bytes, "image/jpeg")},
+            )
+            assert resp_oversized.status_code == 413

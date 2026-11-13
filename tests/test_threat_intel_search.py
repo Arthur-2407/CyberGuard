@@ -215,7 +215,11 @@ async def test_search_not_found_returns_structured_report():
             ti = data["threat_intelligence"]
             assert ti["status"] == "NOT_FOUND"
             assert "NO VIRUSTOTAL REPORT FOUND" in ti["message"]
-            assert data["severity"] == "SAFE"
+            # Phase 2 Requirement: NOT_FOUND must NEVER map to SAFE!
+            assert data["severity"] != "SAFE"
+            assert data["classification"] in ("UNKNOWN_UNVERIFIED", "UNKNOWN", "SUSPICIOUS")
+            assert ti.get("is_unverified") is True
+            assert ti.get("verdict_display") == "UNKNOWN / UNVERIFIED"
 
 
 # ── URLhaus and Correlation Pipeline Integration Tests ─────────────────────────

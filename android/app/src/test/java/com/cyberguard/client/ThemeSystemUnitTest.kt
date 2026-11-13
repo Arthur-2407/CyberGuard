@@ -1,47 +1,45 @@
 package com.cyberguard.client
 
 import androidx.compose.ui.graphics.Color
-import com.cyberguard.client.ui.theme.DarkCyberGuardColors
 import com.cyberguard.client.ui.theme.LightCyberGuardColors
+import com.cyberguard.client.ui.theme.PrimaryRed
+import com.cyberguard.client.ui.theme.SignalYellow
 import org.junit.Assert.*
 import org.junit.Test
 import kotlin.math.pow
 
+/**
+ * The app ships one interface only: the sovereign light palette on off-white
+ * paper. These tests pin that palette and the contrast it promises.
+ */
 class ThemeSystemUnitTest {
 
     @Test
-    fun testDarkThemePreserved() {
-        assertTrue(DarkCyberGuardColors.isDark)
-        assertEquals(Color(0xFF080A0F), DarkCyberGuardColors.background)
-        assertEquals(Color(0xFF11151D), DarkCyberGuardColors.surface)
-        assertEquals(Color(0xFF11151D), DarkCyberGuardColors.surfaceElevated)
-        assertEquals(Color(0xFFFFFFFF), DarkCyberGuardColors.textPrimary)
-        assertEquals(Color(0xFFF04444), DarkCyberGuardColors.primaryRed)
-        assertEquals(Color(0xFFFFC928), DarkCyberGuardColors.signalYellow)
-        assertEquals(Color(0xFF10B981), DarkCyberGuardColors.statusOnline)
-    }
-    @Test
-    fun testLightThemePaletteTokens() {
+    fun testSingleLightPalette() {
         assertFalse(LightCyberGuardColors.isDark)
-        assertEquals(Color(0xFFF3EFF9), LightCyberGuardColors.background)          // Soft lavender
-        assertEquals(Color(0xFFFFFFFF), LightCyberGuardColors.surface)             // White cards
-        assertEquals(Color(0xFFFFFFFF), LightCyberGuardColors.surfaceElevated)     // Elevated surface
-        assertEquals(Color(0xFFE7DFF2), LightCyberGuardColors.surfaceHighlight)    // Light lavender
-        assertEquals(Color(0xFFF8F7FB), LightCyberGuardColors.surfaceHologram)     // Secondary panels
-        assertEquals(Color(0xFF262334), LightCyberGuardColors.textPrimary)         // Dark charcoal typography
-        assertEquals(Color(0xFF524F60), LightCyberGuardColors.textSecondary)       // Supporting text
-        assertEquals(Color(0xFFB8C9B5), LightCyberGuardColors.pastelSage)          // Pastel sage
-        assertEquals(Color(0xFFDDE8DA), LightCyberGuardColors.softSage)            // Soft sage
-        assertEquals(Color(0xFF5D7862), LightCyberGuardColors.darkSage)            // High contrast sage
-        assertEquals(Color(0xFFDDD7E8), LightCyberGuardColors.border)              // Lavender-grey border
-        assertEquals(Color(0xFFD94848), LightCyberGuardColors.primaryRed)          // Security Red
-        assertEquals(Color(0xFFB98519), LightCyberGuardColors.signalYellow)        // Warning Yellow
-        assertEquals(Color(0xFF107C41), LightCyberGuardColors.statusOnline)        // High-contrast emerald
+        assertEquals(Color(0xFFF6FAF4), LightCyberGuardColors.background)
+        assertEquals(Color(0xFFFFFFFF), LightCyberGuardColors.surface)
+        assertEquals(Color(0xFFFFFFFF), LightCyberGuardColors.surfaceElevated)
+        assertEquals(Color(0xFFE8F5E5), LightCyberGuardColors.surfaceHighlight)
+        assertEquals(Color(0xFFF2F8EF), LightCyberGuardColors.surfaceHologram)
+        assertEquals(Color(0xFF14321F), LightCyberGuardColors.textPrimary)
+        assertEquals(Color(0xFF47614F), LightCyberGuardColors.textSecondary)
+        assertEquals(Color(0xFFDCE8D8), LightCyberGuardColors.border)
+        assertEquals(Color(0xFF14532D), LightCyberGuardColors.primaryRed)
+        assertEquals(Color(0xFFE6812F), LightCyberGuardColors.signalYellow)
+        assertEquals(Color(0xFF2E7D4F), LightCyberGuardColors.statusOnline)
+    }
+
+    @Test
+    fun testBrandAccentsAreGovernmentPalette() {
+        assertEquals(Color(0xFF14532D), PrimaryRed)
+        assertEquals(Color(0xFFE6812F), SignalYellow)
+        // Critical stays red so danger is never mistaken for the brand accent.
+        assertEquals(Color(0xFFB42318), LightCyberGuardColors.deepRed)
     }
 
     @Test
     fun testLightThemeTextContrastAccessibility() {
-        // WCAG formula for relative luminance
         fun channelLuminance(c: Float): Double {
             return if (c <= 0.03928f) (c / 12.92) else ((c + 0.055) / 1.055).pow(2.4)
         }
@@ -61,21 +59,25 @@ class ThemeSystemUnitTest {
             return (brighter + 0.05) / (darker + 0.05)
         }
 
-        val bgLuminance = LightCyberGuardColors.background
-        val cardLuminance = LightCyberGuardColors.surface
+        val bg = LightCyberGuardColors.background
+        val card = LightCyberGuardColors.surface
         val textPrimary = LightCyberGuardColors.textPrimary
         val textSecondary = LightCyberGuardColors.textSecondary
+        val textTertiary = LightCyberGuardColors.textTertiary
 
-        // Primary text on Main Background (#262334 on #F3EFF9) -> Must exceed WCAG AAA (7.0:1)
-        val primaryOnBgContrast = contrastRatio(textPrimary, bgLuminance)
-        assertTrue("Primary text on background contrast ratio must be > 7.0:1 (was $primaryOnBgContrast)", primaryOnBgContrast > 7.0)
+        val primaryOnBg = contrastRatio(textPrimary, bg)
+        assertTrue("Primary text on background must exceed WCAG AAA (7:1), was $primaryOnBg", primaryOnBg > 7.0)
 
-        // Primary text on Card Surface (#262334 on #FFFFFF) -> Must exceed WCAG AAA (7.0:1)
-        val primaryOnCardContrast = contrastRatio(textPrimary, cardLuminance)
-        assertTrue("Primary text on card surface contrast ratio must be > 7.0:1 (was $primaryOnCardContrast)", primaryOnCardContrast > 7.0)
+        val primaryOnCard = contrastRatio(textPrimary, card)
+        assertTrue("Primary text on card must exceed WCAG AAA (7:1), was $primaryOnCard", primaryOnCard > 7.0)
 
-        // Secondary text on Card Surface (#524F60 on #FFFFFF) -> Must exceed WCAG AA (4.5:1)
-        val secondaryOnCardContrast = contrastRatio(textSecondary, cardLuminance)
-        assertTrue("Secondary text on card surface contrast ratio must be > 4.5:1 (was $secondaryOnCardContrast)", secondaryOnCardContrast > 4.5)
+        val secondaryOnCard = contrastRatio(textSecondary, card)
+        assertTrue("Secondary text on card must exceed WCAG AA (4.5:1), was $secondaryOnCard", secondaryOnCard > 4.5)
+
+        val tertiaryOnCard = contrastRatio(textTertiary, card)
+        assertTrue("Tertiary text on card must exceed WCAG AA (4.5:1), was $tertiaryOnCard", tertiaryOnCard > 4.5)
+
+        val whiteOnBrand = contrastRatio(Color(0xFFFFFFFF), PrimaryRed)
+        assertTrue("Button label on brand green must exceed WCAG AA (4.5:1), was $whiteOnBrand", whiteOnBrand > 4.5)
     }
 }

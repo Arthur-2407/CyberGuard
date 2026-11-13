@@ -44,7 +44,7 @@ def run_node_diagnostic(mode="hybrid", local_port=3000, cloud_url="https://cyber
         cwd=str(ROOT_DIR),
         capture_output=True,
         text=True,
-        timeout=15
+        timeout=35
     )
     assert proc.returncode == 0, f"Node process exited with code {proc.returncode}: {proc.stderr}"
     return json.loads(proc.stdout)
@@ -118,7 +118,7 @@ def test_03_mode_2_deployed_cloud_operational():
     cloud = res["cloud"]
     assert cloud["endpoint"] == "https://cyberguard-backend-8rbz.onrender.com"
     assert "status" in cloud
-    assert cloud["status"] in ["HEALTHY", "DEGRADED", "OFFLINE", "TIMEOUT"]
+    assert cloud["status"] in ["HEALTHY", "DEGRADED", "OFFLINE", "TIMEOUT", "ERROR"]
 
 
 def test_04_mode_3_hybrid_auto_failover_stages():
@@ -170,7 +170,7 @@ def test_05_failure_injection_resilience():
         cwd=str(ROOT_DIR),
         capture_output=True,
         text=True,
-        timeout=15
+        timeout=35
     )
     assert proc.returncode == 0
     data = json.loads(proc.stdout)

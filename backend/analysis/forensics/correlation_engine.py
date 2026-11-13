@@ -85,8 +85,16 @@ class CorrelationVerdict:
                     self.ai_generation_score = round(min(float(parent.threat_score), 0.15), 2)
 
                 manip_cat = parent.forensic_matrix.get("image_manipulation")
+                ref_comp = m.get("reference_comparison")
+                loc_manip = m.get("localized_manipulation", {})
                 if manip_cat in ("EVIDENCE_DETECTED", "ANOMALY_CONFIRMED"):
-                    self.image_manipulation_score = round(min(1.0, max(0.65, float(m.get("ela_disparity", 0.65)))), 2)
+                    if ref_comp and ref_comp.get("difference_detected"):
+                        diff_pct = float(ref_comp.get("changed_pixel_percent", 0.0))
+                        self.image_manipulation_score = round(min(1.0, max(0.65, 0.50 + diff_pct / 50.0)), 2)
+                    elif loc_manip.get("detected"):
+                        self.image_manipulation_score = round(min(1.0, max(0.65, float(loc_manip.get("anomaly_score", 0.65)))), 2)
+                    else:
+                        self.image_manipulation_score = round(min(1.0, max(0.65, float(m.get("ela_disparity", 0.65)))), 2)
                 elif manip_cat == "INCONCLUSIVE":
                     self.image_manipulation_score = round(min(0.60, max(0.20, float(m.get("ela_disparity", 0.35)))), 2)
                 else:
@@ -166,14 +174,19 @@ class ForensicCorrelationEngine:
         thresholds = thresholds or {"manipulated": 0.65, "inconclusive": 0.35, "critical": 0.85}
         evidences = []
         if frame_analysis and frame_analysis.get("frames"):
+            effective_media_info = dict(media_info or {})
+            if metadata and not effective_media_info.get("metadata"):
+                effective_media_info.update(metadata)
             return self.correlate_video(
                 frame_analysis=frame_analysis,
-                metadata_details=metadata,
+                media_info=effective_media_info,
                 c2pa_response=c2pa,
-                audio_clone_result=media_info.get("audio_clone_analysis") if media_info else None,
                 evidences=evidences,
-                base_suspicion=base_suspicion,
+                composite_risk=base_suspicion,
                 thresholds=thresholds,
+                metadata_details=metadata,
+                audio_clone_result=media_info.get("audio_clone_analysis") if media_info else None,
+                base_suspicion=base_suspicion,
             )
         else:
             return self.correlate_image(
@@ -284,11 +297,33 @@ class ForensicCorrelationEngine:
         else:
             ai_gen_outcome = "NOT_DETECTED"
 
-        # Image Manipulation
+        # ── 1b. Reference Comparison & Localized Subsystem Outcomes ─────────────
+        ref_comp = forensic_metrics.get("reference_comparison")
+        ref_comp_status = ref_comp.get("status") if isinstance(ref_comp, dict) else None
+        ref_diff_detected = bool(ref_comp.get("difference_detected")) if isinstance(ref_comp, dict) else False
+        if ref_comp_status == "COMPARABLE":
+            ref_outcome = "CHANGES_DETECTED" if ref_diff_detected else "NO_SIGNIFICANT_DIFFERENCES"
+        elif ref_comp_status == "NOT_COMPARABLE":
+            ref_outcome = "REGISTRATION_FAILED"
+        elif ref_comp_status == "ERROR":
+            ref_outcome = "COMPARISON_ERROR"
+        else:
+            ref_outcome = "REFERENCE_UNAVAILABLE"
+
+        loc_manip = forensic_metrics.get("localized_manipulation") or {}
+        loc_status = loc_manip.get("status", "NO_EVIDENCE_DETECTED")
+        loc_detected = bool(loc_manip.get("detected", False))
+
+        # Image Manipulation (Evaluates localized alterations independently from full-image AI)
+        ela_status = forensic_metrics.get("ela_status", "NOMINAL")
         noise_disparity = forensic_metrics.get("noise_quadrant_disparity", 0.0) > 1.2
-        if ela_crit or noise_disparity:
+        if ref_diff_detected or loc_detected or ela_status == "CRITICAL" or (noise_disparity and ela_status == "MODERATE"):
             img_manip_outcome = "EVIDENCE_DETECTED"
-        elif ela_disp >= 0.30 or forensic_metrics.get("ela_status") == "MODERATE":
+            if ref_diff_detected:
+                total_suspicion = max(total_suspicion, thresholds.get("manipulated", 0.65))
+            elif loc_detected:
+                total_suspicion = max(total_suspicion, 0.60)
+        elif ela_disp >= 0.30 or forensic_metrics.get("ela_status") == "MODERATE" or loc_status == "INCONCLUSIVE":
             img_manip_outcome = "INCONCLUSIVE"
         else:
             img_manip_outcome = "NO_EVIDENCE_DETECTED"
@@ -331,6 +366,8 @@ class ForensicCorrelationEngine:
         forensic_matrix = {
             "ai_generation": ai_gen_outcome,
             "image_manipulation": img_manip_outcome,
+            "reference_comparison": ref_outcome,
+            "localized_manipulation": loc_status,
             "face_manipulation": face_manip_outcome,
             "video_temporal_consistency": "NOT_APPLICABLE",
             "audio_video_synchronization": "NOT_APPLICABLE",
@@ -341,6 +378,14 @@ class ForensicCorrelationEngine:
 
         # ── 3. Grounded Final Decision Qualification ──────────────────────────────
         actions = []
+        ref_note = ""
+        if ref_diff_detected:
+            changed_pct = float(ref_comp.get("changed_pixel_percent", 0.0))
+            region_cnt = int(ref_comp.get("component_count", len(ref_comp.get("regions", []))))
+            ref_note = f" Reference comparison localized material differences ({changed_pct:.2f}% changed area in {region_cnt} region(s))."
+        elif ref_outcome == "REFERENCE_UNAVAILABLE":
+            ref_note = " No reference image was supplied; localized object removal cannot be ruled out by global classifier alone."
+
         if total_suspicion >= t_manip:
             severity = RiskLevel.HIGH if total_suspicion < t_crit else RiskLevel.CRITICAL
             classification = "LIKELY_MANIPULATED"
@@ -348,7 +393,8 @@ class ForensicCorrelationEngine:
             summary = "Synthetic media or localized manipulation indicators detected across forensic frequency, metadata, or spatial domains."
             reasoning = (
                 f"Multi-domain forensic inspection revealed significant anomalies (suspicion index: {total_suspicion:.2f}). "
-                f"Indicators: AI generation ({ai_gen_outcome}), Image manipulation ({img_manip_outcome}), Face manipulation ({face_manip_outcome})."
+                f"Indicators: AI generation ({ai_gen_outcome}), Image manipulation ({img_manip_outcome}), "
+                f"Reference comparison ({ref_outcome}), Face manipulation ({face_manip_outcome}).{ref_note}"
             )
             actions = [
                 "Flag media asset for manual forensic verification before approving identity or security workflows.",
@@ -365,13 +411,13 @@ class ForensicCorrelationEngine:
                 summary = "Forensic inspection inconclusive (low anomaly profile). Nominal visual features with unverified provenance."
                 reasoning = (
                     f"Forensic signals fell into low-inconclusive baseline range (suspicion index: {total_suspicion:.2f}). "
-                    f"Container provenance is unverified; no definitive generative AI markers confirmed."
+                    f"Container provenance is unverified; no definitive generative AI markers confirmed.{ref_note}"
                 )
             else:
                 summary = "Forensic inspection inconclusive with elevated anomaly risk. Moderate compression artifacts or DSP anomalies observed."
                 reasoning = (
                     f"Forensic signals fell into intermediate anomaly range (suspicion index: {total_suspicion:.2f}). "
-                    f"Container provenance is unverified and DSP frequency/noise profiles exhibit elevated variance."
+                    f"Container provenance is unverified and DSP frequency/noise profiles exhibit elevated variance.{ref_note}"
                 )
             actions = [
                 "Inspect higher resolution or uncompressed original file if used for high-risk identity workflows.",
@@ -464,13 +510,24 @@ class ForensicCorrelationEngine:
     def correlate_video(
         self,
         frame_analysis: Dict[str, Any],
-        media_info: Dict[str, Any],
-        c2pa_response: Optional[Dict[str, Any]],
-        evidences: List[Evidence],
-        composite_risk: float,
-        thresholds: Dict[str, float],
+        media_info: Optional[Dict[str, Any]] = None,
+        c2pa_response: Optional[Dict[str, Any]] = None,
+        evidences: Optional[List[Evidence]] = None,
+        composite_risk: float = 0.0,
+        thresholds: Optional[Dict[str, float]] = None,
+        metadata_details: Optional[Dict[str, Any]] = None,
+        audio_clone_result: Optional[Any] = None,
+        base_suspicion: Optional[float] = None,
+        **kwargs: Any,
     ) -> CorrelationVerdict:
         """Correlate video keyframes, temporal consistency, audio soundtrack, and provenance."""
+        thresholds = thresholds or {"manipulated": 0.65, "inconclusive": 0.35, "critical": 0.85}
+        evidences = evidences if evidences is not None else []
+        if media_info is None:
+            media_info = metadata_details or {}
+        if base_suspicion is not None and composite_risk == 0.0:
+            composite_risk = float(base_suspicion)
+
         t_manip = thresholds.get("manipulated", 0.65)
         t_incon = thresholds.get("inconclusive", 0.35)
         t_crit = thresholds.get("critical", 0.85)
@@ -480,6 +537,8 @@ class ForensicCorrelationEngine:
         has_soundtrack = media_info.get("has_audio", False)
         audio_details = frame_analysis.get("audio_details", {})
         audio_risk = float(audio_details.get("audio_risk", 0.0))
+        if audio_clone_result and not audio_risk:
+            audio_risk = float(getattr(audio_clone_result, "clone_probability", 0.0) if hasattr(audio_clone_result, "clone_probability") else (audio_clone_result.get("clone_probability", 0.0) if isinstance(audio_clone_result, dict) else 0.0))
 
         c2pa_status = (c2pa_response or {}).get("status", "MISSING_PROVENANCE")
 

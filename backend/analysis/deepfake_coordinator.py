@@ -53,6 +53,8 @@ class DeepfakeCoordinator:
         filename: str,
         source: str = "media_upload",
         correlation_id: str = None,
+        reference_bytes: Optional[bytes] = None,
+        reference_filename: Optional[str] = None,
     ) -> ThreatEvent:
         start_time = time.time()
         filename_lower = filename.lower()
@@ -61,7 +63,15 @@ class DeepfakeCoordinator:
             return self._analyze_audio(media_bytes, filename, source, correlation_id, start_time)
 
         elif filename_lower.endswith((".jpg", ".jpeg", ".png", ".webp", ".bmp", ".gif")):
-            return self._analyze_image(media_bytes, filename, source, correlation_id, start_time)
+            return self._analyze_image(
+                media_bytes,
+                filename,
+                source,
+                correlation_id,
+                start_time,
+                reference_bytes=reference_bytes,
+                reference_filename=reference_filename,
+            )
 
         elif filename_lower.endswith((".mp4", ".mkv", ".mov", ".avi", ".wmv", ".webm")):
             return self._analyze_video(media_bytes, filename, source, correlation_id, start_time)
@@ -973,6 +983,8 @@ class DeepfakeCoordinator:
         source: str,
         correlation_id: str,
         start_time: float,
+        reference_bytes: Optional[bytes] = None,
+        reference_filename: Optional[str] = None,
     ) -> ThreatEvent:
         if not self.config or not getattr(self.config.cyberguard, "deepfake_image_enabled", True):
             return self._build_unavailable_event(source, "image", "ImageForensicsEngine", correlation_id, start_time)
@@ -1020,6 +1032,59 @@ class DeepfakeCoordinator:
                 forensic_metrics, signal_evidences, signal_suspicion = self._run_image_forensic_signals(img)
                 total_suspicion = signal_suspicion
                 all_evidences = meta_evidences + signal_evidences
+
+            # Optional analyst-supplied reference comparison. It is deliberately
+            # kept separate from the synthetic-image classifier and global threat score:
+            # scene motion, lighting, or capture changes are not proof of manipulation.
+            reference_comparison = None
+            if reference_bytes:
+                try:
+                    with Image.open(io.BytesIO(reference_bytes)) as reference_img:
+                        reference_pixel_count = int(reference_img.width) * int(reference_img.height)
+                        max_pixels = int(getattr(self.image_config, "reference_max_pixels", 40000000))
+                        if reference_pixel_count > max_pixels:
+                            reference_comparison = {
+                                "status": "NOT_COMPARABLE",
+                                "difference_detected": False,
+                                "reason": "Reference image exceeds the configured pixel limit for bounded comparison.",
+                                "interpretation": "The primary image analysis completed independently; a skipped reference comparison is not evidence of an unmodified image.",
+                            }
+                        else:
+                            reference_img.load()
+                            reference_comparison = get_image_forensics_engine().compare_with_reference(
+                                img, reference_img
+                            )
+                    reference_comparison["reference_filename"] = reference_filename or "supplied_reference"
+                    reference_comparison["reference_sha256"] = hashlib.sha256(reference_bytes).hexdigest()
+                    forensic_metrics["reference_comparison"] = reference_comparison
+                    if (
+                        reference_comparison.get("status") == "COMPARABLE"
+                        and reference_comparison.get("difference_detected")
+                    ):
+                        regions = reference_comparison.get("regions", [])
+                        changed_percent = reference_comparison.get("changed_pixel_percent", 0.0)
+                        all_evidences.append(Evidence(
+                            evidence_type="reference_image_material_differences",
+                            description=(
+                                "Material visual differences were localized relative to the analyst-supplied "
+                                "reference image. The comparison does not determine whether differences are "
+                                "caused by object removal, movement, lighting, retouching, or another capture change."
+                            ),
+                            value=f"changed={changed_percent:.3f}% regions={len(regions)}",
+                            severity_contribution=0.50,
+                            confidence=float(reference_comparison.get("alignment", {}).get("inlier_ratio", 0.0)),
+                            source="ReferenceImageComparison",
+                        ))
+                except Exception as reference_error:
+                    logger.warning("Reference image comparison unavailable: %s", reference_error)
+                    reference_comparison = {
+                        "status": "ERROR",
+                        "difference_detected": False,
+                        "reason": "Reference image could not be decoded or compared.",
+                        "reference_filename": reference_filename or "supplied_reference",
+                        "interpretation": "The primary image analysis completed independently; comparison failure is not evidence of an unmodified image.",
+                    }
+                    forensic_metrics["reference_comparison"] = reference_comparison
 
             # Neural vision deepfake model inspection (if configured and READY)
             vision_detector = get_vision_detector(self.config)
@@ -1099,7 +1164,7 @@ class DeepfakeCoordinator:
                 "detector_dimensions": {
                     "neural_vision": [224, 224],
                     "fft": [256, 256],
-                    "ela": [sample_img.size[0] if 'sample_img' in locals() else img.size[0], sample_img.size[1] if 'sample_img' in locals() else img.size[1]],
+                    "ela": [img.size[0], img.size[1]],
                     "face": [img.size[0], img.size[1]],
                 },
                 "format": media_info["format"],
@@ -1203,6 +1268,29 @@ class DeepfakeCoordinator:
                 "total_threat_score": round(float(total_suspicion), 4),
                 "active_model_inventory": {
                     "neural_vision_deepfake_detector": vision_detector.get_manifest_entry(),
+                    "reference_image_comparison": {
+                        "status": (
+                            reference_comparison.get("status")
+                            if reference_comparison else "NOT_REQUESTED"
+                        ),
+                        "method": "ORB feature matching, RANSAC homography registration, adaptive LAB-distance localization",
+                        "affects_threat_score": False,
+                        "metrics": {
+                            "difference_detected": reference_comparison.get("difference_detected") if reference_comparison else None,
+                            "changed_pixel_percent": reference_comparison.get("changed_pixel_percent") if reference_comparison else None,
+                            "component_count": reference_comparison.get("component_count") if reference_comparison else None,
+                            "alignment": reference_comparison.get("alignment") if reference_comparison else None,
+                        },
+                    },
+                    "localized_manipulation_subsystem": {
+                        "status": "ACTIVE",
+                        "method": "Multi-scale dense 8x8 spatial ELA disparity and dense spatial noise residual variance",
+                        "metrics": {
+                            "status": forensic_metrics.get("localized_manipulation", {}).get("status"),
+                            "detected": forensic_metrics.get("localized_manipulation", {}).get("detected"),
+                            "regions_count": forensic_metrics.get("localized_manipulation", {}).get("component_count"),
+                        },
+                    },
                     "frequency_domain_analyzer": {
                         "status": "ACTIVE",
                         "method": "2D FFT Hann-windowed azimuthal integration & off-axis lattice spike detection",
