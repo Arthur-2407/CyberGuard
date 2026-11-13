@@ -1085,6 +1085,9 @@
               <span class="threat-chip" onclick="toggleForensicModeHighlight('ela')">Spatial ELA Heatmap</span>
             </div>
             <input type="file" id="image-forensic-input" accept="image/*,video/*" class="form-input" style="width:100%;" onchange="previewForensicMedia(event)" />
+            <label class="form-label" for="image-forensic-reference-input" style="margin-top:10px;">Optional Original / Reference Image (Image Comparison)</label>
+            <input type="file" id="image-forensic-reference-input" accept="image/*" class="form-input" style="width:100%;" />
+            <div style="font-size:10.5px;color:var(--text-muted);margin-top:4px;line-height:1.4;">Upload the original or a matching-scene reference to align both images and localize visible differences. This comparison is optional and does not independently identify why pixels changed.</div>
             <div id="image-preview-container" class="image-inspection-zone" style="display:none; margin-top:10px; text-align:center; background:rgba(0,0,0,0.4); border-radius:6px; padding:10px; border:1px dashed rgba(0,212,255,0.3);">
               <div class="image-inspection-scanline"></div>
               <img id="image-forensic-preview" style="max-height:130px; border-radius:4px; max-width:100%; object-fit:contain; display:none;" alt="Forensic Image Preview" />
