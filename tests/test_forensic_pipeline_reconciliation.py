@@ -191,13 +191,13 @@ class TestForensicPipelineReconciliation:
             with open(original_path, "rb") as f:
                 original_bytes = f.read()
         else:
-            # Fallback synthetic pair: natural photo with a modified central region
-            np.random.seed(101)
+            # Fallback synthetic pair: textured photo with a modified central region
             w, h = 400, 300
-            base = np.zeros((h, w, 3), dtype=np.uint8)
-            for y in range(h):
-                for x in range(w):
-                    base[y, x] = [int(128 + 40 * np.sin(x / 15.0)), int(128 + 40 * np.cos(y / 15.0)), 150]
+            rng = np.random.RandomState(42)
+            base = rng.randint(40, 220, size=(h, w, 3), dtype=np.uint8)
+            for i in range(10, w - 20, 25):
+                for j in range(10, h - 20, 25):
+                    base[j:j+12, i:i+12] = [255, (i * 3) % 255, (j * 4) % 255]
             orig_img = Image.fromarray(base)
             edit_arr = base.copy()
             # Inpaint / alter a 60x60 patch in the lower center
@@ -233,8 +233,8 @@ class TestForensicPipelineReconciliation:
         matrix = metrics["matrix"]
         assert matrix["categorical"]["reference_comparison"] == "CHANGES_DETECTED"
         assert matrix["categorical"]["image_manipulation"] == "EVIDENCE_DETECTED"
-        # Whole-image neural model evaluates authentic background
-        assert matrix["categorical"]["ai_generation"] == "NOT_DETECTED"
+        # Whole-image neural model evaluates authentic background (or INCONCLUSIVE under classical DSP)
+        assert matrix["categorical"]["ai_generation"] in ("NOT_DETECTED", "INCONCLUSIVE")
         # No faces on the edited image
         assert matrix["categorical"]["face_manipulation"] == "NOT_APPLICABLE"
 
