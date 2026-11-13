@@ -252,7 +252,7 @@ class ImageForensicsConfig:
     reference_min_inliers: int = 20
     reference_min_inlier_ratio: float = 0.25
     reference_ransac_reprojection_px: float = 3.0
-    reference_diff_min_delta_e: float = 7.0
+    reference_diff_min_lab_distance: float = 7.0
     reference_diff_mad_multiplier: float = 3.0
     reference_min_component_area: int = 64
     reference_min_changed_area_ratio: float = 0.001
@@ -508,7 +508,7 @@ def _build_settings(raw: dict) -> Settings:
             reference_min_inliers=int(image_forensics_raw.get("reference_min_inliers", 20)),
             reference_min_inlier_ratio=float(image_forensics_raw.get("reference_min_inlier_ratio", 0.25)),
             reference_ransac_reprojection_px=float(image_forensics_raw.get("reference_ransac_reprojection_px", 3.0)),
-            reference_diff_min_delta_e=float(image_forensics_raw.get("reference_diff_min_delta_e", 7.0)),
+            reference_diff_min_lab_distance=float(image_forensics_raw.get("reference_diff_min_lab_distance", 7.0)),
             reference_diff_mad_multiplier=float(image_forensics_raw.get("reference_diff_mad_multiplier", 3.0)),
             reference_min_component_area=int(image_forensics_raw.get("reference_min_component_area", 64)),
             reference_min_changed_area_ratio=float(image_forensics_raw.get("reference_min_changed_area_ratio", 0.001)),
