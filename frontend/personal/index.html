@@ -577,10 +577,11 @@
               <span class="connection-pill" id="settingsConnection">Not checked</span>
             </div>
             <div class="preset-row" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
-              <button type="button" class="secondary-button" id="presetLocalBtn" style="font-size:11px;padding:6px 12px;">Local Docker (3000)</button>
-              <button type="button" class="secondary-button" id="presetCloudBtn" style="font-size:11px;padding:6px 12px;">Cloud Render</button>
-              <button type="button" class="secondary-button" id="presetTunnelBtn" style="font-size:11px;padding:6px 12px;">Cloudflare Tunnel</button>
+              <button type="button" class="secondary-button" id="presetLocalBtn" style="font-size:11px;padding:6px 12px;" title="Connect directly to Local Docker backend (port 3000)">Local Docker (3000)</button>
+              <button type="button" class="secondary-button" id="presetCloudBtn" style="font-size:11px;padding:6px 12px;" title="Use deployed cloud endpoint or same-origin proxy">Cloud / Vercel Proxy</button>
+              <button type="button" class="secondary-button" id="presetTunnelBtn" style="font-size:11px;padding:6px 12px;" title="Connect to Local Docker over HTTPS via Cloudflare Tunnel">Cloudflare Tunnel (Docker Bridge)</button>
             </div>
+            <div id="mixedContentNotice" class="connection-notice" style="display:none;font-size:12px;padding:10px 14px;border-radius:8px;margin-bottom:12px;background:#fef3c7;color:#92400e;border:1px solid #fde68a;line-height:1.5;"></div>
             <label class="field-label" for="apiBaseInput">Backend base URL</label>
             <input class="plain-input" id="apiBaseInput" type="url" placeholder="https://your-cyberguard-api.example">
             <div class="settings-actions">

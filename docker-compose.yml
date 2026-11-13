@@ -81,7 +81,7 @@ services:
         required: false
     environment:
       - TUNNEL_TOKEN=${CLOUDFLARE_TUNNEL_TOKEN:-}
-    command: ${CLOUDFLARE_TUNNEL_COMMAND:-tunnel --url http://cyberguard-backend:3000}
+    command: ${CLOUDFLARE_TUNNEL_COMMAND:-tunnel --protocol http2 --no-autoupdate --url http://cyberguard-backend:3000}
 
 volumes:
   clamav-db:

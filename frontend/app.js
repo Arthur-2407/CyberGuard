@@ -122,14 +122,14 @@ function getResolvedApiBase() {
 
         if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) return '';
 
-        return 'https://cyberguard-backend-8rbz.onrender.com';
+        return (typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.tunnel_url) || 'https://cyberguard-backend-8rbz.onrender.com';
 
       } else if (mode === 'deployed') {
 
         // Mode A (Deployed Cloud): Always route to deployed cloud backend, never to local tunnel
         if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) return '';
 
-        return 'https://cyberguard-backend-8rbz.onrender.com';
+        return (typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.cloud_backend_url) || 'https://cyberguard-backend-8rbz.onrender.com';
 
       }
 
@@ -179,7 +179,7 @@ function getResolvedApiBase() {
 
     }
 
-    return 'https://cyberguard-backend-8rbz.onrender.com';
+    return (typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && (window.__CYBERGUARD_CONFIG__.cloud_backend_url || window.__CYBERGUARD_CONFIG__.tunnel_url)) || 'https://cyberguard-backend-8rbz.onrender.com';
 
   }
 
@@ -220,7 +220,7 @@ function _resolveWsUrl() {
     if (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) {
       const fallbackCloud = (typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.cloud_backend_url)
         ? window.__CYBERGUARD_CONFIG__.cloud_backend_url.replace(/^http/, 'ws')
-        : 'wss://cyberguard-backend-8rbz.onrender.com';
+        : ((typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.tunnel_url) ? window.__CYBERGUARD_CONFIG__.tunnel_url.replace(/^http/, 'ws') : 'wss://fax-heat-harris-sufficient.trycloudflare.com');
       return `${fallbackCloud}/ws/stream`;
     }
 
@@ -856,7 +856,7 @@ const CyberGuardConnection = {
       }
 
       // Stage 3 in Mode C (Hybrid): Local Docker and Tunnel unavailable -> probe Cloud Backend
-      const cloudBase = (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) ? '' : 'https://cyberguard-backend-8rbz.onrender.com';
+      const cloudBase = (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) ? '' : ((typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.cloud_backend_url) || 'https://cyberguard-backend-8rbz.onrender.com');
 
       try {
 
@@ -1770,7 +1770,7 @@ async function cyberGuardFetch(resource, init = {}) {
 
         console.warn('Hybrid mode: Local Docker unreachable, falling back to Cloud backend:', fetchErr);
 
-        const cloudBase = (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) ? '' : 'https://cyberguard-backend-8rbz.onrender.com';
+        const cloudBase = (typeof location !== 'undefined' && location.hostname.includes('vercel.app')) ? '' : ((typeof window !== 'undefined' && window.__CYBERGUARD_CONFIG__ && window.__CYBERGUARD_CONFIG__.cloud_backend_url) || 'https://cyberguard-backend-8rbz.onrender.com');
 
         const cleanPath = url.replace(/^https?:\/\/[^\/]+/, '');
 

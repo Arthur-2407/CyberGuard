@@ -59,12 +59,27 @@
     }
   }
 
+  function apiBase() {
+    try {
+      const saved = (localStorage.getItem("cyberguard_api_base") || "").trim();
+      if (saved) return saved.replace(/\/+$/, "");
+      const tunnel = (localStorage.getItem("cyberguard_custom_tunnel") || "").trim();
+      if (tunnel) return tunnel.replace(/\/+$/, "");
+    } catch {}
+    const cfg = window.__CYBERGUARD_PERSONAL_CONFIG__ || {};
+    if (cfg.api_base) return cfg.api_base.replace(/\/+$/, "");
+    if (typeof location !== "undefined" && location.protocol === "https:") {
+      return (cfg.tunnel_url || "https://fax-heat-harris-sufficient.trycloudflare.com").replace(/\/+$/, "");
+    }
+    return "";
+  }
+
   async function readRemote() {
     if (!token()) return [];
     try {
-      const res = await fetch("/api/incidents/events?limit=200", {
+      const res = await fetch(apiBase() + "/api/incidents/events?limit=200", {
         headers: { Authorization: `Bearer ${token()}` },
-        credentials: "same-origin"
+        credentials: "include"
       });
       if (!res.ok) return [];
       const data = await res.json();
@@ -337,7 +352,7 @@
     if (!holder) return;
     const rows = [];
     try {
-      const res = await fetch("/api/health", { credentials: "same-origin" });
+      const res = await fetch(apiBase() + "/api/health", { credentials: "include" });
       const h = await res.json();
       rows.push({ label: "Backend service", ok: h.status === "ok" });
       rows.push({ label: "Threat database", ok: h.database === "connected" });

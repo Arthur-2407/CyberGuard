@@ -206,9 +206,11 @@ class ConnectivityService {
           .join('\n')
           .trim();
 
-        // Extract trycloudflare.com quick tunnel URL if present
-        const urlMatch = rawLogs.match(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/i);
-        let discoveredUrl = urlMatch ? urlMatch[0] : null;
+        // Extract trycloudflare.com quick tunnel URL if present (filter out api.trycloudflare.com and pick latest active)
+        const allMatches = [...rawLogs.matchAll(/https:\/\/[a-zA-Z0-9-]+\.trycloudflare\.com/gi)]
+          .map(m => m[0])
+          .filter(u => !u.includes('api.trycloudflare.com'));
+        let discoveredUrl = allMatches.length > 0 ? allMatches[allMatches.length - 1] : null;
         if (discoveredUrl) {
           this.discoveredTunnelUrl = discoveredUrl;
         } else if (this.discoveredTunnelUrl) {

@@ -38,11 +38,18 @@
   const getHistory = () => safeParse(localStorage.getItem(STORAGE_HISTORY), []);
   const setHistory = items => { try { localStorage.setItem(STORAGE_HISTORY, JSON.stringify(items.slice(0, 40))); } catch {} };
   const normalizeBase = value => String(value || "").trim().replace(/\/+$/, "");
+  const DEFAULT_TUNNEL_FALLBACK = "https://fax-heat-harris-sufficient.trycloudflare.com";
+
+  function isMixedContentConflict(targetUrl) {
+    if (typeof location === "undefined" || location.protocol !== "https:") return false;
+    const clean = normalizeBase(targetUrl);
+    return clean.startsWith("http://127.0.0.1") || clean.startsWith("http://localhost") || clean.startsWith("http://0.0.0.0") || clean.startsWith("http://[::1]");
+  }
 
   // Resolve backend origin using verified precedence across local and deployed environments
   function getBase() {
     const params = new URLSearchParams(location.search);
-    const query = params.get("api_base") || params.get("backend_url");
+    const query = params.get("api_base") || params.get("backend_url") || params.get("tunnel");
     if (query) {
       const clean = normalizeBase(query);
       try { localStorage.setItem(STORAGE_API, clean); } catch {}
@@ -52,7 +59,18 @@
     // 1. Saved custom override in personal settings
     try {
       const saved = localStorage.getItem(STORAGE_API);
-      if (saved && saved.trim()) return normalizeBase(saved);
+      if (saved && saved.trim()) {
+        const cleanSaved = normalizeBase(saved);
+        // If user saved http:// loopback but we are running on HTTPS (GitHub Pages/Vercel),
+        // use active Cloudflare Tunnel to prevent browser Mixed Content block
+        if (isMixedContentConflict(cleanSaved)) {
+          const tunnel = localStorage.getItem("cyberguard_custom_tunnel") || localStorage.getItem("cyberguard_hybrid_active_base");
+          if (tunnel && tunnel.trim()) return normalizeBase(tunnel);
+          if (CONFIG.tunnel_url) return normalizeBase(CONFIG.tunnel_url);
+          return DEFAULT_TUNNEL_FALLBACK;
+        }
+        return cleanSaved;
+      }
       const legacy = localStorage.getItem("cyberguard_personal_api_base");
       if (legacy && legacy.trim()) return normalizeBase(legacy);
     } catch {}
@@ -63,8 +81,11 @@
       return (location.port === "3000" || location.port === "8000") ? "" : `http://127.0.0.1:${port}`;
     }
 
-    // 3. Vercel deployment: relative requests proxied by vercel.json
+    // 3. Vercel deployment: relative requests proxied by vercel.json or active tunnel
     if (typeof location !== "undefined" && location.hostname.includes("vercel.app")) {
+      const custom = localStorage.getItem("cyberguard_custom_tunnel") || localStorage.getItem("cyberguard_hybrid_active_base");
+      if (custom && custom.trim()) return normalizeBase(custom);
+      if (CONFIG.tunnel_url) return normalizeBase(CONFIG.tunnel_url);
       return "";
     }
 
@@ -73,9 +94,6 @@
       const mode = localStorage.getItem("cyberguard_connection_mode");
       if (mode === "local") {
         return "http://127.0.0.1:3000";
-      } else if (mode === "deployed") {
-        if (typeof location !== "undefined" && location.hostname.includes("vercel.app")) return "";
-        return "https://cyberguard-backend-8rbz.onrender.com";
       } else if (mode === "hybrid") {
         const active = localStorage.getItem("cyberguard_hybrid_active_base");
         if (active && active.trim()) return normalizeBase(active);
@@ -85,7 +103,14 @@
     } catch {}
 
     if (CONFIG.api_base) return normalizeBase(CONFIG.api_base);
-    return "https://cyberguard-backend-8rbz.onrender.com";
+    if (CONFIG.tunnel_url) return normalizeBase(CONFIG.tunnel_url);
+
+    // 5. Default on public HTTPS origins (GitHub Pages): bridge to local Docker via Cloudflare Tunnel
+    if (typeof location !== "undefined" && location.protocol === "https:") {
+      return DEFAULT_TUNNEL_FALLBACK;
+    }
+
+    return "";
   }
 
   state.apiBase = getBase();
@@ -169,6 +194,7 @@
     }
     if (settings) {
       settings.textContent = status === "online" ? "Connected" : status === "offline" ? "Unavailable" : "Checking";
+      settings.style.color = status === "online" ? "#059669" : status === "offline" ? "#dc2626" : "#d97706";
     }
     if (title) {
       title.textContent = status === "online" ? "CyberGuard is connected" : status === "offline" ? "Could not reach CyberGuard" : "Checking your connection";
@@ -181,12 +207,50 @@
     }
   }
 
+  function updateMixedContentUI(targetUrl) {
+    const notice = $("#mixedContentNotice");
+    if (!notice) return;
+    const url = targetUrl !== undefined ? targetUrl : ($("#apiBaseInput")?.value || state.apiBase);
+    if (isMixedContentConflict(url)) {
+      notice.style.display = "block";
+      notice.innerHTML = `
+        <strong>⚠️ Mixed Content Notice:</strong> Browser security blocks direct HTTP requests (<code>${url || 'http://127.0.0.1:3000'}</code>) from HTTPS origins (GitHub Pages / Vercel).<br>
+        To connect this deployed cloud interface to your local Docker container, use the <strong>Cloudflare Tunnel</strong>:
+        <div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button type="button" class="primary-button small" id="noticeSwitchTunnelBtn" style="font-size:11px;padding:5px 12px;cursor:pointer;">Switch to Cloudflare Tunnel ⚡</button>
+          <span style="font-size:11px;color:#64748b;">Or access local frontend: <a href="http://localhost:3000/personal/" target="_blank" style="color:#059669;text-decoration:underline;font-weight:600;">http://localhost:3000/personal/</a></span>
+        </div>
+      `;
+      $("#noticeSwitchTunnelBtn")?.addEventListener("click", () => {
+        applyTunnelPreset();
+      });
+    } else {
+      notice.style.display = "none";
+    }
+  }
+
+  function applyTunnelPreset(customUrl = null) {
+    const tunnelUrl = customUrl || localStorage.getItem("cyberguard_custom_tunnel") || CONFIG.tunnel_url || DEFAULT_TUNNEL_FALLBACK;
+    const clean = normalizeBase(tunnelUrl);
+    try {
+      localStorage.setItem("cyberguard_custom_tunnel", clean);
+      localStorage.setItem(STORAGE_API, clean);
+    } catch {}
+    const apiInput = $("#apiBaseInput");
+    if (apiInput) apiInput.value = clean;
+    state.apiBase = clean;
+    updateMixedContentUI(clean);
+    checkHealth();
+    toast("Connected to Cloudflare Tunnel (Local Docker Bridge).");
+  }
+
   async function checkHealth() {
     setConnection("checking", "Testing backend reachability...");
+    updateMixedContentUI();
     let lastError;
     const progressTimer = setTimeout(() => {
       if (state.health === "checking") {
-        setConnection("checking", "Waking up cloud backend instance (this may take a few moments)...");
+        setConnection("checking", "Connecting to CyberGuard backend...");
       }
     }, 2500);
 
@@ -196,6 +260,7 @@
         clearTimeout(progressTimer);
         const envLabel = data.backend || (data.status === "ok" ? "active" : "connected");
         setConnection("online", `Live CyberGuard backend confirmed (${envLabel}).`);
+        updateMixedContentUI();
         return data;
       } catch (e) {
         lastError = e;
@@ -203,7 +268,40 @@
       }
     }
     clearTimeout(progressTimer);
-    setConnection("offline", lastError ? "Connection check failed: " + lastError.message : "No health endpoint responded.");
+
+    // Auto-recovery: If check failed on HTTPS because target is an insecure HTTP loopback,
+    // automatically probe the live Cloudflare Tunnel to seamlessly connect to Docker!
+    if (isMixedContentConflict(state.apiBase)) {
+      const tunnelUrl = localStorage.getItem("cyberguard_custom_tunnel") || CONFIG.tunnel_url || DEFAULT_TUNNEL_FALLBACK;
+      if (tunnelUrl && normalizeBase(tunnelUrl) !== normalizeBase(state.apiBase)) {
+        try {
+          const cleanTunnel = normalizeBase(tunnelUrl);
+          const tunnelResp = await fetch(cleanTunnel + "/api/health", { method: "GET", credentials: "include" });
+          if (tunnelResp.ok) {
+            const tunnelData = await tunnelResp.json();
+            if (tunnelData && tunnelData.status === "ok") {
+              state.apiBase = cleanTunnel;
+              try {
+                localStorage.setItem(STORAGE_API, cleanTunnel);
+                localStorage.setItem("cyberguard_custom_tunnel", cleanTunnel);
+              } catch {}
+              const apiInput = $("#apiBaseInput");
+              if (apiInput) apiInput.value = cleanTunnel;
+              setConnection("online", `Connected to Local Docker via Cloudflare Tunnel (${tunnelData.backend || 'docker-local'}).`);
+              updateMixedContentUI();
+              toast("Auto-connected to Local Docker via Cloudflare Tunnel.");
+              return tunnelData;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+
+    const errDetail = isMixedContentConflict(state.apiBase)
+      ? "Mixed Content: Browser blocked HTTP from this HTTPS page. Click 'Cloudflare Tunnel' to connect to local Docker."
+      : (lastError ? "Connection check failed: " + lastError.message : "No health endpoint responded.");
+    setConnection("offline", errDetail);
+    updateMixedContentUI();
     return null;
   }
 
@@ -871,7 +969,10 @@
 
     // Settings panel actions
     const apiInput = $("#apiBaseInput");
-    if (apiInput) apiInput.value = state.apiBase;
+    if (apiInput) {
+      apiInput.value = state.apiBase;
+      apiInput.addEventListener("input", e => updateMixedContentUI(e.target.value));
+    }
 
     $("#saveApiBtn")?.addEventListener("click", () => {
       const val = normalizeBase($("#apiBaseInput")?.value);
@@ -881,14 +982,19 @@
       }
       try { localStorage.setItem(STORAGE_API, val); } catch {}
       state.apiBase = val;
+      updateMixedContentUI(val);
       checkHealth();
       toast("Backend address saved.");
     });
 
     $("#resetApiBtn")?.addEventListener("click", () => {
-      try { localStorage.removeItem(STORAGE_API); } catch {}
+      try {
+        localStorage.removeItem(STORAGE_API);
+        localStorage.removeItem("cyberguard_personal_api_base");
+      } catch {}
       state.apiBase = getBase();
       if (apiInput) apiInput.value = state.apiBase;
+      updateMixedContentUI(state.apiBase);
       checkHealth();
       toast("Default backend address restored.");
     });
@@ -936,33 +1042,36 @@
       if (apiInput) apiInput.value = localUrl;
       try { localStorage.setItem(STORAGE_API, localUrl); } catch {}
       state.apiBase = localUrl;
+      updateMixedContentUI(localUrl);
       checkHealth();
-      toast("Switched to Local Backend (port 3000).");
+      if (typeof location !== "undefined" && location.protocol === "https:") {
+        toast("Switched to Local Docker URL. Notice: Browsers block direct HTTP from HTTPS origins.", "warning");
+      } else {
+        toast("Switched to Local Docker Backend (port 3000).");
+      }
     });
 
     $("#presetCloudBtn")?.addEventListener("click", () => {
-      const cloudUrl = "https://cyberguard-backend-8rbz.onrender.com";
+      const isVercel = typeof location !== "undefined" && location.hostname.includes("vercel.app");
+      const cloudUrl = isVercel ? "" : (CONFIG.cloud_backend_url || CONFIG.api_base || DEFAULT_TUNNEL_FALLBACK);
       const apiInput = $("#apiBaseInput");
       if (apiInput) apiInput.value = cloudUrl;
       try { localStorage.setItem(STORAGE_API, cloudUrl); } catch {}
       state.apiBase = cloudUrl;
+      updateMixedContentUI(cloudUrl);
       checkHealth();
-      toast("Switched to Cloud Render Backend.");
+      toast(isVercel ? "Switched to Vercel Same-Origin Proxy." : "Switched to Cloud API Endpoint.");
     });
 
-    $("#presetTunnelBtn")?.addEventListener("click", () => {
-      const saved = localStorage.getItem("cyberguard_custom_tunnel") || prompt("Enter active Cloudflare Tunnel URL (e.g. https://...trycloudflare.com):");
-      if (saved && saved.trim()) {
-        const clean = normalizeBase(saved);
-        try {
-          localStorage.setItem("cyberguard_custom_tunnel", clean);
-          localStorage.setItem(STORAGE_API, clean);
-        } catch {}
-        const apiInput = $("#apiBaseInput");
-        if (apiInput) apiInput.value = clean;
-        state.apiBase = clean;
-        checkHealth();
-        toast("Connected to Cloudflare Tunnel.");
+    $("#presetTunnelBtn")?.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        const saved = localStorage.getItem("cyberguard_custom_tunnel") || DEFAULT_TUNNEL_FALLBACK;
+        const entered = prompt("Enter Cloudflare Tunnel URL (Local Docker Bridge):", saved);
+        if (entered && entered.trim()) {
+          applyTunnelPreset(entered.trim());
+        }
+      } else {
+        applyTunnelPreset();
       }
     });
   }
@@ -971,6 +1080,7 @@
   function initApp() {
     initEvents();
     bindPresets();
+    updateMixedContentUI();
     navigate();
     checkAuth();
     checkHealth();

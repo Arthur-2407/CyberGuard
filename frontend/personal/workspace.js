@@ -14,8 +14,24 @@
   function apiBase() {
     try {
       const saved = (localStorage.getItem(STORAGE_API) || "").trim();
-      if (saved) return saved.replace(/\/+$/, "");
+      if (saved) {
+        const cleanSaved = saved.replace(/\/+$/, "");
+        if (typeof location !== "undefined" && location.protocol === "https:" && (cleanSaved.startsWith("http://127.0.0.1") || cleanSaved.startsWith("http://localhost"))) {
+          const tunnel = (localStorage.getItem("cyberguard_custom_tunnel") || "").trim();
+          if (tunnel) return tunnel.replace(/\/+$/, "");
+          const cfg = window.__CYBERGUARD_PERSONAL_CONFIG__ || {};
+          if (cfg.tunnel_url) return cfg.tunnel_url.replace(/\/+$/, "");
+        }
+        return cleanSaved;
+      }
+      const tunnel = (localStorage.getItem("cyberguard_custom_tunnel") || "").trim();
+      if (tunnel) return tunnel.replace(/\/+$/, "");
     } catch {}
+    const cfg = window.__CYBERGUARD_PERSONAL_CONFIG__ || {};
+    if (cfg.api_base) return cfg.api_base.replace(/\/+$/, "");
+    if (typeof location !== "undefined" && location.protocol === "https:") {
+      return (cfg.tunnel_url || "https://fax-heat-harris-sufficient.trycloudflare.com").replace(/\/+$/, "");
+    }
     return "";
   }
 

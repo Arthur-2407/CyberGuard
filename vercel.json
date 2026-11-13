@@ -10,11 +10,11 @@
     },
     {
       "source": "/api/(.*)",
-      "destination": "https://cyberguard-backend-8rbz.onrender.com/api/$1"
+      "destination": "https://fax-heat-harris-sufficient.trycloudflare.com/api/$1"
     },
     {
       "source": "/health",
-      "destination": "https://cyberguard-backend-8rbz.onrender.com/health"
+      "destination": "https://fax-heat-harris-sufficient.trycloudflare.com/health"
     },
     {
       "source": "/personal",
