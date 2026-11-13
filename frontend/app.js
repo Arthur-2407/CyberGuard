@@ -27990,6 +27990,13 @@ async function scanMediaForensics() {
   const file = input.files[0];
 
   const isVideo = file.type.startsWith('video/') || /\.(mp4|avi|mov|mkv|webm|flv)$/i.test(file.name);
+  const referenceInput = document.getElementById('image-forensic-reference-input');
+  const referenceFile = !isVideo && referenceInput && referenceInput.files && referenceInput.files.length
+    ? referenceInput.files[0]
+    : null;
+  if (referenceFile && !referenceFile.type.startsWith('image/')) {
+    return showToast('The optional reference must be an image file', 'warning');
+  }
 
   const btn = document.getElementById('btn-scan-image');
 
@@ -28032,6 +28039,7 @@ async function scanMediaForensics() {
   formData.append('file', file);
 
   formData.append('source', 'web_dashboard');
+  if (referenceFile) formData.append('reference_file', referenceFile);
 
 
 
@@ -28232,6 +28240,42 @@ function renderImageForensicsReport(data) {
 
 
   const metrics = data.forensic_metrics || {};
+  const referenceComparison = metrics.reference_comparison && typeof metrics.reference_comparison === 'object'
+    ? metrics.reference_comparison
+    : null;
+  const referenceComparisonHtml = referenceComparison ? (() => {
+    const comparable = referenceComparison.status === 'COMPARABLE';
+    const changed = Boolean(referenceComparison.difference_detected);
+    const regions = Array.isArray(referenceComparison.regions) ? referenceComparison.regions : [];
+    const alignment = referenceComparison.alignment || {};
+    const heatmap = typeof referenceComparison.difference_heatmap_base64 === 'string' &&
+      /^[A-Za-z0-9+/=]+$/.test(referenceComparison.difference_heatmap_base64)
+      ? referenceComparison.difference_heatmap_base64
+      : null;
+    const heading = comparable
+      ? (changed ? 'MATERIAL DIFFERENCES DETECTED' : 'NO SIGNIFICANT DIFFERENCES DETECTED')
+      : 'REFERENCE COMPARISON UNAVAILABLE';
+    const tone = comparable && changed ? '#f59e0b' : (comparable ? '#38bdf8' : '#94a3b8');
+    const regionRows = regions.map((region, index) => {
+      const box = Array.isArray(region.bbox) ? region.bbox.join(', ') : 'N/A';
+      const area = Number(region.area_ratio || 0) * 100;
+      return '<div style="font-size:10.5px;color:#cbd5e1;padding:5px 0;border-top:1px solid rgba(255,255,255,0.06);">Region ' +
+        (index + 1) + ': x, y, width, height = ' + escapeHtml(String(box)) + ' · ' +
+        (area < 0.01 ? area.toFixed(5) + '%' : area.toFixed(2) + '%') + ' of overlap</div>';
+    }).join('');
+    const detail = comparable
+      ? '<div style="display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:#cbd5e1;margin-top:8px;">' +
+          '<span>Changed area: <strong>' + Number(referenceComparison.changed_pixel_percent || 0).toFixed(3) + '%</strong></span>' +
+          '<span>Localized regions: <strong>' + Number(referenceComparison.component_count || regions.length || 0) + '</strong></span>' +
+          '<span>Alignment inliers: <strong>' + Number(alignment.inliers || 0) + ' (' + (Number(alignment.inlier_ratio || 0) * 100).toFixed(1) + '%)</strong></span>' +
+        '</div>' + regionRows +
+        (heatmap ? '<img src="data:image/jpeg;base64,' + heatmap + '" alt="Reference comparison difference heatmap" style="display:block;width:100%;max-height:360px;object-fit:contain;margin-top:10px;border-radius:6px;border:1px solid rgba(56,189,248,0.25);" />' : '')
+      : '<div style="font-size:11px;color:#cbd5e1;margin-top:8px;">' + escapeHtml(referenceComparison.reason || 'The reference pair could not be aligned reliably.') + '</div>';
+    return '<div style="margin:12px 0 16px;padding:14px 16px;background:rgba(15,23,42,0.75);border:1px solid ' + tone + '66;border-left:3px solid ' + tone + ';border-radius:8px;">' +
+      '<div style="font-size:12px;font-weight:800;letter-spacing:.04em;color:' + tone + ';">REFERENCE IMAGE COMPARISON · ' + heading + '</div>' +
+      '<div style="font-size:10.5px;color:#94a3b8;margin-top:5px;">' + escapeHtml(referenceComparison.interpretation || 'Comparison findings are separate from the global synthetic-image classification and do not alone establish manipulation cause.') + '</div>' +
+      detail + '</div>';
+  })() : '';
 
   const mediaInfo = data.media_info || data.threat_intelligence || {};
 
@@ -29098,6 +29142,8 @@ function renderImageForensicsReport(data) {
 
 
 
+      ${referenceComparisonHtml}
+
       <!-- Interactive Tactical SOC Action Command Bar -->
 
       <div class="img-actions-bar">
@@ -29617,13 +29663,29 @@ function renderForensicTelemetryObservations(data) {
 
         telemetryChip = isFlattened ? `Var: ${metrics.noise_variance !== undefined ? metrics.noise_variance.toFixed(3) : 'Low'}` : `Kurtosis: ${metrics.noise_kurtosis ? metrics.noise_kurtosis.toFixed(1) : 'High'}`;
 
+      } else if (metrics.noise_status === 'MODERATE' || metrics.noise_substatus === 'ELEVATED_KURTOSIS' || metrics.noise_substatus === 'MILD_ANOMALY') {
+
+        statusClass = 'status-warning';
+
+        statusLabel = metrics.noise_substatus === 'ELEVATED_KURTOSIS' ? 'HEAVY-TAIL RESIDUAL' : 'RESIDUAL ANOMALY';
+
+        telemetryChip = 'Kurtosis: ' + (typeof metrics.noise_kurtosis === 'number' ? metrics.noise_kurtosis.toFixed(1) : 'N/A');
+
+      } else if (metrics.noise_substatus === 'COMPACT_EDGE_KURTOSIS') {
+
+        statusClass = 'status-neutral';
+
+        statusLabel = 'COMPACT / EDGE PROFILE';
+
+        telemetryChip = 'Kurtosis: ' + (typeof metrics.noise_kurtosis === 'number' ? metrics.noise_kurtosis.toFixed(1) : 'N/A');
+
       } else {
 
         statusClass = 'status-authentic';
 
-        statusLabel = 'GAUSSIAN RESIDUAL';
+        statusLabel = 'NOMINAL RESIDUAL';
 
-        telemetryChip = `Kurtosis: ${metrics.noise_kurtosis ? metrics.noise_kurtosis.toFixed(1) : '10.2'}`;
+        telemetryChip = 'Kurtosis: ' + (typeof metrics.noise_kurtosis === 'number' ? metrics.noise_kurtosis.toFixed(1) : 'N/A');
 
       }
 
