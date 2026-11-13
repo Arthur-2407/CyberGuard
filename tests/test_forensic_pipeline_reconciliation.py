@@ -175,3 +175,63 @@ class TestForensicPipelineReconciliation:
         # Verify probability sum is 1.0 within floating point precision
         assert pred["synthetic_probability"] + pred["authentic_probability"] == pytest.approx(1.0, abs=1e-3)
         assert pred["predicted_class"] in ("AUTHENTIC", "SYNTHETIC_DEEPFAKE")
+
+
+    def _make_reference_edit_pair(self):
+        """Create a textured reference scene and a localized inpainted edit."""
+        import cv2
+        from PIL import ImageDraw
+
+        rng = np.random.default_rng(12345)
+        height, width = 480, 640
+        texture = rng.integers(0, 256, (height, width, 3), dtype=np.uint8)
+        texture = cv2.GaussianBlur(texture, (0, 0), 1.2)
+        reference = Image.fromarray(texture, mode="RGB")
+        draw = ImageDraw.Draw(reference)
+        draw.rectangle((225, 140, 420, 350), fill=(20, 40, 170), outline=(250, 250, 250), width=8)
+        draw.ellipse((260, 170, 380, 290), fill=(230, 70, 30), outline=(255, 255, 0), width=6)
+        for x in range(240, 410, 22):
+            draw.line((x, 145, x + 15, 340), fill=(255, 255, 255), width=3)
+
+        reference_array = np.asarray(reference)
+        mask = np.zeros((height, width), dtype=np.uint8)
+        cv2.rectangle(mask, (220, 135), (425, 355), 255, -1)
+        edited_array = cv2.inpaint(reference_array, mask, 15, cv2.INPAINT_TELEA)
+        edited = Image.fromarray(edited_array, mode="RGB")
+        return edited, reference
+
+    def test_reference_comparison_localizes_inpainted_region(self, forensics_engine):
+        edited, reference = self._make_reference_edit_pair()
+
+        result = forensics_engine.compare_with_reference(edited, reference)
+
+        assert result["status"] == "COMPARABLE"
+        assert result["difference_detected"] is True
+        assert result["changed_pixel_percent"] > 1.0
+        assert result["regions"]
+        x, y, width, height = result["largest_region"]["bbox"]
+        # The returned box is in original reference-image pixel coordinates.
+        assert x < 430 and x + width > 215
+        assert y < 365 and y + height > 130
+        assert result["alignment"]["inlier_ratio"] >= 0.25
+        assert result["difference_heatmap_base64"]
+
+    def test_reference_comparison_identical_images_are_not_flagged(self, forensics_engine):
+        edited, _ = self._make_reference_edit_pair()
+
+        result = forensics_engine.compare_with_reference(edited, edited.copy())
+
+        assert result["status"] == "COMPARABLE"
+        assert result["difference_detected"] is False
+        assert result["component_count"] == 0
+        assert result["changed_pixel_percent"] == 0.0
+
+    def test_reference_comparison_without_features_fails_closed(self, forensics_engine):
+        blank = Image.new("RGB", (320, 240), color=(128, 128, 128))
+
+        result = forensics_engine.compare_with_reference(blank, blank.copy())
+
+        assert result["status"] == "NOT_COMPARABLE"
+        assert result["difference_detected"] is False
+        assert "Insufficient visual features" in result["reason"]
+        assert "not evidence" in result["interpretation"].lower()
